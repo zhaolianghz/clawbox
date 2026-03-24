@@ -9,13 +9,13 @@
   </div>
   
   <div class="actions">
-    <button class="action-btn" title="Notifications">
+    <button class="action-btn" title={$_('actions.notifications')}>
       🔔
     </button>
-    <button class="action-btn" title="Settings">
+    <button class="action-btn" title={$_('actions.settings')}>
       ⚙️
     </button>
-    <button class="action-btn avatar" title="User">
+    <button class="action-btn avatar" title={$_('actions.user')}>
       👤
     </button>
   </div>

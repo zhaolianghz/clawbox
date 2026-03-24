@@ -21,5 +21,10 @@
     "start": "启动",
     "stop": "停止",
     "restart": "重启"
+  },
+  "actions": {
+    "notifications": "通知",
+    "settings": "设置",
+    "user": "用户"
   }
 }

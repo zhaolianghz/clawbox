@@ -21,5 +21,10 @@
     "start": "Start",
     "stop": "Stop",
     "restart": "Restart"
+  },
+  "actions": {
+    "notifications": "Notifications",
+    "settings": "Settings",
+    "user": "User"
   }
 }
