@@ -77,5 +77,20 @@
     "disableSkill": "Disable",
     "save": "Save",
     "cancel": "Cancel"
+  },
+  "logs": {
+    "title": "Logs",
+    "files": "Log Files",
+    "search": "Search logs...",
+    "refresh": "Refresh",
+    "loading": "Loading logs...",
+    "noFiles": "No log files found",
+    "noContent": "No log content available",
+    "level": {
+      "info": "Info",
+      "warn": "Warning",
+      "error": "Error",
+      "debug": "Debug"
+    }
   }
 }

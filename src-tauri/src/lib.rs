@@ -1,5 +1,5 @@
 mod commands;
-use commands::{config, gateway, install};
+use commands::{config, gateway, install, logs};
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -13,6 +13,8 @@ pub fn run() {
             config::set_config,
             install::check_system,
             install::install_openclaw,
+            logs::get_log_files,
+            logs::get_log_content,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
