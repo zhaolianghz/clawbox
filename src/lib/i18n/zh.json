@@ -15,12 +15,28 @@
     "about": "关于"
   },
   "gateway": {
+    "title": "网关",
     "status": "状态",
+    "version": "版本",
     "running": "运行中",
     "stopped": "已停止",
     "start": "启动",
     "stop": "停止",
     "restart": "重启"
+  },
+  "dashboard": {
+    "title": "仪表盘",
+    "subtitle": "监控网关状态和最近活动",
+    "tokensToday": "今日 Tokens",
+    "apiCalls": "API 调用",
+    "tasksCompleted": "已完成任务",
+    "recentSessions": "最近会话",
+    "quickActions": "快捷操作",
+    "newChat": "新聊天",
+    "newTask": "新任务",
+    "importConfig": "导入配置",
+    "exportLogs": "导出日志",
+    "messages": "条消息"
   },
   "actions": {
     "notifications": "通知",
