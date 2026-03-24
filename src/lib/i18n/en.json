@@ -120,5 +120,51 @@
     "checking": "Checking...",
     "updateAvailable": "Update Available!",
     "updateNow": "Update Now"
+  },
+  "agents": {
+    "title": "Agent Collaboration",
+    "subtitle": "Design and run multi-agent workflows",
+    "flows": "Flows",
+    "nodes": "nodes",
+    "newFlow": "New Flow",
+    "run": "Run",
+    "edit": "Edit",
+    "flowEditorPlaceholder": "Flow Editor",
+    "flowEditorHint": "Drag and drop nodes to build agent collaboration flows",
+    "messageTrace": "Message Trace",
+    "selectFlow": "Select a flow from the sidebar to view details"
+  },
+  "monitor": {
+    "title": "Monitor",
+    "subtitle": "Track link traces and resource usage",
+    "refresh": "Refresh",
+    "export": "Export",
+    "linkTracing": "Link Tracing",
+    "events": "events",
+    "resourceUsage": "Resource Usage",
+    "chartPlaceholder": "Real-time metrics visualization"
+  },
+  "tasks": {
+    "title": "Tasks",
+    "subtitle": "Manage scheduled tasks and triggers",
+    "newTask": "New Task",
+    "scheduledTasks": "Scheduled Tasks",
+    "lastRun": "Last Run",
+    "nextRun": "Next Run",
+    "enable": "Enable",
+    "disable": "Disable",
+    "edit": "Edit",
+    "delete": "Delete",
+    "flowEditor": "Flow Editor",
+    "flowEditorPlaceholder": "Select a task to edit its workflow",
+    "scheduleBuilder": "Schedule Builder",
+    "frequency": "Frequency",
+    "time": "Time",
+    "cronExpression": "Cron Expression",
+    "everyMinute": "Every Minute",
+    "hourly": "Hourly",
+    "daily": "Daily",
+    "weekly": "Weekly",
+    "custom": "Custom"
   }
 }
