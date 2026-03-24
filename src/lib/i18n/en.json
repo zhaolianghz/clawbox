@@ -54,5 +54,28 @@
     "installing": "Installing...",
     "complete": "Installation Complete!",
     "startUsing": "Start Using ClawBox"
+  },
+  "config": {
+    "models": "Models",
+    "channels": "Channels",
+    "agents": "Agents",
+    "skills": "Skills",
+    "addProvider": "Add Provider",
+    "editProvider": "Edit Provider",
+    "deleteProvider": "Delete Provider",
+    "providerName": "Provider Name",
+    "apiKey": "API Key",
+    "baseUrl": "Base URL",
+    "defaultModel": "Default Model",
+    "addChannel": "Add Channel",
+    "channelName": "Channel Name",
+    "endpoint": "Endpoint",
+    "addAgent": "Add Agent",
+    "agentName": "Agent Name",
+    "systemPrompt": "System Prompt",
+    "enableSkill": "Enable",
+    "disableSkill": "Disable",
+    "save": "Save",
+    "cancel": "Cancel"
   }
 }
