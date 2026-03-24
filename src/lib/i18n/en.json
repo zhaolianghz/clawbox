@@ -104,5 +104,21 @@
     "installed": "Installed",
     "downloads": "downloads",
     "rating": "rating"
+  },
+  "about": {
+    "title": "About",
+    "tagline": "A cross-platform desktop GUI client for OpenClaw Gateway",
+    "versions": "Versions",
+    "links": "Links",
+    "documentation": "Documentation",
+    "reportIssue": "Report an Issue",
+    "discord": "Discord Community",
+    "credits": "Credits",
+    "creditsText": "Built with ❤️ by the OpenClaw team. ClawBox is open-source software released under the MIT License.",
+    "allRightsReserved": "All rights reserved.",
+    "checkUpdates": "Check for Updates",
+    "checking": "Checking...",
+    "updateAvailable": "Update Available!",
+    "updateNow": "Update Now"
   }
 }

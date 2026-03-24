@@ -104,5 +104,21 @@
     "installed": "已安装",
     "downloads": "下载量",
     "rating": "评分"
+  },
+  "about": {
+    "title": "关于",
+    "tagline": "跨平台 OpenClaw Gateway 桌面客户端",
+    "versions": "版本信息",
+    "links": "链接",
+    "documentation": "文档",
+    "reportIssue": "报告问题",
+    "discord": "Discord 社区",
+    "credits": "致谢",
+    "creditsText": "由 OpenClaw 团队用 ❤️ 构建。ClawBox 是基于 MIT 许可证发布的开源软件。",
+    "allRightsReserved": "保留所有权利。",
+    "checkUpdates": "检查更新",
+    "checking": "检查中...",
+    "updateAvailable": "有新版本！",
+    "updateNow": "立即更新"
   }
 }
