@@ -42,5 +42,17 @@
     "notifications": "Notifications",
     "settings": "Settings",
     "user": "User"
+  },
+  "install": {
+    "checking": "Checking system environment...",
+    "needsInstall": "The following components need to be installed",
+    "nodejs": "Node.js",
+    "openclaw": "OpenClaw CLI",
+    "terms": "I have read and agree to the User Agreement",
+    "start": "Start Installation",
+    "skip": "Skip",
+    "installing": "Installing...",
+    "complete": "Installation Complete!",
+    "startUsing": "Start Using ClawBox"
   }
 }

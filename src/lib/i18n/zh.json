@@ -42,5 +42,17 @@
     "notifications": "通知",
     "settings": "设置",
     "user": "用户"
+  },
+  "install": {
+    "checking": "正在检测系统环境...",
+    "needsInstall": "需要安装以下组件",
+    "nodejs": "Node.js",
+    "openclaw": "OpenClaw CLI",
+    "terms": "我已阅读并同意《用户协议》",
+    "start": "开始安装",
+    "skip": "跳过",
+    "installing": "正在安装...",
+    "complete": "安装完成！",
+    "startUsing": "开始使用 ClawBox"
   }
 }

@@ -2,21 +2,41 @@
   import Sidebar from '$lib/components/Sidebar.svelte';
   import TopBar from '$lib/components/TopBar.svelte';
   import StatusBar from '$lib/components/StatusBar.svelte';
+  import InstallWizard from '$lib/components/InstallWizard.svelte';
+  import { installComplete } from '$lib/stores/install';
+  import { onMount } from 'svelte';
+
+  let showInstallWizard = $state(false);
+  let isReady = $state(false);
+
+  onMount(() => {
+    const unsubscribe = installComplete.subscribe((complete: boolean) => {
+      showInstallWizard = !complete;
+    });
+    isReady = true;
+    return unsubscribe;
+  });
 </script>
 
-<div class="layout">
-  <Sidebar />
-  
-  <main class="main-area">
-    <TopBar />
-    
-    <div class="content">
-      <slot />
+{#if isReady}
+  {#if showInstallWizard}
+    <InstallWizard />
+  {:else}
+    <div class="layout">
+      <Sidebar />
+      
+      <main class="main-area">
+        <TopBar />
+        
+        <div class="content">
+          <slot />
+        </div>
+        
+        <StatusBar />
+      </main>
     </div>
-    
-    <StatusBar />
-  </main>
-</div>
+  {/if}
+{/if}
 
 <style>
   .layout {
