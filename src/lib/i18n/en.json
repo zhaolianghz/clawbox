@@ -1,0 +1,25 @@
+{
+  "app": {
+    "name": "ClawBox",
+    "welcome": "Welcome back"
+  },
+  "nav": {
+    "home": "Home",
+    "chat": "Chat",
+    "config": "Config",
+    "agents": "Agents",
+    "monitor": "Monitor",
+    "tasks": "Tasks",
+    "logs": "Logs",
+    "skills": "Skills",
+    "about": "About"
+  },
+  "gateway": {
+    "status": "Status",
+    "running": "Running",
+    "stopped": "Stopped",
+    "start": "Start",
+    "stop": "Stop",
+    "restart": "Restart"
+  }
+}

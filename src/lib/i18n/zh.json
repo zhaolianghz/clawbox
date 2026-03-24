@@ -1,0 +1,25 @@
+{
+  "app": {
+    "name": "ClawBox",
+    "welcome": "欢迎回来"
+  },
+  "nav": {
+    "home": "首页",
+    "chat": "聊天",
+    "config": "配置",
+    "agents": "代理",
+    "monitor": "监控",
+    "tasks": "任务",
+    "logs": "日志",
+    "skills": "技能",
+    "about": "关于"
+  },
+  "gateway": {
+    "status": "状态",
+    "running": "运行中",
+    "stopped": "已停止",
+    "start": "启动",
+    "stop": "停止",
+    "restart": "重启"
+  }
+}

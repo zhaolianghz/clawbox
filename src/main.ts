@@ -1,4 +1,5 @@
 import "./app.css";
+import "./lib/i18n/index.ts";
 import App from "./App.svelte";
 
 const app = new App({
