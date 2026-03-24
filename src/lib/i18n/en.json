@@ -92,5 +92,17 @@
       "error": "Error",
       "debug": "Debug"
     }
+  },
+  "skills": {
+    "title": "Skills Store",
+    "categories": "Categories",
+    "search": "Search skills...",
+    "loading": "Loading skills...",
+    "noResults": "No skills found",
+    "install": "Install",
+    "uninstall": "Uninstall",
+    "installed": "Installed",
+    "downloads": "downloads",
+    "rating": "rating"
   }
 }

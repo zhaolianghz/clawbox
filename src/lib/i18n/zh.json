@@ -92,5 +92,17 @@
       "error": "错误",
       "debug": "调试"
     }
+  },
+  "skills": {
+    "title": "技能商店",
+    "categories": "分类",
+    "search": "搜索技能...",
+    "loading": "加载中...",
+    "noResults": "没有找到技能",
+    "install": "安装",
+    "uninstall": "卸载",
+    "installed": "已安装",
+    "downloads": "下载量",
+    "rating": "评分"
   }
 }
