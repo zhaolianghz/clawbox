@@ -1,9 +1,15 @@
 <script lang="ts">
   import { _ } from 'svelte-i18n';
   
-  let gatewayRunning = $state(true);
-  let version = $state('1.0.0');
-  let tokenCount = $state(0);
+  interface Props {
+    gatewayStatus?: string;
+    gatewayVersion?: string;
+    tokenCount?: number;
+  }
+  
+  let { gatewayStatus = 'stopped', gatewayVersion = '1.0.0', tokenCount = 0 }: Props = $props();
+  
+  let gatewayRunning = $derived(gatewayStatus === 'running');
 </script>
 
 <footer class="statusbar">
@@ -13,7 +19,7 @@
   </div>
   
   <div class="status-item">
-    <span>v{version}</span>
+    <span>v{gatewayVersion}</span>
   </div>
   
   <div class="status-item">

@@ -17,7 +17,8 @@
         "width": 1280,
         "height": 800,
         "resizable": true,
-        "fullscreen": false
+        "fullscreen": false,
+        "backgroundColor": "#0a0a0f"
       }
     ],
     "security": {

@@ -1,42 +1,44 @@
 <script lang="ts">
+  import { onMount } from 'svelte';
+  import { _ } from 'svelte-i18n';
+  import { goto } from '$app/navigation';
   import Sidebar from '$lib/components/Sidebar.svelte';
   import TopBar from '$lib/components/TopBar.svelte';
   import StatusBar from '$lib/components/StatusBar.svelte';
-  import InstallWizard from '$lib/components/InstallWizard.svelte';
-  import { installComplete } from '$lib/stores/install';
-  import { onMount } from 'svelte';
 
-  let showInstallWizard = $state(false);
-  let isReady = $state(false);
+  let activeItem = $state('home');
+  let gatewayStatus = $state('stopped');
+  let gatewayVersion = $state('v1.0.0');
+  let tokenCount = $state(0);
 
-  onMount(() => {
-    const unsubscribe = installComplete.subscribe((complete: boolean) => {
-      showInstallWizard = !complete;
-    });
-    isReady = true;
-    return unsubscribe;
+  function handleNavigate(event: CustomEvent<string>) {
+    activeItem = event.detail;
+    goto(event.detail === 'home' ? '/' : `/${event.detail}`);
+  }
+
+  onMount(async () => {
+    try {
+      const { invoke } = await import('@tauri-apps/api/core');
+      const status = await invoke<{ running: boolean; version: string }>('get_gateway_status');
+      gatewayStatus = status.running ? 'running' : 'stopped';
+      gatewayVersion = status.version;
+    } catch {
+      gatewayStatus = 'stopped';
+    }
   });
 </script>
 
-{#if isReady}
-  {#if showInstallWizard}
-    <InstallWizard />
-  {:else}
-    <div class="layout">
-      <Sidebar />
-      
-      <main class="main-area">
-        <TopBar />
-        
-        <div class="content">
-          <slot />
-        </div>
-        
-        <StatusBar />
-      </main>
+<div class="layout">
+  <Sidebar {activeItem} onnavigate={handleNavigate} />
+  
+  <div class="main-area">
+    <TopBar />
+    <div class="content">
+      <slot />
     </div>
-  {/if}
-{/if}
+    <StatusBar {gatewayStatus} {gatewayVersion} {tokenCount} />
+  </div>
+</div>
 
 <style>
   .layout {

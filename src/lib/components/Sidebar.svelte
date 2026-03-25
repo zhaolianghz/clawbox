@@ -1,7 +1,12 @@
 <script lang="ts">
   import { _ } from 'svelte-i18n';
   
-  let activeItem = $state('home');
+  interface Props {
+    activeItem?: string;
+    onnavigate?: (event: CustomEvent<string>) => void;
+  }
+  
+  let { activeItem = 'home', onnavigate }: Props = $props();
   
   const navItems = [
     { id: 'home', icon: '🏠' },
@@ -14,8 +19,9 @@
     { id: 'skills', icon: '✨' },
   ];
   
-  function setActive(id: string) {
+  function handleClick(id: string) {
     activeItem = id;
+    onnavigate?.(new CustomEvent('navigate', { detail: id }));
   }
 </script>
 
@@ -25,7 +31,7 @@
       <button
         class="nav-item"
         class:active={activeItem === item.id}
-        onclick={() => setActive(item.id)}
+        onclick={() => handleClick(item.id)}
       >
         <span class="icon">{item.icon}</span>
         <span class="label">{$_(`nav.${item.id}`)}</span>
@@ -37,7 +43,7 @@
     <button
       class="nav-item"
       class:active={activeItem === 'about'}
-      onclick={() => setActive('about')}
+      onclick={() => handleClick('about')}
     >
       <span class="icon">ℹ️</span>
       <span class="label">{$_('nav.about')}</span>

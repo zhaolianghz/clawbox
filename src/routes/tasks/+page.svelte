@@ -43,9 +43,11 @@
     }
   }
   
-  function toggleTask(task: Task) {
-    if (task.status === 'running') return;
+  function toggleTask(taskId: string) {
+    const task = tasks.find(t => t.id === taskId);
+    if (!task || task.status === 'running') return;
     task.status = task.status === 'enabled' ? 'disabled' : 'enabled';
+    tasks = [...tasks];
   }
   
   onMount(loadTasks);
@@ -101,7 +103,7 @@
               <div class="task-actions">
                 <button
                   class="action-btn"
-                  onclick={() => toggleTask(task)}
+                  onclick={() => toggleTask(task.id)}
                   disabled={task.status === 'running'}
                   title={task.status === 'enabled' ? $_('tasks.disable') : $_('tasks.enable')}
                 >
