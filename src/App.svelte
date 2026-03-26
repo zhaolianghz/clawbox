@@ -248,15 +248,17 @@
   
   .chat-input-area button {
     padding: 0.75rem 1.5rem;
-    background: var(--neon-cyan);
+    background: linear-gradient(135deg, var(--neon-cyan) 0%, var(--neon-purple) 100%);
     border: none;
     border-radius: 0.5rem;
     color: var(--bg-primary);
     font-weight: 600;
     cursor: pointer;
+    transition: all 0.2s ease;
   }
   
   .chat-input-area button:hover {
     box-shadow: var(--glow-cyan);
+    transform: translateY(-1px);
   }
 </style>

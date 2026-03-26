@@ -2,22 +2,29 @@
 
 :root {
   --bg-primary: #0a0a0f;
-  --bg-secondary: #12121a;
-  --bg-tertiary: #1a1a25;
+  --bg-secondary: #13131c;
+  --bg-tertiary: #1a1a28;
+  --bg-elevated: #22222f;
   
   --neon-cyan: #00f5ff;
-  --neon-purple: #bf00ff;
-  --neon-pink: #ff006e;
-  --neon-green: #00ff88;
-  --neon-orange: #ff8800;
+  --neon-purple: #a855f7;
+  --neon-pink: #ec4899;
+  --neon-green: #10b981;
+  --neon-orange: #f59e0b;
   
   --text-primary: #ffffff;
-  --text-secondary: #a0a0b0;
-  --text-muted: #606070;
+  --text-secondary: #94a3b8;
+  --text-muted: #64748b;
   
-  --glow-cyan: 0 0 20px rgba(0, 245, 255, 0.5);
-  --glow-purple: 0 0 20px rgba(191, 0, 255, 0.5);
-  --glow-green: 0 0 15px rgba(0, 255, 136, 0.4);
+  --glow-cyan: 0 0 30px rgba(0, 245, 255, 0.4);
+  --glow-purple: 0 0 30px rgba(168, 85, 247, 0.4);
+  --glow-green: 0 0 20px rgba(16, 185, 129, 0.4);
+  --glow-pink: 0 0 20px rgba(236, 72, 153, 0.4);
+  
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 16px;
+  --radius-xl: 24px;
 }
 
 * {
@@ -29,9 +36,12 @@
 html, body {
   height: 100%;
   width: 100%;
-  background-color: var(--bg-primary) !important;
+  background-color: var(--bg-primary);
   color: var(--text-primary);
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  font-size: 14px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
 }
 
 #app {
@@ -39,24 +49,242 @@ html, body {
   width: 100%;
 }
 
+/* Modern Glass Card */
 .glass-card {
-  background: rgba(26, 26, 37, 0.8);
-  backdrop-filter: blur(10px);
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  border-radius: 1rem;
+  background: linear-gradient(135deg, rgba(26, 26, 40, 0.9) 0%, rgba(18, 18, 28, 0.95) 100%);
+  backdrop-filter: blur(20px);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: var(--radius-lg);
+  box-shadow: 
+    0 4px 24px rgba(0, 0, 0, 0.3),
+    inset 0 1px 0 rgba(255, 255, 255, 0.05);
 }
 
+/* Modern Button */
 .neon-button {
-  background: var(--bg-tertiary);
-  border: 1px solid var(--neon-cyan);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 10px 20px;
+  background: linear-gradient(135deg, rgba(0, 245, 255, 0.15) 0%, rgba(0, 245, 255, 0.05) 100%);
+  border: 1px solid rgba(0, 245, 255, 0.3);
+  border-radius: var(--radius-md);
   color: var(--neon-cyan);
-  padding: 0.5rem 1rem;
-  border-radius: 0.5rem;
+  font-size: 14px;
+  font-weight: 500;
   cursor: pointer;
-  transition: all 0.3s ease;
+  transition: all 0.2s ease;
+  position: relative;
+  overflow: hidden;
+}
+
+.neon-button::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(135deg, var(--neon-cyan) 0%, var(--neon-purple) 100%);
+  opacity: 0;
+  transition: opacity 0.2s ease;
 }
 
 .neon-button:hover {
-  box-shadow: var(--glow-cyan);
-  background: rgba(0, 245, 255, 0.1);
+  border-color: var(--neon-cyan);
+  box-shadow: var(--glow-cyan), inset 0 0 20px rgba(0, 245, 255, 0.1);
+  transform: translateY(-1px);
 }
+
+.neon-button:hover::before {
+  opacity: 0.1;
+}
+
+.neon-button:active {
+  transform: translateY(0);
+}
+
+.neon-button:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+  transform: none;
+}
+
+/* Modern Input */
+.neon-input, input[type="text"], input[type="password"], input[type="number"], input[type="email"], textarea {
+  width: 100%;
+  padding: 12px 16px;
+  background: var(--bg-tertiary);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: var(--radius-md);
+  color: var(--text-primary);
+  font-size: 14px;
+  font-family: inherit;
+  transition: all 0.2s ease;
+}
+
+.neon-input:focus, input[type="text"]:focus, input[type="password"]:focus, input:focus, textarea:focus {
+  outline: none;
+  border-color: var(--neon-cyan);
+  box-shadow: 0 0 0 3px rgba(0, 245, 255, 0.15), var(--glow-cyan);
+}
+
+.neon-input::placeholder, input::placeholder, textarea::placeholder {
+  color: var(--text-muted);
+}
+
+textarea {
+  resize: vertical;
+  min-height: 100px;
+}
+
+/* Modern Select */
+select {
+  width: 100%;
+  padding: 12px 16px;
+  padding-right: 40px;
+  background: var(--bg-tertiary);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: var(--radius-md);
+  color: var(--text-primary);
+  font-size: 14px;
+  cursor: pointer;
+  appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' fill='%2394a3b8' viewBox='0 0 16 16'%3E%3Cpath d='M4 6l4 4 4-4'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 12px center;
+  transition: all 0.2s ease;
+}
+
+select:focus {
+  outline: none;
+  border-color: var(--neon-cyan);
+  box-shadow: 0 0 0 3px rgba(0, 245, 255, 0.15);
+}
+
+/* Modern Badge */
+.neon-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 4px 10px;
+  background: rgba(0, 245, 255, 0.1);
+  border: 1px solid rgba(0, 245, 255, 0.2);
+  border-radius: 100px;
+  color: var(--neon-cyan);
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.neon-badge.green {
+  background: rgba(16, 185, 129, 0.1);
+  border-color: rgba(16, 185, 129, 0.2);
+  color: var(--neon-green);
+}
+
+.neon-badge.pink {
+  background: rgba(236, 72, 153, 0.1);
+  border-color: rgba(236, 72, 153, 0.2);
+  color: var(--neon-pink);
+}
+
+.neon-badge.orange {
+  background: rgba(245, 158, 11, 0.1);
+  border-color: rgba(245, 158, 11, 0.2);
+  color: var(--neon-orange);
+}
+
+/* Modern Nav Item */
+.nav-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 16px;
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-md);
+  color: var(--text-secondary);
+  font-size: 14px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  width: 100%;
+}
+
+.nav-item:hover {
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--text-primary);
+}
+
+.nav-item.active {
+  background: linear-gradient(135deg, rgba(0, 245, 255, 0.15) 0%, rgba(168, 85, 247, 0.1) 100%);
+  color: var(--neon-cyan);
+  box-shadow: inset 0 0 20px rgba(0, 245, 255, 0.1);
+}
+
+/* Modern Tab */
+.tab-button {
+  padding: 10px 20px;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--radius-md);
+  color: var(--text-secondary);
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.tab-button:hover {
+  color: var(--text-primary);
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.tab-button.active {
+  background: linear-gradient(135deg, rgba(0, 245, 255, 0.2) 0%, rgba(168, 85, 247, 0.1) 100%);
+  border-color: rgba(0, 245, 255, 0.3);
+  color: var(--neon-cyan);
+}
+
+/* Modern Scrollbar */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: var(--bg-secondary);
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--bg-tertiary);
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--text-muted);
+}
+
+/* Animations */
+@keyframes pulse-glow {
+  0%, 100% { box-shadow: var(--glow-cyan); }
+  50% { box-shadow: 0 0 40px rgba(0, 245, 255, 0.6); }
+}
+
+@keyframes fade-in {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.animate-fade-in {
+  animation: fade-in 0.3s ease forwards;
+}
+
+/* Utility Classes */
+.text-cyan { color: var(--neon-cyan); }
+.text-purple { color: var(--neon-purple); }
+.text-pink { color: var(--neon-pink); }
+.text-green { color: var(--neon-green); }
+.text-orange { color: var(--neon-orange); }
+
+.bg-cyan { background-color: rgba(0, 245, 255, 0.1); }
+.bg-purple { background-color: rgba(168, 85, 247, 0.1); }
+.bg-pink { background-color: rgba(236, 72, 153, 0.1); }
+.bg-green { background-color: rgba(16, 185, 129, 0.1); }
