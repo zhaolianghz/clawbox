@@ -45,8 +45,10 @@ pub fn get_log_files() -> Result<Vec<LogFile>, String> {
                 .as_ref()
                 .and_then(|m| m.modified().ok())
                 .and_then(|t| {
-                    let datetime: chrono::DateTime<chrono::Utc> = t.into();
-                    Some(datetime.format("%Y-%m-%d %H:%M:%S").to_string())
+                    let datetime: time::OffsetDateTime = t.into();
+                    // Use RFC3339 format which is built-in
+                    datetime.format(&time::format_description::well_known::Rfc3339).ok()
+                        .map(|s| s.to_string())
                 })
                 .unwrap_or_default();
 
@@ -70,7 +72,7 @@ pub fn get_log_content(path: String, filter: Option<String>) -> Result<Vec<LogLi
 
     let lines: Vec<LogLine> = content
         .lines()
-        .filter_map(|line| parse_log_line(line))
+        .filter_map(parse_log_line)
         .filter(|line| {
             if let Some(ref filter) = filter_lower {
                 line.message.to_lowercase().contains(filter)

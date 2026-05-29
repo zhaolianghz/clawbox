@@ -1,18 +1,36 @@
 <script lang="ts">
   import { _ } from 'svelte-i18n';
   import { onMount } from 'svelte';
-  
+
   let appVersion = $state('0.1.0');
   let gatewayVersion = $state('unknown');
   let checking = $state(false);
   let updateAvailable = $state(false);
-  
+  let updateMessage = $state('');
+
   async function checkForUpdates() {
     checking = true;
-    await new Promise(resolve => setTimeout(resolve, 1500));
-    checking = false;
+    updateMessage = '';
+    try {
+      const { invoke } = await import('@tauri-apps/api/core');
+      const result = await invoke<{
+        has_update: boolean;
+        current_version: string;
+        latest_version: string | null;
+        message: string;
+      }>('check_update');
+
+      updateAvailable = result.has_update;
+      updateMessage = result.message;
+      appVersion = result.current_version;
+    } catch {
+      updateMessage = 'Failed to check for updates';
+      updateAvailable = false;
+    } finally {
+      checking = false;
+    }
   }
-  
+
   onMount(async () => {
     try {
       const { invoke } = await import('@tauri-apps/api/core');
@@ -58,20 +76,18 @@
       </div>
       
       <div class="update-section">
-        {#if updateAvailable}
-          <div class="update-available">
-            <span>🎉 {$_('about.updateAvailable')}</span>
-            <button class="neon-button">{$_('about.updateNow')}</button>
+        <button class="neon-button" onclick={checkForUpdates} disabled={checking}>
+          {#if checking}
+            <span class="spinner-small"></span>
+            {$_('about.checking')}
+          {:else}
+            🔄 {$_('about.checkUpdates')}
+          {/if}
+        </button>
+        {#if updateMessage}
+          <div class="update-message" class:has-update={updateAvailable}>
+            {#if updateAvailable}🎉 {/if}{updateMessage}
           </div>
-        {:else}
-          <button class="neon-button" onclick={checkForUpdates} disabled={checking}>
-            {#if checking}
-              <span class="spinner-small"></span>
-              {$_('about.checking')}
-            {:else}
-              🔄 {$_('about.checkUpdates')}
-            {/if}
-          </button>
         {/if}
       </div>
     </div>
@@ -201,14 +217,18 @@
     padding-top: 1rem;
     border-top: 1px solid rgba(255, 255, 255, 0.1);
   }
-  
-  .update-available {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
+
+  .update-message {
+    margin-top: 0.75rem;
     padding: 0.75rem;
-    background: rgba(0, 255, 136, 0.1);
+    background: var(--bg-tertiary);
     border-radius: 0.5rem;
+    color: var(--text-secondary);
+    font-size: 0.9rem;
+  }
+
+  .update-message.has-update {
+    background: rgba(0, 255, 136, 0.1);
     color: var(--neon-green);
   }
   

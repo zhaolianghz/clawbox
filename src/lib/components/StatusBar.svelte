@@ -1,6 +1,4 @@
 <script lang="ts">
-  import { _ } from 'svelte-i18n';
-  
   interface Props {
     gatewayStatus?: string;
     gatewayVersion?: string;
@@ -15,7 +13,7 @@
 <footer class="statusbar">
   <div class="status-item">
     <span class="status-dot" class:running={gatewayRunning}></span>
-    <span>{gatewayRunning ? $_('gateway.running') : $_('gateway.stopped')}</span>
+    <span>{gatewayRunning ? 'Running' : 'Stopped'}</span>
   </div>
   
   <div class="status-item">

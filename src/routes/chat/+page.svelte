@@ -1,12 +1,7 @@
 <script lang="ts">
   import { _ } from 'svelte-i18n';
-  
-  interface Message {
-    id: string;
-    role: 'user' | 'assistant';
-    content: string;
-    timestamp: Date;
-  }
+  import { onMount, onDestroy } from 'svelte';
+  import { openclawGateway, type ChatMessage } from '$lib/api/chat';
   
   interface Tab {
     id: string;
@@ -15,39 +10,95 @@
     messages: Message[];
   }
   
+  interface Message {
+    id: string;
+    role: 'user' | 'assistant';
+    content: string;
+    timestamp: Date;
+  }
+  
   let tabs = $state<Tab[]>([
     { id: '1', name: 'Chat 1', agent: 'Claude 3', messages: [] }
   ]);
   let activeTab = $state('1');
   let inputValue = $state('');
   let isLoading = $state(false);
+  let connectionStatus = $state<'connected' | 'disconnected' | 'connecting'>('disconnected');
   
-  function sendMessage() {
+  onMount(async () => {
+    // Connect to gateway
+    try {
+      connectionStatus = 'connecting';
+      await openclawGateway.connect(
+        (msg) => {
+          // Handle incoming messages
+          const tab = tabs.find(t => t.id === activeTab);
+          if (tab) {
+            tab.messages = [...tab.messages, msg];
+          }
+        },
+        (status) => {
+          connectionStatus = status;
+        }
+      );
+      
+      // Load history
+      const history = await openclawGateway.getHistory();
+      if (history.length > 0) {
+        const tab = tabs.find(t => t.id === activeTab);
+        if (tab) {
+          tab.messages = history;
+        }
+      }
+    } catch (err) {
+      console.error('Failed to connect to gateway:', err);
+      connectionStatus = 'disconnected';
+    }
+  });
+  
+  onDestroy(() => {
+    openclawGateway.disconnect();
+  });
+  
+  async function sendMessage() {
     if (!inputValue.trim() || isLoading) return;
     
     const tab = tabs.find(t => t.id === activeTab);
     if (!tab) return;
     
-    tab.messages = [...tab.messages, {
+    const userMsg: Message = {
       id: Date.now().toString(),
       role: 'user',
       content: inputValue,
       timestamp: new Date()
-    }];
+    };
+    tab.messages = [...tab.messages, userMsg];
     
+    const currentInput = inputValue;
     inputValue = '';
     isLoading = true;
     
-    setTimeout(() => {
-      const loadingMsg: Message = {
+    try {
+      const response = await openclawGateway.sendMessage(currentInput);
+      const assistantMsg: Message = {
+        id: response.id || (Date.now() + 1).toString(),
+        role: 'assistant',
+        content: response.content,
+        timestamp: response.timestamp
+      };
+      tab.messages = [...tab.messages, assistantMsg];
+    } catch (err) {
+      console.error('Failed to send message:', err);
+      const errorMsg: Message = {
         id: (Date.now() + 1).toString(),
         role: 'assistant',
-        content: 'This is a mock response. In production, this would connect to the OpenClaw Gateway API.',
+        content: `Error: ${err instanceof Error ? err.message : 'Failed to send message'}`,
         timestamp: new Date()
       };
-      tab.messages = [...tab.messages, loadingMsg];
+      tab.messages = [...tab.messages, errorMsg];
+    } finally {
       isLoading = false;
-    }, 1000);
+    }
   }
   
   function handleKeydown(e: KeyboardEvent) {
@@ -60,6 +111,12 @@
 
 <div class="chat-page">
   <div class="chat-tabs">
+    <div class="connection-status" class:connected={connectionStatus === 'connected'} class:connecting={connectionStatus === 'connecting'}>
+      {#if connectionStatus === 'connected'}●{:else if connectionStatus === 'connecting'}◐{:else}○{/if}
+      <span class="status-text">
+        {#if connectionStatus === 'connected'}Connected{:else if connectionStatus === 'connecting'}Connecting...{:else}Disconnected{/if}
+      </span>
+    </div>
     {#each tabs as tab}
       <button
         class="tab"
@@ -122,6 +179,31 @@
     background: var(--bg-secondary);
     border-bottom: 1px solid rgba(255, 255, 255, 0.1);
     overflow-x: auto;
+    align-items: center;
+  }
+
+  .connection-status {
+    display: flex;
+    align-items: center;
+    gap: 0.375rem;
+    padding: 0.25rem 0.75rem;
+    border-radius: 1rem;
+    font-size: 0.75rem;
+    background: var(--bg-tertiary);
+    color: var(--text-muted);
+    margin-right: 0.5rem;
+  }
+
+  .connection-status.connected {
+    color: #4ade80;
+  }
+
+  .connection-status.connecting {
+    color: #facc15;
+  }
+
+  .status-text {
+    font-weight: 500;
   }
   
   .tab {

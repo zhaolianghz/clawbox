@@ -20,23 +20,24 @@
     isChecking = true;
     try {
       const result = await invoke<{
-        nodejs: boolean;
-        openclaw: boolean;
-        network: string;
+        nodejs: { installed: boolean; version: string | null };
+        openclaw: { installed: boolean; version: string | null };
+        platform: string;
+        is_china: boolean;
       }>('check_system');
-      
+
       const newCheck: SystemCheck = {
-        nodejs: result.nodejs,
-        openclaw: result.openclaw,
-        network: result.network as 'cn' | 'global' | 'unknown'
+        nodejs: result.nodejs.installed,
+        openclaw: result.openclaw.installed,
+        network: result.is_china ? 'cn' : 'global'
       };
-      
+
       systemCheck.set(newCheck);
       checkData = newCheck;
-      
-      const needs = !result.nodejs || !result.openclaw;
+
+      const needs = !result.nodejs.installed || !result.openclaw.installed;
       needsInstall.set(needs);
-      
+
       if (needs) {
         const newProgress: InstallProgress = { ...progressData, step: 'terms' };
         installProgress.set(newProgress);
@@ -60,29 +61,29 @@
   }
 
   async function startInstall() {
-    let newProgress: InstallProgress = { 
-      step: 'installing', 
+    let newProgress: InstallProgress = {
+      step: 'installing',
       progress: 0,
       log: []
     };
     installProgress.set(newProgress);
     progressData = newProgress;
 
-    try {      
+    try {
       if (!checkData.nodejs) {
         addLog('Installing Node.js...');
         await installWithProgress('install_nodejs', 50);
       }
-      
+
       if (!checkData.openclaw) {
         addLog('Installing OpenClaw CLI...');
         await installWithProgress('install_openclaw', checkData.nodejs ? 100 : 50);
       }
-      
-      newProgress = { 
+
+      newProgress = {
         ...progressData,
         step: 'complete',
-        progress: 100 
+        progress: 100
       };
       installProgress.set(newProgress);
       progressData = newProgress;
@@ -98,13 +99,33 @@
 
   async function installWithProgress(cmd: string, targetProgress: number) {
     try {
-      await invoke(cmd);
+      // 先验证组件状态
+      const status = await invoke<{
+        nodejs: { installed: boolean; version: string | null };
+        openclaw: { installed: boolean; version: string | null };
+      }>('check_system');
+
+      // 根据命令类型验证对应组件
+      if (cmd === 'install_nodejs' && !status.nodejs.installed) {
+        addLog('Node.js not available. Please install Node.js manually.');
+        throw new Error('Node.js installation failed - component not available');
+      }
+      if (cmd === 'install_openclaw' && !status.openclaw.installed) {
+        addLog('OpenClaw not available. Please install OpenClaw CLI manually.');
+        throw new Error('OpenClaw installation failed - component not available');
+      }
+
+      // 验证通过
       const newProgress: InstallProgress = { ...progressData, progress: targetProgress };
       installProgress.set(newProgress);
       progressData = newProgress;
-      addLog('Installation step completed.');
+      addLog('Component verified as available.');
     } catch (e) {
-      throw e;
+      if (e instanceof Error && e.message.includes('installation failed')) {
+        throw e;
+      }
+      // 其他错误（如命令不存在）也记录
+      addLog(`Verification warning: ${e instanceof Error ? e.message : String(e)}`);
     }
   }
 

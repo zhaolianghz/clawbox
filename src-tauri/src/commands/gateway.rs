@@ -1,4 +1,5 @@
 use serde::Serialize;
+use std::fs;
 use std::process::Command;
 
 #[derive(Serialize)]
@@ -8,22 +9,25 @@ pub struct GatewayStatus {
     pub pid: Option<i32>,
 }
 
-#[tauri::command]
-pub fn get_gateway_status() -> GatewayStatus {
-    let output = Command::new("pgrep")
-        .arg("-f")
-        .arg("openclaw gateway")
+fn check_gateway_running() -> bool {
+    let output = Command::new("lsof")
+        .arg("-i")
+        .arg(":18789")
         .output();
 
-    let pid = match output {
-        Ok(output) if output.status.success() => String::from_utf8_lossy(&output.stdout)
-            .trim()
-            .parse::<i32>()
-            .ok(),
-        _ => None,
-    };
+    match output {
+        Ok(output) if output.status.success() => {
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            stdout.contains("LISTEN")
+        }
+        _ => false,
+    }
+}
 
-    let status = if pid.is_some() { "running" } else { "stopped" };
+#[tauri::command]
+pub fn get_gateway_status() -> Result<GatewayStatus, String> {
+    let running = check_gateway_running();
+    let status = if running { "running" } else { "stopped" };
 
     let version = Command::new("openclaw")
         .arg("--version")
@@ -31,29 +35,50 @@ pub fn get_gateway_status() -> GatewayStatus {
         .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
         .unwrap_or_else(|_| "unknown".to_string());
 
-    GatewayStatus {
+    Ok(GatewayStatus {
         status: status.to_string(),
         version,
-        pid,
-    }
+        pid: None,
+    })
 }
 
 #[tauri::command]
 pub fn start_gateway() -> Result<String, String> {
-    let output = Command::new("openclaw").arg("gateway").arg("start").spawn();
+    let mut child = Command::new("openclaw-gateway")
+        .spawn()
+        .map_err(|e| format!("Failed to start openclaw-gateway: {}", e))?;
 
-    match output {
-        Ok(_) => Ok("Gateway starting".to_string()),
-        Err(e) => Err(format!("Failed to start gateway: {}", e)),
-    }
+    // Optionally wait for the child to start
+    let _ = child.try_wait();
+
+    Ok("Gateway starting".to_string())
 }
 
 #[tauri::command]
 pub fn stop_gateway() -> Result<String, String> {
-    let output = Command::new("openclaw").arg("gateway").arg("stop").spawn();
+    Command::new("pkill")
+        .arg("-f")
+        .arg("openclaw-gateway")
+        .output()
+        .map_err(|e| format!("Failed to execute pkill: {}", e))?;
 
-    match output {
-        Ok(_) => Ok("Gateway stopping".to_string()),
-        Err(e) => Err(format!("Failed to stop gateway: {}", e)),
-    }
+    Ok("Gateway stopping".to_string())
+}
+
+#[tauri::command]
+pub fn get_gateway_token() -> Result<String, String> {
+    let home = std::env::var("HOME").map_err(|_| "Failed to get HOME directory")?;
+    let config_path = format!("{}/.openclaw/openclaw.json", home);
+
+    let content = fs::read_to_string(&config_path)
+        .map_err(|e| format!("Failed to read config: {}", e))?;
+
+    let json: serde_json::Value = serde_json::from_str(&content)
+        .map_err(|e| format!("Failed to parse config JSON: {}", e))?;
+
+    let token = json["gateway"]["auth"]["token"]
+        .as_str()
+        .ok_or_else(|| "No gateway token found in config".to_string())?;
+
+    Ok(token.to_string())
 }

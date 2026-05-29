@@ -9,10 +9,13 @@ pub fn run() {
             gateway::get_gateway_status,
             gateway::start_gateway,
             gateway::stop_gateway,
+            gateway::get_gateway_token,
             config::get_config,
             config::set_config,
             install::check_system,
             install::install_openclaw,
+            install::check_update,
+            install::check_openclaw_update,
             logs::get_log_files,
             logs::get_log_content,
         ])
