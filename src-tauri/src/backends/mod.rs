@@ -1,4 +1,4 @@
-use serde::Serialize;
+use serde::{Serialize, Deserialize};
 
 mod hermes;
 mod openclaw;
@@ -16,7 +16,7 @@ pub struct CronJob {
     pub raw: serde_json::Value,
 }
 
-#[derive(Serialize, Clone, Debug)]
+#[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct NewCron {
     pub name: String,
     pub schedule: String,
