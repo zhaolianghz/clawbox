@@ -1,3 +1,5 @@
+use std::process::Command;
+
 use super::{Backend, CronJob, GatewayStatus, NewCron};
 
 pub struct HermesBackend;
@@ -5,8 +7,18 @@ pub struct HermesBackend;
 impl Backend for HermesBackend {
     fn id(&self) -> &'static str { "hermes" }
     fn display_name(&self) -> &'static str { "Hermes" }
-    fn version(&self) -> String { "unknown".into() }
-    fn is_installed(&self) -> bool { false }
+    fn version(&self) -> String {
+        Command::new("hermes").arg("--version").output().ok()
+            .filter(|o| o.status.success())
+            .map(|o| String::from_utf8_lossy(&o.stdout).lines().next().unwrap_or("").trim().to_string())
+            .filter(|s| !s.is_empty())
+            .unwrap_or_else(|| "unknown".into())
+    }
+
+    fn is_installed(&self) -> bool {
+        Command::new("hermes").arg("--version").output()
+            .map(|o| o.status.success()).unwrap_or(false)
+    }
     fn gateway_status(&self) -> Result<GatewayStatus, String> { unimplemented!() }
     fn gateway_start(&self) -> Result<String, String> { unimplemented!() }
     fn gateway_stop(&self) -> Result<String, String> { unimplemented!() }
