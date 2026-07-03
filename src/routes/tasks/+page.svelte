@@ -1,55 +1,97 @@
 <script lang="ts">
   import { _ } from 'svelte-i18n';
   import { onMount } from 'svelte';
-  
-  interface Task {
-    id: string;
-    name: string;
-    schedule: string;
-    status: 'enabled' | 'disabled' | 'running';
-    lastRun: string;
-    nextRun: string;
-    type: 'scheduled' | 'triggered';
-  }
-  
-  let tasks = $state<Task[]>([]);
+  import {
+    list_cron_all, add_cron, remove_cron, set_cron_enabled, run_cron,
+    type TaggedCronJob, type NewCron,
+  } from '$lib/api/cron';
+  import { list_backends, type BackendInfo, type BackendId } from '$lib/api/backends';
+
+  let backends = $state<BackendInfo[]>([]);
+  let grouped = $state<Record<string, TaggedCronJob[]>>({});
+  let errors = $state<{ backend: string; message: string }[]>([]);
   let isLoading = $state(true);
-  
+  let busyId = $state<string | null>(null);
+
+  let newName = $state('');
+  let newSchedule = $state('0 2 * * *');
+  let newMessage = $state('');
+  let newBackend = $state<BackendId>('openclaw');
+  let formError = $state('');
+  let creating = $state(false);
+
   async function loadTasks() {
-    await new Promise(resolve => setTimeout(resolve, 500));
-    tasks = [
-      { id: '1', name: 'Daily Backup', schedule: '0 2 * * *', status: 'enabled', lastRun: '2024-03-24 02:00', nextRun: '2024-03-25 02:00', type: 'scheduled' },
-      { id: '2', name: 'Log Cleanup', schedule: '0 0 * * 0', status: 'enabled', lastRun: '2024-03-17 00:00', nextRun: '2024-03-24 00:00', type: 'scheduled' },
-      { id: '3', name: 'Code Review Check', schedule: '*/30 * * * *', status: 'running', lastRun: '2024-03-24 15:00', nextRun: '2024-03-24 15:30', type: 'triggered' },
-      { id: '4', name: 'Weekly Report', schedule: '0 9 * * 1', status: 'disabled', lastRun: '2024-03-18 09:00', nextRun: '-', type: 'scheduled' },
-      { id: '5', name: 'Health Check', schedule: '*/5 * * * *', status: 'enabled', lastRun: '2024-03-24 15:25', nextRun: '2024-03-24 15:30', type: 'triggered' },
-    ];
+    isLoading = true;
+    const [bl, cl] = await Promise.all([list_backends(), list_cron_all()]);
+    backends = bl;
+    errors = cl.errors;
+    const map: Record<string, TaggedCronJob[]> = {};
+    for (const b of bl) map[b.id] = [];
+    for (const t of cl.jobs) {
+      (map[t.backend] ??= []).push(t);
+    }
+    grouped = map;
+    if (bl.length > 0 && !bl.some((b) => b.id === newBackend && b.installed)) {
+      const firstInstalled = bl.find((b) => b.installed);
+      if (firstInstalled) newBackend = firstInstalled.id;
+    }
     isLoading = false;
   }
-  
-  function getStatusColor(status: string): string {
-    switch (status) {
-      case 'running': return 'var(--neon-green)';
-      case 'enabled': return 'var(--neon-cyan)';
-      default: return 'var(--text-muted)';
+
+  async function toggleTask(t: TaggedCronJob) {
+    const key = `${t.backend}:${t.job.id}`;
+    busyId = key;
+    try {
+      await set_cron_enabled(t.backend, t.job.id, !t.job.enabled);
+      await loadTasks();
+    } finally {
+      busyId = null;
     }
   }
-  
-  function getStatusIcon(status: string): string {
-    switch (status) {
-      case 'running': return '▶️';
-      case 'enabled': return '✅';
-      default: return '⏸️';
+
+  async function deleteTask(t: TaggedCronJob) {
+    const key = `${t.backend}:${t.job.id}`;
+    busyId = key;
+    try {
+      await remove_cron(t.backend, t.job.id);
+      await loadTasks();
+    } finally {
+      busyId = null;
     }
   }
-  
-  function toggleTask(taskId: string) {
-    const task = tasks.find(t => t.id === taskId);
-    if (!task || task.status === 'running') return;
-    task.status = task.status === 'enabled' ? 'disabled' : 'enabled';
-    tasks = [...tasks];
+
+  async function runTask(t: TaggedCronJob) {
+    const key = `${t.backend}:${t.job.id}`;
+    busyId = key;
+    try {
+      await run_cron(t.backend, t.job.id);
+    } finally {
+      busyId = null;
+    }
   }
-  
+
+  async function createTask() {
+    formError = '';
+    if (!newName.trim()) { formError = 'Name is required'; return; }
+    if (!newSchedule.trim()) { formError = 'A schedule is required'; return; }
+    creating = true;
+    try {
+      const params: NewCron = {
+        name: newName.trim(),
+        schedule: newSchedule.trim(),
+        message: newMessage.trim() || undefined,
+      };
+      await add_cron(newBackend, params);
+      newName = '';
+      newMessage = '';
+      await loadTasks();
+    } catch (e) {
+      formError = e instanceof Error ? e.message : String(e);
+    } finally {
+      creating = false;
+    }
+  }
+
   onMount(loadTasks);
 </script>
 
@@ -63,101 +105,105 @@
       <h1>{$_('tasks.title')}</h1>
       <p class="subtitle">{$_('tasks.subtitle')}</p>
     </div>
-    <button class="neon-button">➕ {$_('tasks.newTask')}</button>
   </div>
-  
+
   <div class="tasks-container">
     <div class="tasks-list glass-card">
       <div class="list-header">
         <span>{$_('tasks.scheduledTasks')}</span>
-        <span class="count">{tasks.length}</span>
+        <span class="count">{Object.values(grouped).reduce((n, list) => n + list.length, 0)}</span>
       </div>
-      
+
       {#if isLoading}
-        <div class="loading">
-          <div class="spinner"></div>
-        </div>
+        <div class="loading"><div class="spinner"></div></div>
       {:else}
         <div class="task-items">
-          {#each tasks as task}
-            <div class="task-item" class:disabled={task.status === 'disabled'}>
-              <div class="task-status">
-                <span class="status-icon">{getStatusIcon(task.status)}</span>
-                <span class="status-dot" style="background: {getStatusColor(task.status)}"></span>
-              </div>
-              
-              <div class="task-info">
-                <div class="task-header">
-                  <span class="task-name">{task.name}</span>
-                  <span class="task-type">{task.type}</span>
-                </div>
-                <div class="task-schedule">
-                  <code>{task.schedule}</code>
-                </div>
-                <div class="task-meta">
-                  <span>{$_('tasks.lastRun')}: {task.lastRun}</span>
-                  <span>{$_('tasks.nextRun')}: {task.nextRun}</span>
-                </div>
-              </div>
-              
-              <div class="task-actions">
-                <button
-                  class="action-btn"
-                  onclick={() => toggleTask(task.id)}
-                  disabled={task.status === 'running'}
-                  title={task.status === 'enabled' ? $_('tasks.disable') : $_('tasks.enable')}
-                >
-                  {task.status === 'enabled' || task.status === 'running' ? '⏸️' : '▶️'}
-                </button>
-                <button class="action-btn" title={$_('tasks.edit')}>
-                  ✏️
-                </button>
-                <button class="action-btn delete" title={$_('tasks.delete')}>
-                  🗑️
-                </button>
-              </div>
-            </div>
+          {#each backends as backend (backend.id)}
+            <section class="backend-section">
+              <header class="backend-header">
+                <span class="backend-chip" data-backend={backend.id}>{backend.displayName}</span>
+                {#if backend.installed}
+                  <span class="backend-count">
+                    {grouped[backend.id]?.length ?? 0} jobs
+                  </span>
+                {:else}
+                  <span class="empty">{$_('backend.notInstalled')}</span>
+                {/if}
+              </header>
+
+              {#if backend.installed && (grouped[backend.id]?.length ?? 0) > 0}
+                {#each grouped[backend.id] as t (t.backend + ':' + t.job.id)}
+                  {@const key = t.backend + ':' + t.job.id}
+                  <div class="task-item" class:disabled={!t.job.enabled}>
+                    <div class="task-info">
+                      <div class="task-header">
+                        <span class="task-name">{t.job.name}</span>
+                      </div>
+                      <div class="task-schedule">
+                        <code>{t.job.schedule}</code>
+                      </div>
+                    </div>
+                    <div class="task-actions">
+                      <button class="action-btn" onclick={() => toggleTask(t)} disabled={busyId === key}
+                        title={t.job.enabled ? $_('tasks.disable') : $_('tasks.enable')}>
+                        {t.job.enabled ? '⏸️' : '▶️'}
+                      </button>
+                      <button class="action-btn" onclick={() => runTask(t)} disabled={busyId === key}
+                        title="Run now">▶️</button>
+                      <button class="action-btn delete" onclick={() => deleteTask(t)} disabled={busyId === key}
+                        title={$_('tasks.delete')}>🗑️</button>
+                    </div>
+                  </div>
+                {/each}
+              {/if}
+            </section>
           {/each}
+
+          {#if errors.length > 0}
+            <div class="errors">
+              {#each errors as err (err.backend + ':' + err.message)}
+                <p class="error-line">{err.backend}: {err.message}</p>
+              {/each}
+            </div>
+          {/if}
         </div>
       {/if}
     </div>
-    
+
     <div class="flow-editor-panel glass-card">
       <div class="panel-header">
-        <h2>{$_('tasks.flowEditor')}</h2>
+        <h2>{$_('tasks.scheduleBuilder')}</h2>
       </div>
-      
+
       <div class="editor-content">
-        <div class="placeholder-content">
-          <span class="placeholder-icon">📋</span>
-          <p>{$_('tasks.flowEditorPlaceholder')}</p>
-        </div>
-        
-        <div class="schedule-builder">
-          <h3>{$_('tasks.scheduleBuilder')}</h3>
-          <div class="builder-form">
-            <div class="form-group">
-              <label>{$_('tasks.frequency')}</label>
-              <select>
-                <option>{$_('tasks.everyMinute')}</option>
-                <option>{$_('tasks.hourly')}</option>
-                <option selected>{$_('tasks.daily')}</option>
-                <option>{$_('tasks.weekly')}</option>
-                <option>{$_('tasks.custom')}</option>
-              </select>
-            </div>
-            <div class="form-group">
-              <label>{$_('tasks.time')}</label>
-              <input type="time" value="02:00" />
-            </div>
-            <div class="form-row">
-              <div class="form-group">
-                <label>{$_('tasks.cronExpression')}</label>
-                <input type="text" value="0 2 * * *" readonly />
-              </div>
-            </div>
+        <form class="builder-form" onsubmit={createTask}>
+          <div class="form-group">
+            <label>{$_('task.newBackend')}</label>
+            <select bind:value={newBackend}>
+              {#each backends.filter((b) => b.installed) as b (b.id)}
+                <option value={b.id}>{b.displayName}</option>
+              {/each}
+            </select>
           </div>
-        </div>
+          <div class="form-group">
+            <label>{$_('tasks.newTask')}</label>
+            <input type="text" bind:value={newName} placeholder="Daily report" required />
+          </div>
+          <div class="form-group">
+            <label>{$_('tasks.cronExpression')}</label>
+            <input id="task-cron" type="text" bind:value={newSchedule} placeholder="0 2 * * *" required />
+          </div>
+          <div class="form-group">
+            <label>Message (optional)</label>
+            <input type="text" bind:value={newMessage} placeholder="What to run" />
+          </div>
+          {#if formError}
+            <p class="form-error">{formError}</p>
+          {/if}
+          <button class="neon-button" type="submit" disabled={creating}>
+            {creating ? '...' : $_('tasks.newTask')}
+          </button>
+        </form>
       </div>
     </div>
   </div>
@@ -171,7 +217,7 @@
     margin: -1.5rem;
     background: var(--bg-primary);
   }
-  
+
   .page-header {
     display: flex;
     justify-content: space-between;
@@ -180,18 +226,11 @@
     background: var(--bg-secondary);
     border-bottom: 1px solid rgba(255, 255, 255, 0.1);
   }
-  
-  .page-header h1 {
-    margin: 0;
-    font-size: 1.25rem;
-  }
-  
-  .subtitle {
-    margin: 0.25rem 0 0;
-    color: var(--text-muted);
-    font-size: 0.875rem;
-  }
-  
+
+  .page-header h1 { margin: 0; font-size: 1.25rem; }
+
+  .subtitle { margin: 0.25rem 0 0; color: var(--text-muted); font-size: 0.875rem; }
+
   .tasks-container {
     flex: 1;
     display: flex;
@@ -199,260 +238,105 @@
     padding: 1rem;
     overflow: hidden;
   }
-  
-  .tasks-list {
-    width: 400px;
-    display: flex;
-    flex-direction: column;
-    padding: 1rem;
-  }
-  
+
+  .tasks-list { width: 460px; display: flex; flex-direction: column; padding: 1rem; }
+
   .list-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    margin-bottom: 1rem;
-    font-weight: 600;
+    display: flex; justify-content: space-between; align-items: center;
+    margin-bottom: 1rem; font-weight: 600;
   }
-  
+
   .count {
     background: var(--bg-tertiary);
-    padding: 0.125rem 0.5rem;
-    border-radius: 0.25rem;
-    font-size: 0.75rem;
-    color: var(--text-muted);
+    padding: 0.125rem 0.5rem; border-radius: 0.25rem;
+    font-size: 0.75rem; color: var(--text-muted);
   }
-  
+
   .task-items {
-    flex: 1;
-    overflow-y: auto;
-    display: flex;
-    flex-direction: column;
-    gap: 0.5rem;
+    flex: 1; overflow-y: auto;
+    display: flex; flex-direction: column; gap: 0.5rem;
   }
-  
-  .task-item {
-    display: flex;
-    align-items: flex-start;
-    gap: 0.75rem;
-    padding: 0.75rem;
-    background: var(--bg-primary);
+
+  .backend-section {
+    background: rgba(0,0,0,0.15);
     border-radius: 0.5rem;
-    border-left: 3px solid var(--neon-cyan);
-    transition: opacity 0.2s ease;
-  }
-  
-  .task-item.disabled {
-    opacity: 0.5;
-    border-left-color: var(--text-muted);
-  }
-  
-  .task-status {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: 0.25rem;
-  }
-  
-  .status-icon {
-    font-size: 1rem;
-  }
-  
-  .status-dot {
-    width: 8px;
-    height: 8px;
-    border-radius: 50%;
-  }
-  
-  .task-info {
-    flex: 1;
-    min-width: 0;
-  }
-  
-  .task-header {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-    margin-bottom: 0.25rem;
-  }
-  
-  .task-name {
-    font-weight: 600;
-    color: var(--text-primary);
-  }
-  
-  .task-type {
-    font-size: 0.625rem;
-    padding: 0.125rem 0.375rem;
-    background: var(--bg-tertiary);
-    border-radius: 0.25rem;
-    color: var(--text-muted);
-    text-transform: uppercase;
-  }
-  
-  .task-schedule {
-    margin-bottom: 0.25rem;
-  }
-  
-  .task-schedule code {
-    font-size: 0.75rem;
-    color: var(--neon-cyan);
-    background: rgba(0, 245, 255, 0.1);
-    padding: 0.125rem 0.375rem;
-    border-radius: 0.25rem;
-  }
-  
-  .task-meta {
-    display: flex;
-    flex-direction: column;
-    font-size: 0.75rem;
-    color: var(--text-muted);
-  }
-  
-  .task-actions {
-    display: flex;
-    gap: 0.25rem;
-  }
-  
-  .action-btn {
-    width: 28px;
-    height: 28px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    background: var(--bg-tertiary);
-    border: none;
-    border-radius: 0.25rem;
-    cursor: pointer;
-    transition: all 0.2s ease;
-  }
-  
-  .action-btn:hover {
-    background: rgba(0, 245, 255, 0.1);
-  }
-  
-  .action-btn.delete:hover {
-    background: rgba(255, 0, 110, 0.1);
-  }
-  
-  .action-btn:disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
-  }
-  
-  .flow-editor-panel {
-    flex: 1;
-    display: flex;
-    flex-direction: column;
-    padding: 1rem;
-  }
-  
-  .panel-header {
-    margin-bottom: 1rem;
-  }
-  
-  .panel-header h2 {
-    margin: 0;
-    font-size: 1rem;
-  }
-  
-  .editor-content {
-    flex: 1;
-    display: flex;
-    flex-direction: column;
-    gap: 1.5rem;
-  }
-  
-  .placeholder-content {
-    flex: 1;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    text-align: center;
-    color: var(--text-muted);
-    background: var(--bg-primary);
-    border-radius: 0.5rem;
-  }
-  
-  .placeholder-icon {
-    font-size: 3rem;
-    margin-bottom: 1rem;
-    opacity: 0.5;
-  }
-  
-  .schedule-builder {
-    background: var(--bg-primary);
-    border-radius: 0.5rem;
-    padding: 1rem;
-  }
-  
-  .schedule-builder h3 {
-    margin: 0 0 1rem;
-    font-size: 0.875rem;
-    color: var(--text-secondary);
-  }
-  
-  .builder-form {
-    display: flex;
-    flex-direction: column;
-    gap: 0.75rem;
-  }
-  
-  .form-group {
-    display: flex;
-    flex-direction: column;
-    gap: 0.25rem;
-  }
-  
-  .form-group label {
-    font-size: 0.75rem;
-    color: var(--text-muted);
-  }
-  
-  .form-group input,
-  .form-group select {
-    background: var(--bg-tertiary);
-    border: 1px solid rgba(255, 255, 255, 0.1);
-    border-radius: 0.375rem;
     padding: 0.5rem;
-    color: var(--text-primary);
-    font-size: 0.875rem;
   }
-  
-  .form-group input:focus,
-  .form-group select:focus {
-    outline: none;
-    border-color: var(--neon-cyan);
+
+  .backend-header {
+    display: flex; justify-content: space-between; align-items: center;
+    margin-bottom: 0.5rem; font-size: 0.75rem;
   }
-  
-  .form-group input[readonly] {
-    opacity: 0.7;
-    cursor: not-allowed;
+
+  .backend-chip {
+    padding: 0.125rem 0.5rem; border-radius: 999px;
+    font-weight: 600; font-size: 0.7rem;
   }
-  
-  .form-row {
-    margin-top: 0.5rem;
-    padding-top: 0.75rem;
-    border-top: 1px solid rgba(255, 255, 255, 0.1);
+  .backend-chip[data-backend="openclaw"] { background: rgba(0,245,255,0.15); color: var(--neon-cyan); }
+  .backend-chip[data-backend="hermes"]   { background: rgba(255,0,200,0.15); color: #ff6ad5; }
+
+  .backend-count { color: var(--text-muted); }
+  .empty { color: var(--text-muted); font-style: italic; }
+
+  .task-item {
+    display: flex; align-items: center; gap: 0.5rem;
+    padding: 0.5rem; background: var(--bg-primary);
+    border-radius: 0.375rem; border-left: 3px solid var(--neon-cyan);
   }
-  
-  .loading {
-    display: flex;
-    justify-content: center;
-    padding: 2rem;
+  .task-item.disabled { opacity: 0.5; border-left-color: var(--text-muted); }
+
+  .task-info { flex: 1; min-width: 0; }
+  .task-header { display: flex; align-items: center; gap: 0.5rem; }
+  .task-name { font-weight: 600; color: var(--text-primary); }
+  .task-schedule code {
+    font-size: 0.75rem; color: var(--neon-cyan);
+    background: rgba(0,245,255,0.1); padding: 0.125rem 0.375rem; border-radius: 0.25rem;
   }
-  
+
+  .task-actions { display: flex; gap: 0.25rem; }
+  .action-btn {
+    width: 28px; height: 28px; display: flex; align-items: center; justify-content: center;
+    background: var(--bg-tertiary); border: none; border-radius: 0.25rem; cursor: pointer;
+  }
+  .action-btn:hover { background: rgba(0,245,255,0.1); }
+  .action-btn.delete:hover { background: rgba(255,0,110,0.1); }
+  .action-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+  .errors {
+    margin-top: 0.5rem; padding: 0.5rem;
+    background: rgba(255,0,110,0.1); border-radius: 0.375rem;
+  }
+  .error-line { color: var(--neon-magenta); font-size: 0.75rem; margin: 0.25rem 0; }
+
+  .flow-editor-panel { flex: 1; display: flex; flex-direction: column; padding: 1rem; }
+  .panel-header { margin-bottom: 1rem; }
+  .panel-header h2 { margin: 0; font-size: 1rem; }
+  .editor-content { flex: 1; }
+  .builder-form { display: flex; flex-direction: column; gap: 0.75rem; }
+
+  .form-group { display: flex; flex-direction: column; gap: 0.25rem; }
+  .form-group label { font-size: 0.75rem; color: var(--text-muted); }
+  .form-group input, .form-group select {
+    background: var(--bg-tertiary);
+    border: 1px solid rgba(255,255,255,0.1);
+    border-radius: 0.375rem; padding: 0.5rem; color: var(--text-primary); font-size: 0.875rem;
+  }
+  .form-group input:focus, .form-group select:focus { outline: none; border-color: var(--neon-cyan); }
+
+  .form-error { color: var(--neon-magenta); font-size: 0.75rem; margin: 0; }
+
+  .neon-button {
+    background: var(--neon-cyan); color: var(--bg-primary);
+    border: none; padding: 0.5rem 1rem; border-radius: 0.375rem;
+    font-weight: 600; cursor: pointer;
+  }
+  .neon-button:disabled { opacity: 0.5; cursor: not-allowed; }
+
+  .loading { display: flex; justify-content: center; padding: 2rem; }
   .spinner {
-    width: 24px;
-    height: 24px;
-    border: 2px solid var(--bg-tertiary);
-    border-top-color: var(--neon-cyan);
-    border-radius: 50%;
-    animation: spin 1s linear infinite;
+    width: 24px; height: 24px;
+    border: 2px solid var(--bg-tertiary); border-top-color: var(--neon-cyan);
+    border-radius: 50%; animation: spin 1s linear infinite;
   }
-  
-  @keyframes spin {
-    to { transform: rotate(360deg); }
-  }
+  @keyframes spin { to { transform: rotate(360deg); } }
 </style>
