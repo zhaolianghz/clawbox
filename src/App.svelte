@@ -12,11 +12,18 @@
   import TasksPage from './routes/tasks/+page.svelte';
   import ConfigPage from './routes/config/+page.svelte';
   import { openclawGateway } from './lib/api/chat';
+  import { get_stats, extractMetrics, type DashboardMetrics } from './lib/api/stats';
+  import { list_gateway_statuses } from './lib/api/gateway';
+  import { list_backends, type BackendInfo } from './lib/api/backends';
 
   let currentPage = $state('home');
   let gatewayStatus = $state('stopped');
   let gatewayVersion = $state('v1.0.0');
-  let tokenCount = $state(12543);
+  let tokenCount = $state(0);
+  let metrics = $state<DashboardMetrics | null>(null);
+  let statsLoading = $state(true);
+  let backends = $state<BackendInfo[]>([]);
+  let gatewayByBackend = $state<Record<string, { status: 'running' | 'stopped'; version: string; pid?: number }>>({});
   let messages: {role: string, content: string, id?: string}[] = $state([]);
   let inputValue = $state('');
   let isLoading = $state(false);
@@ -30,16 +37,48 @@
     currentPage = event.detail;
   }
 
+  async function loadStats() {
+    statsLoading = true;
+    try {
+      const stats = await get_stats(30);
+      metrics = extractMetrics(stats);
+      tokenCount = metrics.totalTokens ?? 0;
+    } catch (e) {
+      console.error('Failed to load stats:', e);
+      metrics = null;
+    } finally {
+      statsLoading = false;
+    }
+  }
+
+  async function loadBackends() {
+    try {
+      const [bl, gs] = await Promise.all([list_backends(), list_gateway_statuses()]);
+      backends = bl;
+      const map: typeof gatewayByBackend = {};
+      for (const s of gs) map[s.backend] = s.status;
+      gatewayByBackend = map;
+      const firstOpenclaw = bl.find((b) => b.id === 'openclaw' && b.installed);
+      if (firstOpenclaw) {
+        const s = map[firstOpenclaw.id];
+        gatewayStatus = s?.status ?? 'stopped';
+        gatewayVersion = s?.version ?? firstOpenclaw.version ?? 'v1.0.0';
+      }
+    } catch (e) {
+      console.error('Failed to load backends:', e);
+    }
+  }
+
   onMount(async () => {
     console.log('App mounted');
     try {
-      const status = await invoke<{ status: string; version: string }>('get_gateway_status');
-      gatewayStatus = status.status || 'stopped';
-      gatewayVersion = status.version || 'v1.0.0';
+      await loadBackends();
     } catch (e) {
-      console.error('Gateway error:', e);
+      console.error('Backend error:', e);
       gatewayStatus = 'stopped';
     }
+
+    await loadStats();
 
     // Connect to gateway for chat
     if (gatewayStatus === 'running') {
@@ -177,10 +216,17 @@
             <div class="gateway-header">
               <div>
                 <h2>Gateway Status</h2>
-                <p class="gateway-info">
-                  Status: <span class:running={gatewayStatus === 'running'} class:stopped={gatewayStatus === 'stopped'}>{gatewayStatus}</span>
-                </p>
-                <p class="gateway-info">Version: {gatewayVersion}</p>
+                <div class="gateway-row">
+                  {#each backends.filter((b) => b.installed) as b (b.id)}
+                    <div class="gateway-card">
+                      <span class="backend-chip" data-backend={b.id}>{b.displayName}</span>
+                      <span class="version">{b.version}</span>
+                      <span class="status" class:running={gatewayByBackend[b.id]?.status === 'running'}>
+                        {gatewayByBackend[b.id]?.status ?? 'unknown'}
+                      </span>
+                    </div>
+                  {/each}
+                </div>
               </div>
               <button class="neon-button update-btn" onclick={updateGateway} disabled={isUpdating}>
                 {#if isUpdating}
@@ -208,20 +254,33 @@
               </div>
             {/if}
           </div>
-          <div class="stats-row">
-            <div class="stat-card glass-card">
-              <span class="stat-value">{tokenCount.toLocaleString()}</span>
-              <span class="stat-label">Tokens Today</span>
+          {#if statsLoading}
+            <div class="stats-row">
+              <div class="stat-card glass-card"><span class="stat-value muted">…</span><span class="stat-label">Tokens (30d)</span></div>
+              <div class="stat-card glass-card"><span class="stat-value muted">…</span><span class="stat-label">API Calls</span></div>
+              <div class="stat-card glass-card"><span class="stat-value muted">…</span><span class="stat-label">Cost (USD)</span></div>
             </div>
-            <div class="stat-card glass-card">
-              <span class="stat-value">847</span>
-              <span class="stat-label">API Calls</span>
+          {:else if metrics && metrics.gatewayRunning}
+            <div class="stats-row">
+              <div class="stat-card glass-card">
+                <span class="stat-value">{metrics.totalTokens?.toLocaleString() ?? '—'}</span>
+                <span class="stat-label">Tokens (30d)</span>
+              </div>
+              <div class="stat-card glass-card">
+                <span class="stat-value">{metrics.apiCalls?.toLocaleString() ?? '—'}</span>
+                <span class="stat-label">API Calls</span>
+              </div>
+              <div class="stat-card glass-card">
+                <span class="stat-value">{metrics.totalCost != null ? '$' + metrics.totalCost.toFixed(2) : '—'}</span>
+                <span class="stat-label">Cost (USD)</span>
+              </div>
             </div>
-            <div class="stat-card glass-card">
-              <span class="stat-value">23</span>
-              <span class="stat-label">Tasks</span>
+          {:else}
+            <div class="stats-empty glass-card">
+              <span class="empty-icon">📊</span>
+              <p>Start the gateway to see usage statistics.</p>
             </div>
-          </div>
+          {/if}
         </div>
       {:else if currentPage === 'chat'}
         <div class="chat-container">
@@ -323,6 +382,33 @@
     color: var(--text-primary);
   }
   
+  .gateway-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    margin-top: 0.5rem;
+  }
+  .gateway-card {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.5rem 0.75rem;
+    background: var(--bg-primary);
+    border-radius: 0.5rem;
+    font-size: 0.75rem;
+  }
+  .backend-chip {
+    padding: 0.125rem 0.5rem;
+    border-radius: 999px;
+    font-weight: 600;
+    font-size: 0.7rem;
+  }
+  .backend-chip[data-backend="openclaw"] { background: rgba(0,245,255,0.15); color: var(--neon-cyan); }
+  .backend-chip[data-backend="hermes"]   { background: rgba(255,0,200,0.15); color: #ff6ad5; }
+  .gateway-card .version { color: var(--text-muted); }
+  .gateway-card .status { font-weight: 600; }
+  .gateway-card .status.running { color: var(--neon-green); }
+
   .gateway-info {
     margin: 0.25rem 0;
     color: var(--text-secondary);
@@ -403,6 +489,27 @@
     margin-top: 0.5rem;
     color: var(--text-muted);
     font-size: 0.875rem;
+  }
+
+  .stat-value.muted {
+    color: var(--text-muted);
+  }
+
+  .stats-empty {
+    padding: 2rem;
+    text-align: center;
+    color: var(--text-muted);
+  }
+
+  .stats-empty .empty-icon {
+    font-size: 2rem;
+    display: block;
+    margin-bottom: 0.5rem;
+    opacity: 0.6;
+  }
+
+  .stats-empty p {
+    margin: 0;
   }
   
   .chat-container {
