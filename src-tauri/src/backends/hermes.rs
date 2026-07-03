@@ -19,9 +19,23 @@ impl Backend for HermesBackend {
         Command::new("hermes").arg("--version").output()
             .map(|o| o.status.success()).unwrap_or(false)
     }
-    fn gateway_status(&self) -> Result<GatewayStatus, String> { unimplemented!() }
-    fn gateway_start(&self) -> Result<String, String> { unimplemented!() }
-    fn gateway_stop(&self) -> Result<String, String> { unimplemented!() }
+    fn gateway_status(&self) -> Result<GatewayStatus, String> {
+        let text = run_hermes(&["gateway", "status"]).unwrap_or_default();
+        let running = text.lines().any(|l| l.trim().starts_with("PID") && l.contains('='));
+        Ok(GatewayStatus {
+            status: if running { "running" } else { "stopped" }.into(),
+            version: self.version(),
+            pid: extract_pid(&text),
+        })
+    }
+
+    fn gateway_start(&self) -> Result<String, String> {
+        run_hermes(&["gateway", "start"])
+    }
+
+    fn gateway_stop(&self) -> Result<String, String> {
+        run_hermes(&["gateway", "stop"])
+    }
     fn cron_list(&self) -> Result<Vec<CronJob>, String> {
         let output = Command::new("hermes")
             .args(["cron", "list"])
@@ -126,6 +140,17 @@ fn map_to_job(map: std::collections::BTreeMap<String, String>) -> CronJob {
     CronJob { id, name, schedule, enabled, last_run, next_run, agent: None, message, raw }
 }
 
+fn extract_pid(text: &str) -> Option<i32> {
+    for line in text.lines() {
+        let t = line.trim();
+        if let Some(rest) = t.strip_prefix("PID") {
+            let val = rest.trim().trim_start_matches('=').trim().trim_end_matches(';');
+            if let Ok(n) = val.parse::<i32>() { return Some(n); }
+        }
+    }
+    None
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -224,5 +249,17 @@ skills:   [\"web-search\", \"summarize\"]
     fn hermes_enable_maps_to_resume() {
         assert_eq!(hermes_set_enabled_action(true), "resume");
         assert_eq!(hermes_set_enabled_action(false), "pause");
+    }
+
+    #[test]
+    fn extract_pid_parses_plist_line() {
+        let text = "Label = \"ai.hermes.gateway\";\nPID = 26128;\n";
+        assert_eq!(extract_pid(text), Some(26128));
+    }
+
+    #[test]
+    fn extract_pid_returns_none_when_absent() {
+        let text = "Label = \"ai.hermes.gateway\";\n";
+        assert_eq!(extract_pid(text), None);
     }
 }
