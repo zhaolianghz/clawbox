@@ -22,7 +22,18 @@ impl Backend for HermesBackend {
     fn gateway_status(&self) -> Result<GatewayStatus, String> { unimplemented!() }
     fn gateway_start(&self) -> Result<String, String> { unimplemented!() }
     fn gateway_stop(&self) -> Result<String, String> { unimplemented!() }
-    fn cron_list(&self) -> Result<Vec<CronJob>, String> { unimplemented!() }
+    fn cron_list(&self) -> Result<Vec<CronJob>, String> {
+        let output = Command::new("hermes")
+            .args(["cron", "list"])
+            .output()
+            .map_err(|e| format!("Failed to run hermes: {}", e))?;
+        if !output.status.success() {
+            return Err(format!("hermes cron list failed: {}",
+                String::from_utf8_lossy(&output.stderr).trim()));
+        }
+        let text = String::from_utf8_lossy(&output.stdout);
+        Ok(parse_hermes_cron_text(&text))
+    }
     fn cron_create(&self, _params: NewCron) -> Result<String, String> { unimplemented!() }
     fn cron_remove(&self, _id: &str) -> Result<String, String> { unimplemented!() }
     fn cron_set_enabled(&self, _id: &str, _enabled: bool) -> Result<String, String> { unimplemented!() }
