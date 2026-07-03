@@ -1,49 +1,33 @@
 import { invoke } from '@tauri-apps/api/core';
-import { APP_CONFIG } from '../config';
+import type { BackendId } from './backends';
 
-// Types aligned with Rust GatewayStatus
 export interface GatewayStatus {
-  status: 'running' | 'stopped' | 'unknown';
+  status: 'running' | 'stopped';
   version: string;
-  pid: number | null;
+  pid?: number;
 }
 
-export interface SystemCheck {
-  nodejs: ComponentStatus;
-  openclaw: ComponentStatus;
-  platform: string;
-  is_china: boolean;
+export interface TaggedGatewayStatus {
+  backend: BackendId;
+  status: GatewayStatus;
 }
 
-export interface ComponentStatus {
-  installed: boolean;
-  version: string | null;
-}
-
-// Gateway port from centralized config
-const GATEWAY_PORT = APP_CONFIG.gateway.port;
-
-export async function get_gateway_status(): Promise<GatewayStatus> {
+export async function list_gateway_statuses(): Promise<TaggedGatewayStatus[]> {
   try {
-    return await invoke<GatewayStatus>('get_gateway_status');
+    const raw = await invoke<{ backend: string; status: GatewayStatus }[]>('gateway_status_all');
+    return raw.map((r) => ({
+      backend: r.backend as BackendId,
+      status: r.status,
+    }));
   } catch {
-    return { status: 'unknown', version: 'unknown', pid: null };
+    return [];
   }
 }
 
-export async function start_gateway(): Promise<void> {
-  await invoke('start_gateway');
+export async function start_gateway(backend: BackendId): Promise<string> {
+  return await invoke<string>('gateway_start', { backend });
 }
 
-export async function stop_gateway(): Promise<void> {
-  await invoke('stop_gateway');
-}
-
-export async function restart_gateway(): Promise<void> {
-  await invoke('stop_gateway');
-  await invoke('start_gateway');
-}
-
-export async function check_system(): Promise<SystemCheck> {
-  return invoke<SystemCheck>('check_system');
+export async function stop_gateway(backend: BackendId): Promise<string> {
+  return await invoke<string>('gateway_stop', { backend });
 }
