@@ -100,10 +100,37 @@ impl Backend for OpenClawBackend {
         let arr = arr.as_array().cloned().unwrap_or_default();
         Ok(arr.into_iter().map(normalise_openclaw_job).collect())
     }
-    fn cron_create(&self, _params: NewCron) -> Result<String, String> { unimplemented!() }
-    fn cron_remove(&self, _id: &str) -> Result<String, String> { unimplemented!() }
-    fn cron_set_enabled(&self, _id: &str, _enabled: bool) -> Result<String, String> { unimplemented!() }
-    fn cron_run(&self, _id: &str) -> Result<String, String> { unimplemented!() }
+    fn cron_create(&self, params: NewCron) -> Result<String, String> {
+        let args = openclaw_create_args(&params);
+        let refs: Vec<&str> = args.iter().map(String::as_str).collect();
+        openclaw_run(&refs)
+    }
+
+    fn cron_remove(&self, id: &str) -> Result<String, String> {
+        openclaw_run(&["cron", "rm", id])
+    }
+
+    fn cron_set_enabled(&self, id: &str, enabled: bool) -> Result<String, String> {
+        let action = if enabled { "enable" } else { "disable" };
+        openclaw_run(&["cron", action, id])
+    }
+
+    fn cron_run(&self, id: &str) -> Result<String, String> {
+        openclaw_run(&["cron", "run", id])
+    }
+}
+
+fn openclaw_create_args(params: &NewCron) -> Vec<String> {
+    let mut args = vec!["cron".into(), "add".into(), "--json".into(), "--name".into(), params.name.clone()];
+    let is_interval = params.schedule.contains(char::is_alphabetic);
+    if is_interval {
+        args.push("--every".into()); args.push(params.schedule.clone());
+    } else {
+        args.push("--cron".into()); args.push(params.schedule.clone());
+    }
+    if let Some(m) = &params.message { args.push("--message".into()); args.push(m.clone()); }
+    if let Some(a) = &params.agent   { args.push("--agent".into());   args.push(a.clone()); }
+    args
 }
 
 fn normalise_openclaw_job(raw: serde_json::Value) -> CronJob {
@@ -170,5 +197,31 @@ mod tests {
         let raw = json!({ "id": "x", "name": "x", "every": "30m" });
         let job = normalise_openclaw_job(raw);
         assert_eq!(job.schedule, "30m");
+    }
+
+    #[test]
+    fn openclaw_create_args() {
+        let args = super::openclaw_create_args(&NewCron {
+            name: "nightly".into(),
+            schedule: "0 2 * * *".into(),
+            message: Some("do thing".into()),
+            agent: Some("default".into()),
+        });
+        assert_eq!(args, vec![
+            "cron", "add", "--json", "--name", "nightly",
+            "--cron", "0 2 * * *",
+            "--message", "do thing",
+            "--agent", "default",
+        ]);
+    }
+
+    #[test]
+    fn openclaw_create_args_every_fallback() {
+        let args = super::openclaw_create_args(&NewCron {
+            name: "tick".into(), schedule: "30m".into(), message: None, agent: None,
+        });
+        assert!(args.contains(&"--every".to_string()));
+        assert!(args.contains(&"30m".to_string()));
+        assert!(!args.contains(&"--cron".to_string()));
     }
 }
