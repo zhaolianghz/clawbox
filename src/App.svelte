@@ -56,7 +56,7 @@
       const [bl, gs] = await Promise.all([list_backends(), list_gateway_statuses()]);
       backends = bl;
       const map: typeof gatewayByBackend = {};
-      for (const s of gs) map[s.backend] = s.status;
+      for (const s of gs.statuses) map[s.backend] = s.status;
       gatewayByBackend = map;
       const firstOpenclaw = bl.find((b) => b.id === 'openclaw' && b.installed);
       if (firstOpenclaw) {

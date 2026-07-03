@@ -1,7 +1,7 @@
 use serde::{Serialize, Deserialize};
 
 mod hermes;
-mod openclaw;
+pub mod openclaw;
 
 #[derive(Serialize, Clone, Debug)]
 pub struct CronJob {

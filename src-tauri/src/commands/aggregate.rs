@@ -21,6 +21,18 @@ pub struct CronListAllResult {
     pub errors: Vec<BackendError>,
 }
 
+#[derive(Serialize)]
+pub struct TaggedGatewayStatus {
+    pub backend: String,
+    pub status: crate::backends::GatewayStatus,
+}
+
+#[derive(Serialize)]
+pub struct GatewayStatusAllResult {
+    pub statuses: Vec<TaggedGatewayStatus>,
+    pub errors: Vec<BackendError>,
+}
+
 fn collect_backends<F, T>(f: F) -> (Vec<(String, T)>, Vec<BackendError>)
 where
     F: Fn(&dyn Backend) -> Result<T, String> + Sync + Send,
@@ -59,9 +71,12 @@ pub fn list_backends() -> Vec<BackendInfo> {
 }
 
 #[tauri::command]
-pub fn gateway_status_all() -> Vec<crate::backends::GatewayStatus> {
-    let (pairs, _errors) = collect_backends(|b| b.gateway_status());
-    pairs.into_iter().map(|(_, s)| s).collect()
+pub fn gateway_status_all() -> GatewayStatusAllResult {
+    let (pairs, errors) = collect_backends(|b| b.gateway_status());
+    let statuses = pairs.into_iter().map(|(backend, status)| TaggedGatewayStatus {
+        backend, status,
+    }).collect();
+    GatewayStatusAllResult { statuses, errors }
 }
 
 #[tauri::command]
@@ -115,4 +130,24 @@ pub fn cron_run(backend: String, id: String) -> Result<String, String> {
     backends::find_backend(&backend)
         .ok_or_else(|| format!("Unknown backend: {}", backend))?
         .cron_run(&id)
+}
+
+#[derive(Serialize)]
+pub struct Stats {
+    pub gateway_running: bool,
+    pub usage: Option<serde_json::Value>,
+    pub health: Option<serde_json::Value>,
+}
+
+#[tauri::command]
+pub fn get_stats(days: Option<u32>) -> Stats {
+    let days_str = days.unwrap_or(30).to_string();
+    let usage = backends::openclaw::openclaw_json(
+        &["gateway", "usage-cost", "--days", &days_str, "--json"],
+    ).ok();
+    let health = backends::openclaw::openclaw_json(&["health", "--json"]).ok();
+    Stats {
+        gateway_running: health.is_some() || usage.is_some(),
+        usage, health,
+    }
 }

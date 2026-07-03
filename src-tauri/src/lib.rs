@@ -15,6 +15,7 @@ pub fn run() {
             commands::aggregate::cron_remove,
             commands::aggregate::cron_set_enabled,
             commands::aggregate::cron_run,
+            commands::aggregate::get_stats,
             commands::config::get_config,
             commands::config::set_config,
             commands::install::check_system,

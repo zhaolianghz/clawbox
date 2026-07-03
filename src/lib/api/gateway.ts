@@ -12,15 +12,22 @@ export interface TaggedGatewayStatus {
   status: GatewayStatus;
 }
 
-export async function list_gateway_statuses(): Promise<TaggedGatewayStatus[]> {
+export interface BackendError {
+  backend: BackendId;
+  message: string;
+}
+
+export interface GatewayStatusAllResult {
+  statuses: TaggedGatewayStatus[];
+  errors: BackendError[];
+}
+
+export async function list_gateway_statuses(): Promise<GatewayStatusAllResult> {
   try {
-    const raw = await invoke<{ backend: string; status: GatewayStatus }[]>('gateway_status_all');
-    return raw.map((r) => ({
-      backend: r.backend as BackendId,
-      status: r.status,
-    }));
+    const raw = await invoke<GatewayStatusAllResult>('gateway_status_all');
+    return raw;
   } catch {
-    return [];
+    return { statuses: [], errors: [] };
   }
 }
 

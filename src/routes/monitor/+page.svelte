@@ -29,7 +29,7 @@
     rawHealth = stats.health;
     backends = bl;
     const map: typeof statuses = {};
-    for (const s of gs) map[s.backend] = s.status;
+    for (const s of gs.statuses) map[s.backend] = s.status;
     statuses = map;
 
     if (gatewayRunning) {
