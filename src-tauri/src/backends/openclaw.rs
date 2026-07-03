@@ -39,8 +39,18 @@ pub struct OpenClawBackend;
 impl Backend for OpenClawBackend {
     fn id(&self) -> &'static str { "openclaw" }
     fn display_name(&self) -> &'static str { "OpenClaw" }
-    fn version(&self) -> String { "unknown".into() }
-    fn is_installed(&self) -> bool { false }
+    fn version(&self) -> String {
+        Command::new("openclaw").arg("--version").output().ok()
+            .filter(|o| o.status.success())
+            .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+            .filter(|s| !s.is_empty())
+            .unwrap_or_else(|| "unknown".into())
+    }
+
+    fn is_installed(&self) -> bool {
+        Command::new("openclaw").arg("--version").output()
+            .map(|o| o.status.success()).unwrap_or(false)
+    }
     fn gateway_status(&self) -> Result<GatewayStatus, String> { unimplemented!() }
     fn gateway_start(&self) -> Result<String, String> { unimplemented!() }
     fn gateway_stop(&self) -> Result<String, String> { unimplemented!() }
