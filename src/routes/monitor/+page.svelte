@@ -1,64 +1,57 @@
 <script lang="ts">
   import { _ } from 'svelte-i18n';
   import { onMount } from 'svelte';
-  
+  import { get_stats, extractMetrics } from '$lib/api/stats';
+  import { list_gateway_statuses, start_gateway, stop_gateway } from '$lib/api/gateway';
+  import { list_backends, type BackendInfo } from '$lib/api/backends';
+
   interface Metric {
     label: string;
     value: string | number;
-    trend?: number;
     color: string;
   }
-  
-  interface TraceEvent {
-    id: string;
-    time: string;
-    type: 'request' | 'response' | 'error';
-    agent: string;
-    duration: number;
-    tokens: number;
-  }
-  
+
   let metrics = $state<Metric[]>([]);
-  let traces = $state<TraceEvent[]>([]);
+  let gatewayRunning = $state(false);
+  let rawHealth = $state<unknown>(null);
   let isLoading = $state(true);
-  
+  let backends = $state<BackendInfo[]>([]);
+  let statuses = $state<Record<string, { status: 'running' | 'stopped'; version: string; pid?: number }>>({});
+
   async function loadData() {
-    await new Promise(resolve => setTimeout(resolve, 500));
-    metrics = [
-      { label: 'Total Tokens', value: '1.2M', trend: 15, color: 'var(--neon-cyan)' },
-      { label: 'API Calls', value: '8,432', trend: 8, color: 'var(--neon-green)' },
-      { label: 'Avg Latency', value: '1.2s', trend: -5, color: 'var(--neon-orange)' },
-      { label: 'Error Rate', value: '0.3%', trend: -2, color: 'var(--neon-pink)' },
-    ];
-    traces = [
-      { id: '1', time: '15:30:01', type: 'request', agent: 'claude-3', duration: 0, tokens: 0 },
-      { id: '2', time: '15:30:02', type: 'response', agent: 'claude-3', duration: 1200, tokens: 245 },
-      { id: '3', time: '15:30:05', type: 'request', agent: 'gpt-4', duration: 0, tokens: 0 },
-      { id: '4', time: '15:30:08', type: 'error', agent: 'gpt-4', duration: 3000, tokens: 0 },
-      { id: '5', time: '15:30:10', type: 'request', agent: 'claude-3', duration: 0, tokens: 0 },
-      { id: '6', time: '15:30:11', type: 'response', agent: 'claude-3', duration: 980, tokens: 180 },
-    ];
+    isLoading = true;
+    const [stats, bl, gs] = await Promise.all([
+      get_stats(30),
+      list_backends(),
+      list_gateway_statuses(),
+    ]);
+    gatewayRunning = stats.gateway_running;
+    rawHealth = stats.health;
+    backends = bl;
+    const map: typeof statuses = {};
+    for (const s of gs) map[s.backend] = s.status;
+    statuses = map;
+
+    if (gatewayRunning) {
+      const m = extractMetrics(stats);
+      metrics = [
+        { label: 'Total Tokens (30d)', value: m.totalTokens?.toLocaleString() ?? '—', color: 'var(--neon-cyan)' },
+        { label: 'API Calls', value: m.apiCalls?.toLocaleString() ?? '—', color: 'var(--neon-green)' },
+        { label: 'Cost (USD)', value: m.totalCost != null ? '$' + m.totalCost.toFixed(2) : '—', color: 'var(--neon-orange)' },
+      ];
+    } else {
+      metrics = [];
+    }
     isLoading = false;
   }
-  
-  function getTypeIcon(type: string): string {
-    switch (type) {
-      case 'request': return '📤';
-      case 'response': return '📥';
-      case 'error': return '❌';
-      default: return '📄';
-    }
+
+  async function toggleBackend(id: BackendInfo['id']) {
+    const s = statuses[id];
+    if (s?.status === 'running') await stop_gateway(id);
+    else await start_gateway(id);
+    await loadData();
   }
-  
-  function getTypeColor(type: string): string {
-    switch (type) {
-      case 'request': return 'var(--neon-cyan)';
-      case 'response': return 'var(--neon-green)';
-      case 'error': return 'var(--neon-pink)';
-      default: return 'var(--text-muted)';
-    }
-  }
-  
+
   onMount(loadData);
 </script>
 
@@ -73,112 +66,66 @@
       <p class="subtitle">{$_('monitor.subtitle')}</p>
     </div>
     <div class="header-actions">
-      <button class="neon-button">🔄 {$_('monitor.refresh')}</button>
-      <button class="neon-button">📊 {$_('monitor.export')}</button>
+      <button class="neon-button" onclick={loadData}>🔄 {$_('monitor.refresh')}</button>
     </div>
   </div>
-  
-  <div class="metrics-row">
-    {#each metrics as metric}
-      <div class="metric-card glass-card">
-        <div class="metric-label">{metric.label}</div>
-        <div class="metric-value" style="color: {metric.color}">{metric.value}</div>
-        {#if metric.trend !== undefined}
-          <div class="metric-trend" class:positive={metric.trend > 0}>
-            {metric.trend > 0 ? '↑' : '↓'} {Math.abs(metric.trend)}%
+
+  {#if isLoading}
+    <div class="loading"><div class="spinner"></div></div>
+  {:else}
+    <div class="gateway-grid">
+      {#each backends.filter((b) => b.installed) as b (b.id)}
+        <div class="gateway-card glass-card">
+          <header>
+            <span class="backend-chip" data-backend={b.id}>{b.displayName}</span>
+            <span class="version">v{b.version}</span>
+          </header>
+          <div class="status" class:running={statuses[b.id]?.status === 'running'}>
+            {statuses[b.id]?.status ?? 'unknown'}
+            {#if statuses[b.id]?.pid}<span class="pid">PID {statuses[b.id]?.pid}</span>{/if}
           </div>
-        {/if}
-      </div>
-    {/each}
-  </div>
-  
-  <div class="monitor-container">
-    <div class="trace-panel glass-card">
-      <div class="panel-header">
-        <h2>{$_('monitor.linkTracing')}</h2>
-        <span class="trace-count">{traces.length} {$_('monitor.events')}</span>
-      </div>
-      
-      {#if isLoading}
-        <div class="loading">
-          <div class="spinner"></div>
+          <button class="neon-button" onclick={() => toggleBackend(b.id)}>
+            {statuses[b.id]?.status === 'running' ? 'Stop' : 'Start'}
+          </button>
         </div>
-      {:else}
-        <div class="trace-list">
-          {#each traces as trace}
-            <div class="trace-item">
-              <span class="trace-icon">{getTypeIcon(trace.type)}</span>
-              <div class="trace-main">
-                <div class="trace-header-row">
-                  <span class="trace-agent">{trace.agent}</span>
-                  <span class="trace-type" style="color: {getTypeColor(trace.type)}">
-                    {trace.type}
-                  </span>
-                </div>
-                <div class="trace-details">
-                  <span class="trace-time">{trace.time}</span>
-                  {#if trace.duration > 0}
-                    <span class="trace-duration">{trace.duration}ms</span>
-                  {/if}
-                  {#if trace.tokens > 0}
-                    <span class="trace-tokens">{trace.tokens} tokens</span>
-                  {/if}
-                </div>
-              </div>
-            </div>
-          {/each}
-        </div>
-      {/if}
+      {/each}
     </div>
-    
-    <div class="charts-panel glass-card">
-      <div class="panel-header">
-        <h2>{$_('monitor.resourceUsage')}</h2>
+
+    {#if !gatewayRunning}
+      <div class="empty-state glass-card">
+        <span class="empty-icon">🔌</span>
+        <p>Gateway is not running.</p>
+        <p class="empty-hint">Start the gateway to view live metrics and health.</p>
       </div>
-      
-      <div class="chart-placeholder">
-        <div class="placeholder-content">
-          <span class="placeholder-icon">📈</span>
-          <p>{$_('monitor.chartPlaceholder')}</p>
+    {:else}
+    <div class="metrics-row">
+      {#each metrics as metric}
+        <div class="metric-card glass-card">
+          <div class="metric-label">{metric.label}</div>
+          <div class="metric-value" style="color: {metric.color}">{metric.value}</div>
         </div>
-        
-        <div class="mock-chart">
-          <div class="chart-bar" style="height: 60%"></div>
-          <div class="chart-bar" style="height: 80%"></div>
-          <div class="chart-bar" style="height: 45%"></div>
-          <div class="chart-bar" style="height: 90%"></div>
-          <div class="chart-bar" style="height: 70%"></div>
-          <div class="chart-bar" style="height: 55%"></div>
-          <div class="chart-bar" style="height: 85%"></div>
-          <div class="chart-bar" style="height: 40%"></div>
+      {/each}
+    </div>
+
+    <div class="monitor-container">
+      <div class="trace-panel glass-card">
+        <div class="panel-header">
+          <h2>{$_('monitor.resourceUsage')}</h2>
         </div>
-        
-        <div class="usage-stats">
-          <div class="usage-item">
-            <span class="usage-label">CPU</span>
-            <div class="usage-bar">
-              <div class="usage-fill" style="width: 35%; background: var(--neon-cyan)"></div>
+        <div class="health-content">
+          {#if rawHealth}
+            <pre class="health-json">{JSON.stringify(rawHealth, null, 2)}</pre>
+          {:else}
+            <div class="empty-state">
+              <span class="empty-icon">📈</span>
+              <p>No health data available.</p>
             </div>
-            <span class="usage-value">35%</span>
-          </div>
-          <div class="usage-item">
-            <span class="usage-label">Memory</span>
-            <div class="usage-bar">
-              <div class="usage-fill" style="width: 62%; background: var(--neon-purple)"></div>
-            </div>
-            <span class="usage-value">62%</span>
-          </div>
-          <div class="usage-item">
-            <span class="usage-label">Network</span>
-            <div class="usage-bar">
-              <div class="usage-fill" style="width: 28%; background: var(--neon-green)"></div>
-            </div>
-            <span class="usage-value">28%</span>
-          </div>
+          {/if}
         </div>
       </div>
     </div>
-  </div>
+    {/if}
+  {/if}
 </div>
 
 <style>
@@ -217,11 +164,81 @@
   
   .metrics-row {
     display: grid;
-    grid-template-columns: repeat(4, 1fr);
+    grid-template-columns: repeat(3, 1fr);
     gap: 1rem;
     padding: 1rem;
   }
+
+  .empty-state {
+    margin: 1rem;
+    padding: 3rem 2rem;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+    color: var(--text-muted);
+  }
+
+  .empty-icon {
+    font-size: 2.5rem;
+    margin-bottom: 0.75rem;
+    opacity: 0.6;
+  }
+
+  .empty-state p {
+    margin: 0.25rem 0;
+  }
+
+  .empty-hint {
+    font-size: 0.75rem;
+    opacity: 0.7;
+  }
+
+  .health-content {
+    flex: 1;
+    overflow: auto;
+  }
+
+  .health-json {
+    margin: 0;
+    font-family: monospace;
+    font-size: 0.75rem;
+    color: var(--text-secondary);
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
   
+  .gateway-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: 1rem;
+    margin-bottom: 1rem;
+  }
+  .gateway-card {
+    padding: 1rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+  }
+  .gateway-card header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+  .backend-chip {
+    padding: 0.125rem 0.5rem;
+    border-radius: 999px;
+    font-weight: 600;
+    font-size: 0.7rem;
+  }
+  .backend-chip[data-backend="openclaw"] { background: rgba(0,245,255,0.15); color: var(--neon-cyan); }
+  .backend-chip[data-backend="hermes"]   { background: rgba(255,0,200,0.15); color: #ff6ad5; }
+  .version { color: var(--text-muted); font-size: 0.75rem; }
+  .gateway-card .status { font-size: 0.875rem; }
+  .gateway-card .status.running { color: var(--neon-green); }
+  .gateway-card .pid { color: var(--text-muted); margin-left: 0.5rem; font-size: 0.75rem; }
+
   .metric-card {
     padding: 1rem;
     text-align: center;
