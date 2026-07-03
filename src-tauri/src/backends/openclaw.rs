@@ -1,3 +1,37 @@
+use std::process::Command;
+use serde_json::Value;
+
+/// Run an `openclaw` subcommand and parse its stdout as JSON.
+pub fn openclaw_json(args: &[&str]) -> Result<Value, String> {
+    let output = Command::new("openclaw")
+        .args(args)
+        .output()
+        .map_err(|e| format!("Failed to run openclaw: {}", e))?;
+    if !output.status.success() {
+        return Err(format!("openclaw {} failed: {}",
+            args.join(" "),
+            String::from_utf8_lossy(&output.stderr).trim()));
+    }
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let trimmed = stdout.trim();
+    if trimmed.is_empty() { return Ok(Value::Null); }
+    serde_json::from_str(trimmed).map_err(|e| format!("Failed to parse openclaw output: {}", e))
+}
+
+/// Run an `openclaw` subcommand for its side effect, returning stdout.
+pub fn openclaw_run(args: &[&str]) -> Result<String, String> {
+    let output = Command::new("openclaw")
+        .args(args)
+        .output()
+        .map_err(|e| format!("Failed to run openclaw: {}", e))?;
+    if !output.status.success() {
+        return Err(format!("openclaw {} failed: {}",
+            args.join(" "),
+            String::from_utf8_lossy(&output.stderr).trim()));
+    }
+    Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+}
+
 use super::{Backend, CronJob, GatewayStatus, NewCron};
 
 pub struct OpenClawBackend;
