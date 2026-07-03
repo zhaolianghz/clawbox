@@ -1,6 +1,8 @@
 use std::process::Command;
 use serde_json::Value;
 
+const GATEWAY_PORT: u16 = 18789;
+
 /// Run an `openclaw` subcommand and parse its stdout as JSON.
 pub fn openclaw_json(args: &[&str]) -> Result<Value, String> {
     let output = Command::new("openclaw")
@@ -34,6 +36,15 @@ pub fn openclaw_run(args: &[&str]) -> Result<String, String> {
 
 use super::{Backend, CronJob, GatewayStatus, NewCron};
 
+fn gateway_pid() -> Option<i32> {
+    Command::new("lsof")
+        .args(["-t", "-i", &format!(":{}", GATEWAY_PORT), "-sTCP:LISTEN"])
+        .output().ok()
+        .filter(|o| o.status.success())
+        .and_then(|o| String::from_utf8_lossy(&o.stdout).lines().next()
+            .and_then(|l| l.trim().parse::<i32>().ok()))
+}
+
 pub struct OpenClawBackend;
 
 impl Backend for OpenClawBackend {
@@ -51,9 +62,35 @@ impl Backend for OpenClawBackend {
         Command::new("openclaw").arg("--version").output()
             .map(|o| o.status.success()).unwrap_or(false)
     }
-    fn gateway_status(&self) -> Result<GatewayStatus, String> { unimplemented!() }
-    fn gateway_start(&self) -> Result<String, String> { unimplemented!() }
-    fn gateway_stop(&self) -> Result<String, String> { unimplemented!() }
+    fn gateway_status(&self) -> Result<GatewayStatus, String> {
+        let pid = gateway_pid();
+        let status = if pid.is_some() { "running" } else { "stopped" }.to_string();
+        Ok(GatewayStatus { status, version: self.version(), pid })
+    }
+
+    fn gateway_start(&self) -> Result<String, String> {
+        if gateway_pid().is_some() {
+            return Ok("Gateway already running".into());
+        }
+        use std::process::Stdio;
+        Command::new("openclaw")
+            .args(["gateway", "run", "--port", &GATEWAY_PORT.to_string()])
+            .stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null())
+            .spawn()
+            .map_err(|e| format!("Failed to start gateway: {}", e))?;
+        Ok("Gateway starting".into())
+    }
+
+    fn gateway_stop(&self) -> Result<String, String> {
+        match gateway_pid() {
+            Some(pid) => {
+                Command::new("kill").arg(pid.to_string()).output()
+                    .map_err(|e| format!("Failed to stop gateway: {}", e))?;
+                Ok("Gateway stopping".into())
+            }
+            None => Ok("Gateway not running".into()),
+        }
+    }
     fn cron_list(&self) -> Result<Vec<CronJob>, String> { unimplemented!() }
     fn cron_create(&self, _params: NewCron) -> Result<String, String> { unimplemented!() }
     fn cron_remove(&self, _id: &str) -> Result<String, String> { unimplemented!() }
