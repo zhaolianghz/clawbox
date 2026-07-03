@@ -21,11 +21,15 @@ impl Backend for HermesBackend {
     }
     fn gateway_status(&self) -> Result<GatewayStatus, String> {
         let text = run_hermes(&["gateway", "status"]).unwrap_or_default();
-        let running = text.lines().any(|l| l.trim().starts_with("PID") && l.contains('='));
+        let pid = extract_pid(&text);
+        // `running` is derived from a parsable PID. Some hermes plist dumps
+        // contain a `PID` line that is not parseable (e.g. transitioning state)
+        // — those must not be reported as running.
+        let status = if pid.is_some() { "running" } else { "stopped" };
         Ok(GatewayStatus {
-            status: if running { "running" } else { "stopped" }.into(),
+            status: status.into(),
             version: self.version(),
-            pid: extract_pid(&text),
+            pid,
         })
     }
 
