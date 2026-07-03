@@ -34,10 +34,49 @@ impl Backend for HermesBackend {
         let text = String::from_utf8_lossy(&output.stdout);
         Ok(parse_hermes_cron_text(&text))
     }
-    fn cron_create(&self, _params: NewCron) -> Result<String, String> { unimplemented!() }
-    fn cron_remove(&self, _id: &str) -> Result<String, String> { unimplemented!() }
-    fn cron_set_enabled(&self, _id: &str, _enabled: bool) -> Result<String, String> { unimplemented!() }
-    fn cron_run(&self, _id: &str) -> Result<String, String> { unimplemented!() }
+    fn cron_create(&self, params: NewCron) -> Result<String, String> {
+        let args = hermes_create_args(&params);
+        let refs: Vec<&str> = args.iter().map(String::as_str).collect();
+        run_hermes(&refs)
+    }
+
+    fn cron_remove(&self, id: &str) -> Result<String, String> {
+        run_hermes(&["cron", "remove", id])
+    }
+
+    fn cron_set_enabled(&self, id: &str, enabled: bool) -> Result<String, String> {
+        let action = hermes_set_enabled_action(enabled);
+        run_hermes(&["cron", action, id])
+    }
+
+    fn cron_run(&self, id: &str) -> Result<String, String> {
+        run_hermes(&["cron", "run", id])
+    }
+}
+
+fn hermes_create_args(params: &NewCron) -> Vec<String> {
+    let mut args = vec!["cron".into(), "create".into(), params.schedule.clone()];
+    if let Some(m) = &params.message {
+        args.push(m.clone());
+    }
+    args.push("--name".into());
+    args.push(params.name.clone());
+    args
+}
+
+fn hermes_set_enabled_action(enabled: bool) -> &'static str {
+    if enabled { "resume" } else { "pause" }
+}
+
+fn run_hermes(args: &[&str]) -> Result<String, String> {
+    let output = Command::new("hermes").args(args).output()
+        .map_err(|e| format!("Failed to run hermes: {}", e))?;
+    if !output.status.success() {
+        return Err(format!("hermes {} failed: {}",
+            args.join(" "),
+            String::from_utf8_lossy(&output.stderr).trim()));
+    }
+    Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
 }
 
 fn parse_hermes_cron_text(text: &str) -> Vec<CronJob> {
@@ -150,5 +189,40 @@ skills:   [\"web-search\", \"summarize\"]
         assert_eq!(jobs.len(), 1);
         assert!(jobs[0].raw.get("repeat").is_some());
         assert!(jobs[0].raw.get("skills").is_some());
+    }
+
+    #[test]
+    fn hermes_create_args_with_prompt() {
+        let args = hermes_create_args(&NewCron {
+            name: "nightly".into(),
+            schedule: "0 2 * * *".into(),
+            message: Some("do thing".into()),
+            agent: None,
+        });
+        assert_eq!(args, vec![
+            "cron".to_string(),
+            "create".to_string(),
+            "0 2 * * *".to_string(),
+            "do thing".to_string(),
+            "--name".to_string(),
+            "nightly".to_string(),
+        ]);
+    }
+
+    #[test]
+    fn hermes_create_args_without_prompt() {
+        let args = hermes_create_args(&NewCron {
+            name: "tick".into(), schedule: "30m".into(), message: None, agent: None,
+        });
+        assert_eq!(args, vec![
+            "cron".to_string(), "create".to_string(),
+            "30m".to_string(), "--name".to_string(), "tick".to_string(),
+        ]);
+    }
+
+    #[test]
+    fn hermes_enable_maps_to_resume() {
+        assert_eq!(hermes_set_enabled_action(true), "resume");
+        assert_eq!(hermes_set_enabled_action(false), "pause");
     }
 }
