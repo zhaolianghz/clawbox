@@ -166,5 +166,17 @@
     "daily": "每天",
     "weekly": "每周",
     "custom": "自定义"
+  },
+  "backend": {
+    "openclaw": "OpenClaw",
+    "hermes": "Hermes",
+    "notInstalled": "未安装",
+    "section": {
+      "jobs": "{{name}}（{{count}} 个任务）",
+      "noJobs": "{{name}} — 无任务"
+    }
+  },
+  "task": {
+    "newBackend": "后端"
   }
 }

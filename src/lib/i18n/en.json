@@ -166,5 +166,17 @@
     "daily": "Daily",
     "weekly": "Weekly",
     "custom": "Custom"
+  },
+  "backend": {
+    "openclaw": "OpenClaw",
+    "hermes": "Hermes",
+    "notInstalled": "Not installed",
+    "section": {
+      "jobs": "{{name}} ({{count}} jobs)",
+      "noJobs": "{{name}} — no jobs"
+    }
+  },
+  "task": {
+    "newBackend": "Backend"
   }
 }
