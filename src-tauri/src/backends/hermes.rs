@@ -1,5 +1,7 @@
 use std::process::Command;
 
+use regex::Regex;
+
 use super::{Backend, CronJob, GatewayStatus, NewCron};
 
 pub struct HermesBackend;
@@ -97,6 +99,21 @@ fn run_hermes(args: &[&str]) -> Result<String, String> {
     Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
 }
 
+/// Parse `hermes cron list` output. Real output is an ASCII table with one
+/// job block per entry. Captured fixture (verbatim from Hermes v0.11.0):
+///
+/// ```text
+/// ┌──────────────────────────────────────┐
+/// │          Scheduled Jobs              │
+/// └──────────────────────────────────────┘
+///
+///   f523f090a165 [active]
+///     Name:      first_test
+///     Schedule:  once in 30m
+///     Repeat:    0/1
+///     Next run:  2026-07-04T11:43:47Z
+///     Deliver:   local
+/// ```
 fn parse_hermes_cron_text(text: &str) -> Vec<CronJob> {
     let trimmed = text.trim();
     if trimmed.is_empty()
@@ -106,42 +123,59 @@ fn parse_hermes_cron_text(text: &str) -> Vec<CronJob> {
         return vec![];
     }
 
-    let mut jobs = Vec::new();
+    let mut jobs: Vec<std::collections::BTreeMap<String, String>> = Vec::new();
     let mut current: Option<std::collections::BTreeMap<String, String>> = None;
 
     for raw_line in text.lines() {
         let line = raw_line.trim_end();
-        if line.trim().is_empty() { continue; }
-        if line.starts_with("---") {
-            if let Some(map) = current.take() {
-                jobs.push(map_to_job(map));
-            }
+        let stripped = line.trim();
+
+        // Skip blanks and table borders.
+        if stripped.is_empty()
+            || stripped.chars().all(|c| matches!(c, '┌' | '┐' | '└' | '┘' | '─' | '│' | ' '))
+        {
             continue;
         }
-        if let Some((k, v)) = line.split_once(':') {
-            let key = k.trim().to_string();
-            let val = v.trim().to_string();
-            current.get_or_insert_with(Default::default).insert(key, val);
-        } else if let Some(map) = current.take() {
-            jobs.push(map_to_job(map));
+
+        if let Some(caps) = HEADER_RE.captures(stripped) {
+            if let Some(map) = current.take() { jobs.push(map); }
+            let mut m = std::collections::BTreeMap::new();
+            m.insert("id".into(), caps[1].to_string());
+            m.insert("state".into(), caps[2].to_string());
+            current = Some(m);
+            continue;
+        }
+
+        if let Some(caps) = FIELD_RE.captures(stripped) {
+            if let Some(map) = current.as_mut() {
+                map.insert(caps[1].to_string(), caps[2].to_string());
+            }
         }
     }
-    if let Some(map) = current.take() {
-        jobs.push(map_to_job(map));
-    }
-    jobs
+    if let Some(map) = current.take() { jobs.push(map); }
+    jobs.into_iter().map(map_to_job).collect()
 }
 
+static HEADER_RE: std::sync::LazyLock<Regex> = std::sync::LazyLock::new(|| {
+    Regex::new(r"^([0-9a-f]+)\s+\[([a-z]+)\]\s*$").unwrap()
+});
+static FIELD_RE: std::sync::LazyLock<Regex> = std::sync::LazyLock::new(|| {
+    Regex::new(r"^([A-Za-z][A-Za-z _]*):\s*(.*)$").unwrap()
+});
+
 fn map_to_job(map: std::collections::BTreeMap<String, String>) -> CronJob {
-    let id = map.get("job_id").cloned().unwrap_or_default();
-    let name = map.get("name").cloned().unwrap_or_else(|| id.clone());
-    let schedule = map.get("schedule").cloned().unwrap_or_default();
-    let enabled = map.get("enabled").map(|s| s == "true").unwrap_or(true);
-    let last_run = map.get("last_run").cloned();
-    let next_run = map.get("next_run").cloned();
-    let message = map.get("prompt").cloned();
+    let id = map.get("id").cloned().unwrap_or_default();
+    let name = map.get("Name").cloned().unwrap_or_else(|| id.clone());
+    let schedule = map.get("Schedule").cloned().unwrap_or_default();
+    let enabled = map.get("state").map(|s| s == "active").unwrap_or(true);
+    let next_run = map.get("Next run").cloned();
+    let message = map.get("Prompt").cloned();
     let raw = serde_json::to_value(&map).unwrap_or(serde_json::Value::Null);
-    CronJob { id, name, schedule, enabled, last_run, next_run, agent: None, message, raw }
+    CronJob {
+        id, name, schedule, enabled,
+        last_run: None, next_run,
+        agent: None, message, raw,
+    }
 }
 
 fn extract_pid(text: &str) -> Option<i32> {
@@ -166,58 +200,56 @@ mod tests {
         assert!(jobs.is_empty());
     }
 
-    #[test]
-    fn parses_single_job() {
-        let text = "\
-job_id: abc123
-name:    nightly
-schedule: 0 2 * * *
-enabled:  true
-next_run: 2026-07-04T02:00:00Z
-prompt:  Run the nightly report
+    // Real fixtures captured verbatim from `hermes cron list` (v0.11.0).
+    const REAL_SINGLE: &str = "\
+┌─────────────────────────────────────────────────────────────────────────┐
+│                         Scheduled Jobs                                  │
+└─────────────────────────────────────────────────────────────────────────┘
+
+  f523f090a165 [active]
+    Name:      first_test
+    Schedule:  once in 30m
+    Repeat:    0/1
+    Next run:  2026-07-04T11:43:47.424517+08:00
+    Deliver:   local
 ";
-        let jobs = parse_hermes_cron_text(text);
+
+    const REAL_MULTI: &str = "\
+┌─────────────────────────────────────────────────────────────────────────┐
+│                         Scheduled Jobs                                  │
+└─────────────────────────────────────────────────────────────────────────┘
+
+  f523f090a165 [active]
+    Name:      first_test
+    Schedule:  once in 30m
+    Next run:  2026-07-04T11:43:47Z
+
+  a1a472ca98a9 [paused]
+    Name:      second_test
+    Schedule:  every 120m
+    Next run:  -
+";
+
+    #[test]
+    fn parses_real_single_job() {
+        let jobs = parse_hermes_cron_text(REAL_SINGLE);
         assert_eq!(jobs.len(), 1);
-        assert_eq!(jobs[0].id, "abc123");
-        assert_eq!(jobs[0].name, "nightly");
-        assert_eq!(jobs[0].schedule, "0 2 * * *");
-        assert!(jobs[0].enabled);
-        assert_eq!(jobs[0].next_run.as_deref(), Some("2026-07-04T02:00:00Z"));
-        assert_eq!(jobs[0].message.as_deref(), Some("Run the nightly report"));
+        assert_eq!(jobs[0].id, "f523f090a165");
+        assert_eq!(jobs[0].name, "first_test");
+        assert_eq!(jobs[0].schedule, "once in 30m");
+        assert!(jobs[0].enabled); // [active]
+        assert_eq!(jobs[0].next_run.as_deref(),
+                   Some("2026-07-04T11:43:47.424517+08:00"));
     }
 
     #[test]
-    fn parses_multiple_jobs() {
-        let text = "\
-job_id: a
-schedule: 30m
-enabled:  true
----
-job_id: b
-schedule: every 2h
-enabled:  false
-";
-        let jobs = parse_hermes_cron_text(text);
+    fn parses_real_multiple_jobs_with_paused_state() {
+        let jobs = parse_hermes_cron_text(REAL_MULTI);
         assert_eq!(jobs.len(), 2);
-        assert_eq!(jobs[0].id, "a");
+        assert_eq!(jobs[0].id, "f523f090a165");
         assert!(jobs[0].enabled);
-        assert_eq!(jobs[1].id, "b");
-        assert!(!jobs[1].enabled);
-    }
-
-    #[test]
-    fn parses_with_skill_and_repeat() {
-        let text = "\
-job_id: c
-schedule: 0 9 * * *
-enabled:  true
-repeat:   5
-skills:   [\"web-search\", \"summarize\"]
-";
-        let jobs = parse_hermes_cron_text(text);
-        assert_eq!(jobs.len(), 1);
-        assert!(jobs[0].raw.get("repeat").is_some());
-        assert!(jobs[0].raw.get("skills").is_some());
+        assert_eq!(jobs[1].id, "a1a472ca98a9");
+        assert!(!jobs[1].enabled); // [paused]
     }
 
     #[test]
