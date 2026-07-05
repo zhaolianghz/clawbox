@@ -137,3 +137,12 @@ fn plugins_list_runs_against_live_backends() {
     }
     assert!(found);
 }
+
+#[test]
+fn tools_list_only_hermes() {
+    let entries = clawbox_lib::backends::entries();
+    let hermes_entry = entries.iter().find(|e| e.backend.id() == "hermes").unwrap();
+    let openclaw_entry = entries.iter().find(|e| e.backend.id() == "openclaw").unwrap();
+    assert!(hermes_entry.tools.is_some(), "hermes should impl ToolsCapability");
+    assert!(openclaw_entry.tools.is_none(), "openclaw has no tools subcommand");
+}
