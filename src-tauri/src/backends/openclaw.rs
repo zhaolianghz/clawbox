@@ -137,6 +137,19 @@ impl super::capabilities::SkillsCapability for OpenClawBackend {
     }
 }
 
+impl super::capabilities::McpCapability for OpenClawBackend {
+    fn mcp_list(&self) -> Result<Vec<super::capabilities::McpServer>, String> {
+        let raw = openclaw_json(&["mcp", "list", "--json"])?;
+        Ok(parse_openclaw_mcp(raw))
+    }
+    fn mcp_add(&self, name: &str, config_json: &str) -> Result<String, String> {
+        openclaw_run(&["mcp", "set", name, config_json])
+    }
+    fn mcp_remove(&self, name: &str) -> Result<String, String> {
+        openclaw_run(&["mcp", "unset", name])
+    }
+}
+
 fn openclaw_create_args(params: &NewCron) -> Vec<String> {
     let mut args = vec!["cron".into(), "add".into(), "--json".into(), "--name".into(), params.name.clone()];
     let is_interval = params.schedule.contains(char::is_alphabetic);
@@ -165,6 +178,29 @@ fn parse_openclaw_skills(raw: serde_json::Value) -> Vec<super::capabilities::Ski
         let enabled = !o.get("disabled").and_then(|v| v.as_bool()).unwrap_or(false);
         super::capabilities::Skill {
             id, name, version, description, enabled, raw: v,
+        }
+    }).collect()
+}
+
+fn parse_openclaw_mcp(raw: serde_json::Value) -> Vec<super::capabilities::McpServer> {
+    let map = raw.as_object().cloned().unwrap_or_default();
+    let servers_val = map.get("servers").cloned().unwrap_or(serde_json::Value::Object(Default::default()));
+    let servers_obj = servers_val.as_object().cloned().unwrap_or_default();
+    let mut entries: Vec<(String, serde_json::Value)> = servers_obj.into_iter().collect();
+    entries.sort_by(|a, b| a.0.cmp(&b.0));
+    entries.into_iter().map(|(name, cfg)| {
+        let cfg_obj = cfg.as_object().cloned().unwrap_or_default();
+        let transport = cfg_obj.get("command")
+            .and_then(|v| v.as_str())
+            .unwrap_or("?")
+            .to_string();
+        let disabled = cfg_obj.get("disabled").and_then(|v| v.as_bool()).unwrap_or(false);
+        let status = if disabled { "disabled".to_string() } else { "enabled".to_string() };
+        super::capabilities::McpServer {
+            name,
+            transport,
+            status,
+            raw: cfg,
         }
     }).collect()
 }
@@ -296,5 +332,48 @@ mod tests {
         let skills = parse_openclaw_skills(raw);
         assert_eq!(skills.len(), 1);
         assert_eq!(skills[0].name, "a");
+    }
+
+    #[test]
+    fn openclaw_mcp_two_servers_in_servers_object() {
+        let raw = json!({
+            "servers": {
+                "mx_data": {"command": "uvx", "args": ["mxAi/mcp-mxdata"]},
+                "codegraph": {"command": "codegraph", "args": ["serve", "--mcp"]}
+            }
+        });
+        let servers = parse_openclaw_mcp(raw);
+        assert_eq!(servers.len(), 2);
+        // Output is sorted by name for determinism (HashMap order is unstable).
+        assert_eq!(servers[0].name, "codegraph");
+        assert_eq!(servers[0].transport, "codegraph");
+        assert!(servers[0].status.contains("enabled"));
+        assert_eq!(servers[1].name, "mx_data");
+        assert_eq!(servers[1].transport, "uvx");
+    }
+
+    #[test]
+    fn openclaw_mcp_empty_servers_object() {
+        let raw = json!({"servers": {}});
+        let servers = parse_openclaw_mcp(raw);
+        assert!(servers.is_empty());
+    }
+
+    #[test]
+    fn openclaw_mcp_single_server_uses_command_as_transport() {
+        let raw = json!({"servers": {"x": {"command": "foo"}}});
+        let servers = parse_openclaw_mcp(raw);
+        assert_eq!(servers.len(), 1);
+        assert_eq!(servers[0].name, "x");
+        assert_eq!(servers[0].transport, "foo");
+        assert!(servers[0].status.contains("enabled"));
+    }
+
+    #[test]
+    fn openclaw_mcp_disabled_flag_marks_status_disabled() {
+        let raw = json!({"servers": {"paused_one": {"command": "foo", "disabled": true}}});
+        let servers = parse_openclaw_mcp(raw);
+        assert_eq!(servers.len(), 1);
+        assert!(servers[0].status.contains("disabled"));
     }
 }
