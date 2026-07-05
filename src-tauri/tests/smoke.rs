@@ -80,3 +80,22 @@ fn skills_list_runs_against_live_backends() {
     }
     assert!(found_any, "expected at least one installed backend with skills capability");
 }
+
+#[test]
+fn mcp_list_runs_against_live_backends() {
+    if !openclaw_installed() && !hermes_installed() {
+        eprintln!("skip");
+        return;
+    }
+    let entries = clawbox_lib::backends::entries();
+    let mut found = false;
+    for entry in entries {
+        if !entry.backend.is_installed() { continue; }
+        if let Some(mcp) = entry.mcp {
+            found = true;
+            let r = mcp.mcp_list();
+            eprintln!("{}: mcp_list reachable, ok={}", entry.backend.id(), r.is_ok());
+        }
+    }
+    assert!(found);
+}
