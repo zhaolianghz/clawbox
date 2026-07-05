@@ -90,7 +90,7 @@ pub fn entries() -> &'static [BackendEntry] {
             BackendEntry {
                 backend: &openclaw::OpenClawBackend,
                 skills:  Some(&openclaw::OpenClawBackend),
-                mcp:     None,
+                mcp:     Some(&openclaw::OpenClawBackend),
                 memory:  None,
                 plugins: None,
                 tools:   None,
@@ -99,7 +99,7 @@ pub fn entries() -> &'static [BackendEntry] {
             BackendEntry {
                 backend: &hermes::HermesBackend,
                 skills:  Some(&hermes::HermesBackend),
-                mcp:     None,
+                mcp:     Some(&hermes::HermesBackend),
                 memory:  None,
                 plugins: None,
                 tools:   None,

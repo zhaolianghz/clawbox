@@ -33,7 +33,7 @@ pub struct GatewayStatusAllResult {
     pub errors: Vec<BackendError>,
 }
 
-use crate::backends::capabilities::SkillsCapability;
+use crate::backends::capabilities::{McpCapability, SkillsCapability};
 
 #[derive(Serialize)]
 pub struct TaggedItem<T> {
@@ -208,6 +208,61 @@ pub fn skills_set_enabled(backend: String, id: String, enabled: bool) -> Result<
     let skills = entry.skills
         .ok_or_else(|| format!("{} does not support skills", backend))?;
     skills.skills_set_enabled(&id, enabled)
+}
+
+fn collect_capability_mcp<T, F>(f: F) -> TaggedListResult<T>
+where
+    T: Send,
+    F: Fn(&dyn McpCapability) -> Result<Vec<T>, String> + Sync + Send,
+{
+    use rayon::prelude::*;
+    let results: Vec<_> = backends::entries().par_iter()
+        .filter_map(|e| e.mcp.map(|m| (e, m)))
+        .map(|(e, m)| {
+            if !e.backend.is_installed() {
+                return (e.backend.id().to_string(), None, None);
+            }
+            match f(m) {
+                Ok(v) => (e.backend.id().to_string(), Some(v), None),
+                Err(err) => (e.backend.id().to_string(), None, Some(BackendError {
+                    backend: e.backend.id().to_string(), message: err,
+                })),
+            }
+        }).collect();
+    let mut items = Vec::new();
+    let mut errors = Vec::new();
+    for (id, val, err) in results {
+        if let Some(e) = err { errors.push(e); }
+        if let Some(v) = val {
+            for item in v {
+                items.push(TaggedItem { backend: id.clone(), item });
+            }
+        }
+    }
+    TaggedListResult { items, errors }
+}
+
+#[tauri::command]
+pub fn mcp_list_all() -> TaggedListResult<crate::backends::capabilities::McpServer> {
+    collect_capability_mcp(|m| m.mcp_list())
+}
+
+#[tauri::command]
+pub fn mcp_add(backend: String, name: String, config_json: String) -> Result<String, String> {
+    let entry = backends::find_entry(&backend)
+        .ok_or_else(|| format!("Unknown backend: {}", backend))?;
+    let mcp = entry.mcp
+        .ok_or_else(|| format!("{} does not support mcp", backend))?;
+    mcp.mcp_add(&name, &config_json)
+}
+
+#[tauri::command]
+pub fn mcp_remove(backend: String, name: String) -> Result<String, String> {
+    let entry = backends::find_entry(&backend)
+        .ok_or_else(|| format!("Unknown backend: {}", backend))?;
+    let mcp = entry.mcp
+        .ok_or_else(|| format!("{} does not support mcp", backend))?;
+    mcp.mcp_remove(&name)
 }
 
 #[derive(Serialize)]
