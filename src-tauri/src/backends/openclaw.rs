@@ -150,6 +150,26 @@ impl super::capabilities::McpCapability for OpenClawBackend {
     }
 }
 
+impl super::capabilities::MemoryCapability for OpenClawBackend {
+    fn memory_status(&self) -> Result<super::capabilities::MemoryStatus, String> {
+        // openclaw has no "memory status" — best effort: try index --json, fall back to defaults
+        let raw = openclaw_json(&["memory", "index", "--json"]).unwrap_or(serde_json::json!({}));
+        Ok(parse_openclaw_memory_status(raw))
+    }
+    fn memory_index(&self) -> Result<String, String> {
+        openclaw_run(&["memory", "index"])
+    }
+    fn memory_reset(&self) -> Result<String, String> {
+        Err("openclaw does not support memory reset".to_string())
+    }
+}
+
+fn parse_openclaw_memory_status(raw: serde_json::Value) -> super::capabilities::MemoryStatus {
+    let provider = raw.get("provider").and_then(|v| v.as_str()).unwrap_or("builtin").to_string();
+    let builtin_active = provider == "builtin" || raw.get("builtin").and_then(|v| v.as_bool()).unwrap_or(false);
+    super::capabilities::MemoryStatus { provider, builtin_active, raw }
+}
+
 fn openclaw_create_args(params: &NewCron) -> Vec<String> {
     let mut args = vec!["cron".into(), "add".into(), "--json".into(), "--name".into(), params.name.clone()];
     let is_interval = params.schedule.contains(char::is_alphabetic);
@@ -375,5 +395,21 @@ mod tests {
         let servers = parse_openclaw_mcp(raw);
         assert_eq!(servers.len(), 1);
         assert!(servers[0].status.contains("disabled"));
+    }
+
+    #[test]
+    fn openclaw_memory_status_default() {
+        let raw = json!({});
+        let s = parse_openclaw_memory_status(raw);
+        assert_eq!(s.provider, "builtin");
+        assert!(s.builtin_active);
+    }
+
+    #[test]
+    fn openclaw_memory_status_with_provider() {
+        let raw = json!({"provider": "external"});
+        let s = parse_openclaw_memory_status(raw);
+        assert_eq!(s.provider, "external");
+        assert!(!s.builtin_active);
     }
 }
