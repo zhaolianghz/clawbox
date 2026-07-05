@@ -74,6 +74,29 @@ impl Backend for HermesBackend {
     }
 }
 
+impl super::capabilities::SkillsCapability for HermesBackend {
+    fn skills_list(&self) -> Result<Vec<super::capabilities::Skill>, String> {
+        let output = std::process::Command::new("hermes")
+            .args(["skills", "list"])
+            .output()
+            .map_err(|e| format!("Failed to run hermes: {}", e))?;
+        if !output.status.success() {
+            return Err(format!("hermes skills list failed: {}",
+                String::from_utf8_lossy(&output.stderr).trim()));
+        }
+        Ok(parse_hermes_skills_text(&String::from_utf8_lossy(&output.stdout)))
+    }
+    fn skills_install(&self, id: &str) -> Result<String, String> {
+        run_hermes(&["skills", "install", id])
+    }
+    fn skills_uninstall(&self, id: &str) -> Result<String, String> {
+        run_hermes(&["skills", "uninstall", id])
+    }
+    fn skills_set_enabled(&self, _id: &str, _enabled: bool) -> Result<String, String> {
+        Err("hermes does not support skills set_enabled".to_string())
+    }
+}
+
 fn hermes_create_args(params: &NewCron) -> Vec<String> {
     let mut args = vec!["cron".into(), "create".into(), params.schedule.clone()];
     if let Some(m) = &params.message {
@@ -189,6 +212,38 @@ fn extract_pid(text: &str) -> Option<i32> {
     None
 }
 
+fn parse_hermes_skills_text(text: &str) -> Vec<super::capabilities::Skill> {
+    if text.trim().is_empty() || text.contains("No skills installed") {
+        return vec![];
+    }
+    let mut skills = Vec::new();
+    for line in text.lines() {
+        let trimmed = line.trim();
+        if !trimmed.starts_with('│') { continue; }
+        let cells: Vec<&str> = trimmed.split('│').map(str::trim).collect();
+        // Format: ["", name, category, source, trust, status, ""]
+        if cells.len() < 6 { continue; }
+        let name = cells[1];
+        if name.is_empty() { continue; }
+        // Skip header / separator rows (contain box-drawing chars).
+        if name.contains('━') || name.contains('╇') || name.contains('╞')
+            || name.eq_ignore_ascii_case("name") {
+            continue;
+        }
+        let status = cells[5];
+        let enabled = status.contains("enabled") && !status.contains("disabled");
+        skills.push(super::capabilities::Skill {
+            id: name.to_string(),
+            name: name.to_string(),
+            version: String::new(),
+            description: String::new(),
+            enabled,
+            raw: serde_json::json!({"raw_line": line}),
+        });
+    }
+    skills
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -297,5 +352,35 @@ mod tests {
     fn extract_pid_returns_none_when_absent() {
         let text = "Label = \"ai.hermes.gateway\";\n";
         assert_eq!(extract_pid(text), None);
+    }
+
+    // Real fixture captured verbatim from `hermes skills list` (v0.11.0).
+    const HERMES_SKILLS_FIXTURE: &str = "\
+                                Installed Skills
+┏━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━┳━━━━━━━━━┳━━━━━━━━━┓
+┃ Name                    ┃ Category             ┃ Source  ┃ Trust   ┃ Status  ┃
+┡━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━╇━━━━━━━━━╇━━━━━━━━━┩
+│ dogfood                 │                      │ builtin │ builtin │ enabled │
+│ webnovel-write          │                      │ local   │ local   │ enabled │
+│ paused-skill            │                      │ local   │ local   │ disabled │
+└─────────────────────────┴──────────────────────┴─────────┴─────────┴─────────┘
+";
+
+    #[test]
+    fn parses_hermes_skills_table() {
+        let skills = parse_hermes_skills_text(HERMES_SKILLS_FIXTURE);
+        assert_eq!(skills.len(), 3);
+        assert_eq!(skills[0].id, "dogfood");
+        assert_eq!(skills[0].name, "dogfood");
+        assert!(skills[0].enabled);
+        assert_eq!(skills[2].id, "paused-skill");
+        assert!(!skills[2].enabled);
+    }
+
+    #[test]
+    fn parses_hermes_skills_empty() {
+        let text = "No skills installed.\n";
+        let skills = parse_hermes_skills_text(text);
+        assert!(skills.is_empty());
     }
 }
