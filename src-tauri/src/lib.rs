@@ -29,6 +29,8 @@ pub fn run() {
             commands::aggregate::plugins_install,
             commands::aggregate::plugins_remove,
             commands::aggregate::plugins_set_enabled,
+            commands::aggregate::tools_list_all,
+            commands::aggregate::tools_set_enabled,
             commands::aggregate::get_stats,
             commands::config::get_config,
             commands::config::set_config,

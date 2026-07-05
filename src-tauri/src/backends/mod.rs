@@ -102,7 +102,7 @@ pub fn entries() -> &'static [BackendEntry] {
                 mcp:     Some(&hermes::HermesBackend),
                 memory:  Some(&hermes::HermesBackend),
                 plugins: Some(&hermes::HermesBackend),
-                tools:   None,
+                tools:   Some(&hermes::HermesBackend),
                 hooks:   None,
             },
         ]

@@ -329,7 +329,53 @@ pub fn plugins_set_enabled(backend: String, id: String, enabled: bool) -> Result
     plugins.plugins_set_enabled(&id, enabled)
 }
 
-use crate::backends::capabilities::MemoryCapability;
+use crate::backends::capabilities::{MemoryCapability, ToolsCapability};
+
+fn collect_capability_tools<T, F>(f: F) -> TaggedListResult<T>
+where
+    T: Send,
+    F: Fn(&dyn ToolsCapability) -> Result<Vec<T>, String> + Sync + Send,
+{
+    use rayon::prelude::*;
+    let results: Vec<_> = backends::entries().par_iter()
+        .filter_map(|e| e.tools.map(|t| (e, t)))
+        .map(|(e, t)| {
+            if !e.backend.is_installed() {
+                return (e.backend.id().to_string(), None, None);
+            }
+            match f(t) {
+                Ok(v) => (e.backend.id().to_string(), Some(v), None),
+                Err(err) => (e.backend.id().to_string(), None, Some(BackendError {
+                    backend: e.backend.id().to_string(), message: err,
+                })),
+            }
+        }).collect();
+    let mut items = Vec::new();
+    let mut errors = Vec::new();
+    for (id, val, err) in results {
+        if let Some(e) = err { errors.push(e); }
+        if let Some(v) = val {
+            for item in v {
+                items.push(TaggedItem { backend: id.clone(), item });
+            }
+        }
+    }
+    TaggedListResult { items, errors }
+}
+
+#[tauri::command]
+pub fn tools_list_all() -> TaggedListResult<crate::backends::capabilities::Tool> {
+    collect_capability_tools(|t| t.tools_list())
+}
+
+#[tauri::command]
+pub fn tools_set_enabled(backend: String, id: String, enabled: bool) -> Result<String, String> {
+    let entry = backends::find_entry(&backend)
+        .ok_or_else(|| format!("Unknown backend: {}", backend))?;
+    let tools = entry.tools
+        .ok_or_else(|| format!("{} does not support tools", backend))?;
+    tools.tools_set_enabled(&id, enabled)
+}
 
 fn collect_capability_memory<T, F>(f: F) -> TaggedListResult<T>
 where
