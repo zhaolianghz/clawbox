@@ -89,7 +89,7 @@ pub fn entries() -> &'static [BackendEntry] {
         vec![
             BackendEntry {
                 backend: &openclaw::OpenClawBackend,
-                skills:  None,
+                skills:  Some(&openclaw::OpenClawBackend),
                 mcp:     None,
                 memory:  None,
                 plugins: None,
@@ -98,7 +98,7 @@ pub fn entries() -> &'static [BackendEntry] {
             },
             BackendEntry {
                 backend: &hermes::HermesBackend,
-                skills:  None,
+                skills:  Some(&hermes::HermesBackend),
                 mcp:     None,
                 memory:  None,
                 plugins: None,

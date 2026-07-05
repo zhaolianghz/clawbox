@@ -33,6 +33,52 @@ pub struct GatewayStatusAllResult {
     pub errors: Vec<BackendError>,
 }
 
+use crate::backends::capabilities::SkillsCapability;
+
+#[derive(Serialize)]
+pub struct TaggedItem<T> {
+    pub backend: String,
+    pub item: T,
+}
+
+#[derive(Serialize)]
+pub struct TaggedListResult<T> {
+    pub items: Vec<TaggedItem<T>>,
+    pub errors: Vec<BackendError>,
+}
+
+fn collect_capability<T, F>(f: F) -> TaggedListResult<T>
+where
+    T: Send,
+    F: Fn(&dyn SkillsCapability) -> Result<Vec<T>, String> + Sync + Send,
+{
+    use rayon::prelude::*;
+    let results: Vec<_> = backends::entries().par_iter()
+        .filter_map(|e| e.skills.map(|s| (e, s)))
+        .map(|(e, s)| {
+            if !e.backend.is_installed() {
+                return (e.backend.id().to_string(), None, None);
+            }
+            match f(s) {
+                Ok(v) => (e.backend.id().to_string(), Some(v), None),
+                Err(err) => (e.backend.id().to_string(), None, Some(BackendError {
+                    backend: e.backend.id().to_string(), message: err,
+                })),
+            }
+        }).collect();
+    let mut items = Vec::new();
+    let mut errors = Vec::new();
+    for (id, val, err) in results {
+        if let Some(e) = err { errors.push(e); }
+        if let Some(v) = val {
+            for item in v {
+                items.push(TaggedItem { backend: id.clone(), item });
+            }
+        }
+    }
+    TaggedListResult { items, errors }
+}
+
 fn collect_backends<F, T>(f: F) -> (Vec<(String, T)>, Vec<BackendError>)
 where
     F: Fn(&dyn Backend) -> Result<T, String> + Sync + Send,
@@ -130,6 +176,38 @@ pub fn cron_run(backend: String, id: String) -> Result<String, String> {
     backends::find_backend(&backend)
         .ok_or_else(|| format!("Unknown backend: {}", backend))?
         .cron_run(&id)
+}
+
+#[tauri::command]
+pub fn skills_list_all() -> TaggedListResult<crate::backends::capabilities::Skill> {
+    collect_capability(|s| s.skills_list())
+}
+
+#[tauri::command]
+pub fn skills_install(backend: String, id: String) -> Result<String, String> {
+    let entry = backends::find_entry(&backend)
+        .ok_or_else(|| format!("Unknown backend: {}", backend))?;
+    let skills = entry.skills
+        .ok_or_else(|| format!("{} does not support skills", backend))?;
+    skills.skills_install(&id)
+}
+
+#[tauri::command]
+pub fn skills_uninstall(backend: String, id: String) -> Result<String, String> {
+    let entry = backends::find_entry(&backend)
+        .ok_or_else(|| format!("Unknown backend: {}", backend))?;
+    let skills = entry.skills
+        .ok_or_else(|| format!("{} does not support skills", backend))?;
+    skills.skills_uninstall(&id)
+}
+
+#[tauri::command]
+pub fn skills_set_enabled(backend: String, id: String, enabled: bool) -> Result<String, String> {
+    let entry = backends::find_entry(&backend)
+        .ok_or_else(|| format!("Unknown backend: {}", backend))?;
+    let skills = entry.skills
+        .ok_or_else(|| format!("{} does not support skills", backend))?;
+    skills.skills_set_enabled(&id, enabled)
 }
 
 #[derive(Serialize)]
