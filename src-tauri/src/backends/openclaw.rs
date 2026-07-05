@@ -170,6 +170,68 @@ fn parse_openclaw_memory_status(raw: serde_json::Value) -> super::capabilities::
     super::capabilities::MemoryStatus { provider, builtin_active, raw }
 }
 
+impl super::capabilities::HooksCapability for OpenClawBackend {
+    fn hooks_list(&self) -> Result<Vec<super::capabilities::Hook>, String> {
+        let output = std::process::Command::new("openclaw")
+            .args(["hooks", "list"])
+            .output()
+            .map_err(|e| format!("Failed to run openclaw: {}", e))?;
+        if !output.status.success() {
+            return Err(format!("openclaw hooks list failed: {}",
+                String::from_utf8_lossy(&output.stderr).trim()));
+        }
+        Ok(parse_openclaw_hooks_text(&String::from_utf8_lossy(&output.stdout)))
+    }
+    fn hooks_set_enabled(&self, id: &str, enabled: bool) -> Result<String, String> {
+        let action = if enabled { "enable" } else { "disable" };
+        openclaw_run(&["hooks", action, id])
+    }
+}
+
+fn parse_openclaw_hooks_text(text: &str) -> Vec<super::capabilities::Hook> {
+    if text.trim().is_empty() { return vec![]; }
+    let mut hooks: Vec<super::capabilities::Hook> = Vec::new();
+    let mut current: Option<super::capabilities::Hook> = None;
+    for line in text.lines() {
+        let trimmed = line.trim();
+        if !trimmed.starts_with('│') { continue; }
+        let cells: Vec<&str> = trimmed.split('│').map(str::trim).collect();
+        if cells.len() < 3 { continue; }
+        // Skip header row ("Status") and separator rows.
+        if cells[1].eq_ignore_ascii_case("status") || cells[1].contains('─') { continue; }
+        // Distinguish full row from continuation by status-cell emptiness.
+        // Continuation rows have an empty/whitespace status cell.
+        let status = cells[1];
+        if !status.is_empty() {
+            // Full row: flush previous, start a new hook.
+            if let Some(h) = current.take() { hooks.push(h); }
+            let name = cells.get(2).copied().unwrap_or("");
+            let enabled = status.contains("ready") || (status.contains("enabled") && !status.contains("disabled"));
+            current = Some(super::capabilities::Hook {
+                id: name.to_string(),
+                name: name.to_string(),
+                event: String::new(),
+                enabled,
+                raw: serde_json::json!({}),
+            });
+        } else if let Some(ref mut h) = current {
+            // Continuation row: append wrapped cells[2] (name/desc) and cells[3] (desc) into the hook.
+            if let Some(c) = cells.get(2) {
+                if !c.is_empty() { h.name.push_str(c); h.id.push_str(c); }
+            }
+            if let Some(c) = cells.get(3) {
+                if !c.is_empty() {
+                    if !h.raw.as_object().map(|o| o.contains_key("description")).unwrap_or(false) {
+                        h.raw["description"] = serde_json::Value::String(c.to_string());
+                    }
+                }
+            }
+        }
+    }
+    if let Some(h) = current.take() { hooks.push(h); }
+    hooks
+}
+
 impl super::capabilities::PluginsCapability for OpenClawBackend {
     fn plugins_list(&self) -> Result<Vec<super::capabilities::Plugin>, String> {
         // openclaw plugins list has no --json; capture stdout as text
@@ -511,5 +573,27 @@ Source roots:
     fn openclaw_plugins_empty() {
         let plugins = parse_openclaw_plugins_text("No plugins.\n");
         assert!(plugins.is_empty());
+    }
+
+    // Real fixture captured verbatim from `openclaw hooks list` (2026.4.11).
+    const OPENCLAW_HOOKS_FIXTURE: &str = "\
+Hooks (5/5 ready)
+┌──────────┬────────────────────────────────┬────────────────────────────────┬────────────┐
+│ Status   │ Hook                           │ Description                    │ Source     │
+├──────────┼────────────────────────────────┼────────────────────────────────┼────────────┤
+│ ✓ ready  │ 🚀 boot-md                     │ Run BOOT.md on gateway startup │ openclaw-  │
+│          │                                │                                │ bundled    │
+│ ✓ ready  │ 📎 bootstrap-extra-files       │ Inject additional files        │ openclaw-  │
+│          │                                │                                │ bundled    │
+└──────────┴────────────────────────────────┴────────────────────────────────┴────────────┘
+";
+
+    #[test]
+    fn openclaw_hooks_parses_table() {
+        let hooks = parse_openclaw_hooks_text(OPENCLAW_HOOKS_FIXTURE);
+        assert_eq!(hooks.len(), 2);
+        assert_eq!(hooks[0].id, "🚀 boot-md");
+        assert!(hooks[0].enabled);  // "ready" → enabled
+        assert_eq!(hooks[1].id, "📎 bootstrap-extra-files");
     }
 }
