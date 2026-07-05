@@ -94,7 +94,7 @@ pub fn entries() -> &'static [BackendEntry] {
                 memory:  Some(&openclaw::OpenClawBackend),
                 plugins: Some(&openclaw::OpenClawBackend),
                 tools:   None,
-                hooks:   None,
+                hooks:   Some(&openclaw::OpenClawBackend),
             },
             BackendEntry {
                 backend: &hermes::HermesBackend,
@@ -103,7 +103,7 @@ pub fn entries() -> &'static [BackendEntry] {
                 memory:  Some(&hermes::HermesBackend),
                 plugins: Some(&hermes::HermesBackend),
                 tools:   Some(&hermes::HermesBackend),
-                hooks:   None,
+                hooks:   Some(&hermes::HermesBackend),
             },
         ]
     }).as_slice()

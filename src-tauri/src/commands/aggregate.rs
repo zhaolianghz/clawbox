@@ -377,6 +377,54 @@ pub fn tools_set_enabled(backend: String, id: String, enabled: bool) -> Result<S
     tools.tools_set_enabled(&id, enabled)
 }
 
+use crate::backends::capabilities::HooksCapability;
+
+fn collect_capability_hooks<T, F>(f: F) -> TaggedListResult<T>
+where
+    T: Send,
+    F: Fn(&dyn HooksCapability) -> Result<Vec<T>, String> + Sync + Send,
+{
+    use rayon::prelude::*;
+    let results: Vec<_> = backends::entries().par_iter()
+        .filter_map(|e| e.hooks.map(|h| (e, h)))
+        .map(|(e, h)| {
+            if !e.backend.is_installed() {
+                return (e.backend.id().to_string(), None, None);
+            }
+            match f(h) {
+                Ok(v) => (e.backend.id().to_string(), Some(v), None),
+                Err(err) => (e.backend.id().to_string(), None, Some(BackendError {
+                    backend: e.backend.id().to_string(), message: err,
+                })),
+            }
+        }).collect();
+    let mut items = Vec::new();
+    let mut errors = Vec::new();
+    for (id, val, err) in results {
+        if let Some(e) = err { errors.push(e); }
+        if let Some(v) = val {
+            for item in v {
+                items.push(TaggedItem { backend: id.clone(), item });
+            }
+        }
+    }
+    TaggedListResult { items, errors }
+}
+
+#[tauri::command]
+pub fn hooks_list_all() -> TaggedListResult<crate::backends::capabilities::Hook> {
+    collect_capability_hooks(|h| h.hooks_list())
+}
+
+#[tauri::command]
+pub fn hooks_set_enabled(backend: String, id: String, enabled: bool) -> Result<String, String> {
+    let entry = backends::find_entry(&backend)
+        .ok_or_else(|| format!("Unknown backend: {}", backend))?;
+    let hooks = entry.hooks
+        .ok_or_else(|| format!("{} does not support hooks", backend))?;
+    hooks.hooks_set_enabled(&id, enabled)
+}
+
 fn collect_capability_memory<T, F>(f: F) -> TaggedListResult<T>
 where
     T: Send,
