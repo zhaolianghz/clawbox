@@ -33,7 +33,7 @@ pub struct GatewayStatusAllResult {
     pub errors: Vec<BackendError>,
 }
 
-use crate::backends::capabilities::{McpCapability, SkillsCapability};
+use crate::backends::capabilities::{McpCapability, PluginsCapability, SkillsCapability};
 
 #[derive(Serialize)]
 pub struct TaggedItem<T> {
@@ -263,6 +263,70 @@ pub fn mcp_remove(backend: String, name: String) -> Result<String, String> {
     let mcp = entry.mcp
         .ok_or_else(|| format!("{} does not support mcp", backend))?;
     mcp.mcp_remove(&name)
+}
+
+fn collect_capability_plugins<T, F>(f: F) -> TaggedListResult<T>
+where
+    T: Send,
+    F: Fn(&dyn PluginsCapability) -> Result<Vec<T>, String> + Sync + Send,
+{
+    use rayon::prelude::*;
+    let results: Vec<_> = backends::entries().par_iter()
+        .filter_map(|e| e.plugins.map(|p| (e, p)))
+        .map(|(e, p)| {
+            if !e.backend.is_installed() {
+                return (e.backend.id().to_string(), None, None);
+            }
+            match f(p) {
+                Ok(v) => (e.backend.id().to_string(), Some(v), None),
+                Err(err) => (e.backend.id().to_string(), None, Some(BackendError {
+                    backend: e.backend.id().to_string(), message: err,
+                })),
+            }
+        }).collect();
+    let mut items = Vec::new();
+    let mut errors = Vec::new();
+    for (id, val, err) in results {
+        if let Some(e) = err { errors.push(e); }
+        if let Some(v) = val {
+            for item in v {
+                items.push(TaggedItem { backend: id.clone(), item });
+            }
+        }
+    }
+    TaggedListResult { items, errors }
+}
+
+#[tauri::command]
+pub fn plugins_list_all() -> TaggedListResult<crate::backends::capabilities::Plugin> {
+    collect_capability_plugins(|p| p.plugins_list())
+}
+
+#[tauri::command]
+pub fn plugins_install(backend: String, source: String) -> Result<String, String> {
+    let entry = backends::find_entry(&backend)
+        .ok_or_else(|| format!("Unknown backend: {}", backend))?;
+    let plugins = entry.plugins
+        .ok_or_else(|| format!("{} does not support plugins", backend))?;
+    plugins.plugins_install(&source)
+}
+
+#[tauri::command]
+pub fn plugins_remove(backend: String, id: String) -> Result<String, String> {
+    let entry = backends::find_entry(&backend)
+        .ok_or_else(|| format!("Unknown backend: {}", backend))?;
+    let plugins = entry.plugins
+        .ok_or_else(|| format!("{} does not support plugins", backend))?;
+    plugins.plugins_remove(&id)
+}
+
+#[tauri::command]
+pub fn plugins_set_enabled(backend: String, id: String, enabled: bool) -> Result<String, String> {
+    let entry = backends::find_entry(&backend)
+        .ok_or_else(|| format!("Unknown backend: {}", backend))?;
+    let plugins = entry.plugins
+        .ok_or_else(|| format!("{} does not support plugins", backend))?;
+    plugins.plugins_set_enabled(&id, enabled)
 }
 
 use crate::backends::capabilities::MemoryCapability;

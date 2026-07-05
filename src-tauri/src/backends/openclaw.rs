@@ -233,12 +233,6 @@ fn parse_openclaw_plugins_text(text: &str) -> Vec<super::capabilities::Plugin> {
     plugins
 }
 
-fn parse_openclaw_plugins(raw: serde_json::Value) -> Vec<super::capabilities::Plugin> {
-    // openclaw plugins list doesn't have --json; fall back to text parser
-    if let Some(text) = raw.as_str() { return parse_openclaw_plugins_text(text); }
-    vec![]
-}
-
 fn openclaw_create_args(params: &NewCron) -> Vec<String> {
     let mut args = vec!["cron".into(), "add".into(), "--json".into(), "--name".into(), params.name.clone()];
     let is_interval = params.schedule.contains(char::is_alphabetic);
