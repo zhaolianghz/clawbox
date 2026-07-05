@@ -5,12 +5,12 @@
   import TopBar from './lib/components/TopBar.svelte';
   import StatusBar from './lib/components/StatusBar.svelte';
   import LogsPage from './routes/logs/+page.svelte';
-  import SkillsPage from './routes/skills/+page.svelte';
   import AboutPage from './routes/about/+page.svelte';
   import AgentsPage from './routes/agents/+page.svelte';
   import MonitorPage from './routes/monitor/+page.svelte';
   import TasksPage from './routes/tasks/+page.svelte';
   import ConfigPage from './routes/config/+page.svelte';
+  import CapabilitiesPage from './routes/capabilities/+page.svelte';
   import { openclawGateway } from './lib/api/chat';
   import { get_stats, extractMetrics, type DashboardMetrics } from './lib/api/stats';
   import { list_gateway_statuses } from './lib/api/gateway';
@@ -315,8 +315,8 @@
         <TasksPage />
       {:else if currentPage === 'logs'}
         <LogsPage />
-      {:else if currentPage === 'skills'}
-        <SkillsPage />
+      {:else if currentPage === 'capabilities'}
+        <CapabilitiesPage />
       {:else if currentPage === 'about'}
         <AboutPage />
       {:else}
