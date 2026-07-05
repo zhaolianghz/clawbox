@@ -60,3 +60,23 @@ fn hermes_cron_list_parses_real_output() {
         assert!(!j.name.is_empty(), "parsed job name should not be empty");
     }
 }
+
+#[test]
+fn skills_list_runs_against_live_backends() {
+    if !openclaw_installed() && !hermes_installed() {
+        eprintln!("neither backend installed — skipping");
+        return;
+    }
+    let entries = clawbox_lib::backends::entries();
+    let mut found_any = false;
+    for entry in entries {
+        if !entry.backend.is_installed() { continue; }
+        if let Some(skills) = entry.skills {
+            found_any = true;
+            let result = skills.skills_list();
+            // Either Ok or Err depending on gateway state; we just verify the trait method is reachable.
+            eprintln!("{}: skills_list reachable, ok={}", entry.backend.id(), result.is_ok());
+        }
+    }
+    assert!(found_any, "expected at least one installed backend with skills capability");
+}
