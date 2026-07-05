@@ -117,6 +117,84 @@ impl super::capabilities::McpCapability for HermesBackend {
     }
 }
 
+impl super::capabilities::PluginsCapability for HermesBackend {
+    fn plugins_list(&self) -> Result<Vec<super::capabilities::Plugin>, String> {
+        let output = std::process::Command::new("hermes").args(["plugins", "list"]).output()
+            .map_err(|e| format!("Failed to run hermes: {}", e))?;
+        if !output.status.success() {
+            return Err(format!("hermes plugins list failed: {}",
+                String::from_utf8_lossy(&output.stderr).trim()));
+        }
+        Ok(parse_hermes_plugins_text(&String::from_utf8_lossy(&output.stdout)))
+    }
+    fn plugins_install(&self, source: &str) -> Result<String, String> {
+        run_hermes(&["plugins", "install", source])
+    }
+    fn plugins_remove(&self, id: &str) -> Result<String, String> {
+        run_hermes(&["plugins", "remove", id])
+    }
+    fn plugins_set_enabled(&self, id: &str, enabled: bool) -> Result<String, String> {
+        let action = if enabled { "enable" } else { "disable" };
+        run_hermes(&["plugins", action, id])
+    }
+}
+
+fn parse_hermes_plugins_text(text: &str) -> Vec<super::capabilities::Plugin> {
+    if text.trim().is_empty() || text.contains("No plugins") { return vec![]; }
+    let mut plugins = Vec::new();
+    let mut current: Option<super::capabilities::Plugin> = None;
+    let mut in_data = false;
+    for line in text.lines() {
+        let trimmed = line.trim();
+        if !trimmed.starts_with('│') {
+            // Header row uses ┃ instead of │ — detect when we see the header to start data.
+            if !in_data && trimmed.contains('┃') && trimmed.contains("Name") && trimmed.contains("Status") {
+                in_data = true;
+            }
+            continue;
+        }
+        if !in_data { continue; }
+        let cells: Vec<&str> = trimmed.split('│').map(str::trim).collect();
+        // Format: ["", name, status, version, desc..., source, ""]
+        if cells.len() < 4 { continue; }
+        if cells[1].is_empty() || cells[1].contains('━') || cells[1].contains('╇')
+            || cells[1].contains('╞') { continue; }
+        // Detect new data row: status cell is "enabled" or "not enabled".
+        let status = cells[2];
+        let is_data_row = status.contains("enabled");
+        if is_data_row {
+            if let Some(p) = current.take() { plugins.push(p); }
+            let name = cells[1];
+            let version = cells[3];
+            let enabled = status == "enabled";
+            current = Some(super::capabilities::Plugin {
+                id: name.to_string(),
+                name: name.to_string(),
+                version: version.to_string(),
+                enabled,
+                raw: serde_json::json!({}),
+            });
+        } else if let Some(ref mut p) = current {
+            // Continuation row — usually just cells[4] (description) is non-empty.
+            if !cells[1].is_empty() {
+                p.name.push(' ');
+                p.name.push_str(cells[1]);
+            }
+            if !cells[4].is_empty() {
+                let existing = p.raw["description"].as_str().unwrap_or("").to_string();
+                let new = if existing.is_empty() {
+                    cells[4].to_string()
+                } else {
+                    format!("{} {}", existing, cells[4])
+                };
+                p.raw["description"] = serde_json::Value::String(new);
+            }
+        }
+    }
+    if let Some(p) = current.take() { plugins.push(p); }
+    plugins
+}
+
 impl super::capabilities::MemoryCapability for HermesBackend {
     fn memory_status(&self) -> Result<super::capabilities::MemoryStatus, String> {
         let output = std::process::Command::new("hermes").args(["memory", "status"]).output()
@@ -534,5 +612,25 @@ Memory status
         let s = parse_hermes_memory_text(HERMES_MEMORY_FIXTURE);
         assert_eq!(s.provider, "hindsight");
         assert!(s.builtin_active);
+    }
+
+    // Real fixture captured verbatim from `hermes plugins list` (v0.11.0).
+    const HERMES_PLUGINS_FIXTURE: &str = "\
+                                    Plugins
+┏━━━━━━━━━━━━━━┳━━━━━━━━━━━━━┳━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━┓
+┃ Name         ┃ Status      ┃ Version ┃ Description                 ┃ Source  ┃
+┡━━━━━━━━━━━━━━╇━━━━━━━━━━━━━╇━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━┡
+│ disk-cleanup │ not enabled │ 2.0.0   │ Auto-track and clean up     │ bundled │
+│ google_meet  │ not enabled │ 0.2.0   │ Join a Google Meet call...   │ bundled │
+└──────────────┴─────────────┴────────━┴─────────────────────────────┴─────────┘
+";
+
+    #[test]
+    fn parses_hermes_plugins_table() {
+        let plugins = parse_hermes_plugins_text(HERMES_PLUGINS_FIXTURE);
+        assert_eq!(plugins.len(), 2);
+        assert_eq!(plugins[0].id, "disk-cleanup");
+        assert!(!plugins[0].enabled);  // "not enabled" → disabled
+        assert_eq!(plugins[0].version, "2.0.0");
     }
 }
