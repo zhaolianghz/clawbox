@@ -33,6 +33,7 @@ pub trait McpCapability: Send + Sync {
 
 // Memory
 #[derive(Serialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
 pub struct MemoryStatus {
     pub provider: String,
     pub builtin_active: bool,
