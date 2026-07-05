@@ -120,6 +120,23 @@ impl Backend for OpenClawBackend {
     }
 }
 
+impl super::capabilities::SkillsCapability for OpenClawBackend {
+    fn skills_list(&self) -> Result<Vec<super::capabilities::Skill>, String> {
+        let raw = openclaw_json(&["skills", "list", "--json"])?;
+        Ok(parse_openclaw_skills(raw))
+    }
+    fn skills_install(&self, id: &str) -> Result<String, String> {
+        openclaw_run(&["skills", "install", id])
+    }
+    fn skills_uninstall(&self, id: &str) -> Result<String, String> {
+        openclaw_run(&["skills", "uninstall", id])
+    }
+    fn skills_set_enabled(&self, id: &str, enabled: bool) -> Result<String, String> {
+        let action = if enabled { "enable" } else { "disable" };
+        openclaw_run(&["skills", action, id])
+    }
+}
+
 fn openclaw_create_args(params: &NewCron) -> Vec<String> {
     let mut args = vec!["cron".into(), "add".into(), "--json".into(), "--name".into(), params.name.clone()];
     let is_interval = params.schedule.contains(char::is_alphabetic);
@@ -131,6 +148,25 @@ fn openclaw_create_args(params: &NewCron) -> Vec<String> {
     if let Some(m) = &params.message { args.push("--message".into()); args.push(m.clone()); }
     if let Some(a) = &params.agent   { args.push("--agent".into());   args.push(a.clone()); }
     args
+}
+
+fn parse_openclaw_skills(raw: serde_json::Value) -> Vec<super::capabilities::Skill> {
+    let arr = match raw {
+        serde_json::Value::Object(ref m) if m.contains_key("skills") => m["skills"].clone(),
+        other => other,
+    };
+    let arr = arr.as_array().cloned().unwrap_or_default();
+    arr.into_iter().map(|v| {
+        let o = v.as_object().cloned().unwrap_or_default();
+        let id = o.get("name").and_then(|v| v.as_str()).unwrap_or("").to_string();
+        let name = id.clone();
+        let description = o.get("description").and_then(|v| v.as_str()).unwrap_or("").to_string();
+        let version = o.get("version").and_then(|v| v.as_str()).unwrap_or("").to_string();
+        let enabled = !o.get("disabled").and_then(|v| v.as_bool()).unwrap_or(false);
+        super::capabilities::Skill {
+            id, name, version, description, enabled, raw: v,
+        }
+    }).collect()
 }
 
 fn normalise_openclaw_job(raw: serde_json::Value) -> CronJob {
@@ -223,5 +259,42 @@ mod tests {
         assert!(args.contains(&"--every".to_string()));
         assert!(args.contains(&"30m".to_string()));
         assert!(!args.contains(&"--cron".to_string()));
+    }
+
+    #[test]
+    fn openclaw_skills_normalises_object() {
+        let raw = json!({
+            "skills": [{
+                "name": "code-review",
+                "description": "Review code",
+                "emoji": "🔍",
+                "eligible": true,
+                "disabled": false,
+                "homepage": "https://example.com",
+                "bundled": true,
+                "source": "openclaw-bundled"
+            }]
+        });
+        let skills = parse_openclaw_skills(raw);
+        assert_eq!(skills.len(), 1);
+        assert_eq!(skills[0].id, "code-review");
+        assert_eq!(skills[0].name, "code-review");
+        assert!(skills[0].enabled);
+    }
+
+    #[test]
+    fn openclaw_skills_disabled_flag() {
+        let raw = json!({"skills": [{"name": "x", "description": "", "disabled": true}]});
+        let skills = parse_openclaw_skills(raw);
+        assert_eq!(skills.len(), 1);
+        assert!(!skills[0].enabled);
+    }
+
+    #[test]
+    fn openclaw_skills_root_array() {
+        let raw = json!([{"name": "a", "description": ""}]);
+        let skills = parse_openclaw_skills(raw);
+        assert_eq!(skills.len(), 1);
+        assert_eq!(skills[0].name, "a");
     }
 }
