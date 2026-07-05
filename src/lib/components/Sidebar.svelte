@@ -19,6 +19,7 @@
     { id: 'monitor', label: 'Monitor' },
     { id: 'tasks', label: 'Tasks' },
     { id: 'logs', label: 'Logs' },
+    { id: 'capabilities', label: 'Capabilities' },
   ];
   
   onMount(() => {
@@ -34,7 +35,7 @@
     if (!isReady) {
       const labels: Record<string, string> = {
         home: 'Home', chat: 'Chat', config: 'Config', agents: 'Agents',
-        monitor: 'Monitor', tasks: 'Tasks', logs: 'Logs', about: 'About'
+        monitor: 'Monitor', tasks: 'Tasks', logs: 'Logs', capabilities: 'Capabilities', about: 'About'
       };
       return labels[key] || key;
     }
@@ -88,6 +89,12 @@
             <line x1="16" y1="13" x2="8" y2="13"/>
             <line x1="16" y1="17" x2="8" y2="17"/>
             <polyline points="10 9 9 9 8 9"/>
+          </svg>
+        {:else if item.id === 'capabilities'}
+          <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M12 2L2 7l10 5 10-5-10-5z"/>
+            <path d="M2 17l10 5 10-5"/>
+            <path d="M2 12l10 5 10-5"/>
           </svg>
         {/if}
         <span class="label">{t(item.id)}</span>
