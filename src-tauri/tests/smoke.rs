@@ -99,3 +99,22 @@ fn mcp_list_runs_against_live_backends() {
     }
     assert!(found);
 }
+
+#[test]
+fn memory_status_runs_against_live_backends() {
+    if !openclaw_installed() && !hermes_installed() {
+        eprintln!("skip");
+        return;
+    }
+    let entries = clawbox_lib::backends::entries();
+    let mut found = false;
+    for entry in entries {
+        if !entry.backend.is_installed() { continue; }
+        if let Some(mem) = entry.memory {
+            found = true;
+            let r = mem.memory_status();
+            eprintln!("{}: memory_status reachable, ok={}", entry.backend.id(), r.is_ok());
+        }
+    }
+    assert!(found);
+}
