@@ -195,6 +195,41 @@ fn parse_hermes_plugins_text(text: &str) -> Vec<super::capabilities::Plugin> {
     plugins
 }
 
+impl super::capabilities::ToolsCapability for HermesBackend {
+    fn tools_list(&self) -> Result<Vec<super::capabilities::Tool>, String> {
+        let output = std::process::Command::new("hermes").args(["tools", "list"]).output()
+            .map_err(|e| format!("Failed to run hermes: {}", e))?;
+        if !output.status.success() {
+            return Err(format!("hermes tools list failed: {}",
+                String::from_utf8_lossy(&output.stderr).trim()));
+        }
+        Ok(parse_hermes_tools_text(&String::from_utf8_lossy(&output.stdout)))
+    }
+    fn tools_set_enabled(&self, id: &str, enabled: bool) -> Result<String, String> {
+        let action = if enabled { "enable" } else { "disable" };
+        run_hermes(&["tools", action, id])
+    }
+}
+
+fn parse_hermes_tools_text(text: &str) -> Vec<super::capabilities::Tool> {
+    let mut tools = Vec::new();
+    let mut in_section = false;
+    for line in text.lines() {
+        let t = line.trim();
+        if t.starts_with("Built-in toolsets") { in_section = true; continue; }
+        if t.starts_with("MCP servers") { in_section = false; continue; }
+        if !in_section { continue; }
+        if !t.starts_with('✓') && !t.starts_with('✗') { continue; }
+        let enabled = t.starts_with('✓');
+        let parts: Vec<&str> = t.split_whitespace().collect();
+        // Format: [marker, "enabled"/"disabled", <id>, <emoji>, ...]
+        if parts.len() < 3 { continue; }
+        let id = parts[2].to_string();
+        tools.push(super::capabilities::Tool { id, enabled, raw: serde_json::json!({}) });
+    }
+    tools
+}
+
 impl super::capabilities::MemoryCapability for HermesBackend {
     fn memory_status(&self) -> Result<super::capabilities::MemoryStatus, String> {
         let output = std::process::Command::new("hermes").args(["memory", "status"]).output()
@@ -632,5 +667,23 @@ Memory status
         assert_eq!(plugins[0].id, "disk-cleanup");
         assert!(!plugins[0].enabled);  // "not enabled" → disabled
         assert_eq!(plugins[0].version, "2.0.0");
+    }
+
+    // Real fixture captured verbatim from `hermes tools list` (v0.11.0).
+    const HERMES_TOOLS_FIXTURE: &str = "\
+Built-in toolsets (cli):
+  ✓ enabled  web  🔍 Web Search & Scraping
+  ✗ disabled  moa  🧠 Mixture of Agents
+  ✓ enabled  memory  💾 Memory
+";
+
+    #[test]
+    fn parses_hermes_tools_section() {
+        let tools = parse_hermes_tools_text(HERMES_TOOLS_FIXTURE);
+        assert_eq!(tools.len(), 3);
+        assert_eq!(tools[0].id, "web");
+        assert!(tools[0].enabled);
+        assert_eq!(tools[1].id, "moa");
+        assert!(!tools[1].enabled);
     }
 }
