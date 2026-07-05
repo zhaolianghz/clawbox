@@ -117,6 +117,38 @@ impl super::capabilities::McpCapability for HermesBackend {
     }
 }
 
+impl super::capabilities::MemoryCapability for HermesBackend {
+    fn memory_status(&self) -> Result<super::capabilities::MemoryStatus, String> {
+        let output = std::process::Command::new("hermes").args(["memory", "status"]).output()
+            .map_err(|e| format!("Failed to run hermes: {}", e))?;
+        if !output.status.success() {
+            return Err(format!("hermes memory status failed: {}",
+                String::from_utf8_lossy(&output.stderr).trim()));
+        }
+        Ok(parse_hermes_memory_text(&String::from_utf8_lossy(&output.stdout)))
+    }
+    fn memory_index(&self) -> Result<String, String> {
+        Err("hermes does not support memory index".to_string())
+    }
+    fn memory_reset(&self) -> Result<String, String> {
+        run_hermes(&["memory", "reset"])
+    }
+}
+
+fn parse_hermes_memory_text(text: &str) -> super::capabilities::MemoryStatus {
+    let mut provider = String::new();
+    let mut builtin_active = false;
+    for line in text.lines() {
+        let t = line.trim();
+        if let Some(rest) = t.strip_prefix("Provider:") {
+            provider = rest.trim().to_string();
+        } else if let Some(rest) = t.strip_prefix("Built-in:") {
+            builtin_active = rest.trim().contains("active");
+        }
+    }
+    super::capabilities::MemoryStatus { provider, builtin_active, raw: serde_json::json!({}) }
+}
+
 fn hermes_create_args(params: &NewCron) -> Vec<String> {
     let mut args = vec!["cron".into(), "create".into(), params.schedule.clone()];
     if let Some(m) = &params.message {
@@ -482,5 +514,25 @@ mod tests {
         assert!(servers[0].status.contains("enabled"));
         assert_eq!(servers[2].name, "paused_one");
         assert!(servers[2].status.contains("disabled"));
+    }
+
+    // Real fixture captured verbatim from `hermes memory status` (v0.11.0).
+    const HERMES_MEMORY_FIXTURE: &str = "\
+Memory status
+────────────────────────────────────────
+  Built-in:  always active
+  Provider:  hindsight
+
+  Plugin:    installed ✓
+  Status:    available ✓
+
+  Installed plugins:
+";
+
+    #[test]
+    fn parses_hermes_memory_status() {
+        let s = parse_hermes_memory_text(HERMES_MEMORY_FIXTURE);
+        assert_eq!(s.provider, "hindsight");
+        assert!(s.builtin_active);
     }
 }
