@@ -10,6 +10,23 @@
     list_tools_all, set_tool_enabled,
     type Tool,
   } from '$lib/api/capabilities/tools';
+  import {
+    list_mcp_all, add_mcp, remove_mcp,
+    type McpServer,
+  } from '$lib/api/capabilities/mcp';
+  import {
+    list_memory_all, memory_index, memory_reset,
+    type MemoryStatus,
+  } from '$lib/api/capabilities/memory';
+  import {
+    list_plugins_all, install_plugin, remove_plugin, set_plugin_enabled,
+    type Plugin,
+  } from '$lib/api/capabilities/plugins';
+  import {
+    list_hooks_all, set_hook_enabled,
+    type Hook,
+  } from '$lib/api/capabilities/hooks';
+  import type { BackendError } from '$lib/api/capabilities/_shared';
 
   type TabId = 'skills' | 'mcp' | 'memory' | 'plugins' | 'tools' | 'hooks';
 
@@ -26,25 +43,68 @@
   let backends = $state<BackendInfo[]>([]);
   let skillsByBackend = $state<Record<BackendId, Skill[]>>({ openclaw: [], hermes: [] });
   let toolsByBackend = $state<Record<BackendId, Tool[]>>({ openclaw: [], hermes: [] });
-  let errors = $state<{ backend: string; message: string }[]>([]);
+  let mcpByBackend = $state<Record<BackendId, McpServer[]>>({ openclaw: [], hermes: [] });
+  let memoryByBackend = $state<Record<BackendId, MemoryStatus | null>>({ openclaw: null, hermes: null });
+  let pluginsByBackend = $state<Record<BackendId, Plugin[]>>({ openclaw: [], hermes: [] });
+  let hooksByBackend = $state<Record<BackendId, Hook[]>>({ openclaw: [], hermes: [] });
+
+  let skillErrors = $state<BackendError[]>([]);
+  let toolErrors = $state<BackendError[]>([]);
+  let mcpErrors = $state<BackendError[]>([]);
+  let memoryErrors = $state<BackendError[]>([]);
+  let pluginsErrors = $state<BackendError[]>([]);
+  let hooksErrors = $state<BackendError[]>([]);
+
   let isLoading = $state(true);
   let busyKey = $state<string | null>(null);
 
+  let newMcpName = $state('');
+  let newMcpConfig = $state('');
+  let newPluginSource = $state('');
+
   async function load() {
     isLoading = true;
-    const [bl, skills, tools] = await Promise.all([
+    const [bl, skills, tools, mcp, mem, plugins, hooks] = await Promise.all([
       list_backends(),
       list_skills_all(),
       list_tools_all(),
+      list_mcp_all(),
+      list_memory_all(),
+      list_plugins_all(),
+      list_hooks_all(),
     ]);
     backends = bl;
-    errors = [...skills.errors, ...tools.errors];
+    skillErrors = skills.errors;
+    toolErrors = tools.errors;
+    mcpErrors = mcp.errors;
+    memoryErrors = mem.errors;
+    pluginsErrors = plugins.errors;
+    hooksErrors = hooks.errors;
+
     const sm: Record<BackendId, Skill[]> = { openclaw: [], hermes: [] };
     for (const t of skills.items) sm[t.backend].push(t.item);
     skillsByBackend = sm;
+
     const tm: Record<BackendId, Tool[]> = { openclaw: [], hermes: [] };
     for (const t of tools.items) tm[t.backend].push(t.item);
     toolsByBackend = tm;
+
+    const mm: Record<BackendId, McpServer[]> = { openclaw: [], hermes: [] };
+    for (const t of mcp.items) mm[t.backend].push(t.item);
+    mcpByBackend = mm;
+
+    const memMap: Record<BackendId, MemoryStatus | null> = { openclaw: null, hermes: null };
+    for (const t of mem.items) memMap[t.backend] = t.item;
+    memoryByBackend = memMap;
+
+    const pm: Record<BackendId, Plugin[]> = { openclaw: [], hermes: [] };
+    for (const t of plugins.items) pm[t.backend].push(t.item);
+    pluginsByBackend = pm;
+
+    const hm: Record<BackendId, Hook[]> = { openclaw: [], hermes: [] };
+    for (const t of hooks.items) hm[t.backend].push(t.item);
+    hooksByBackend = hm;
+
     isLoading = false;
   }
 
@@ -80,6 +140,79 @@
     busyKey = key;
     try {
       await set_tool_enabled(backend, t.id, !t.enabled);
+      await load();
+    } finally { busyKey = null; }
+  }
+
+  async function doRemoveMcp(server: McpServer, backend: BackendId) {
+    const key = `mcp-remove:${backend}:${server.name}`;
+    busyKey = key;
+    try {
+      await remove_mcp(backend, server.name);
+      await load();
+    } finally { busyKey = null; }
+  }
+
+  async function doAddMcp(backend: BackendId) {
+    const name = newMcpName.trim();
+    if (!name) return;
+    const key = `mcp-add:${backend}`;
+    busyKey = key;
+    try {
+      await add_mcp(backend, name, newMcpConfig);
+      newMcpName = '';
+      newMcpConfig = '';
+      await load();
+    } finally { busyKey = null; }
+  }
+
+  async function doMemoryIndex(backend: BackendId) {
+    const key = `mem-index:${backend}`;
+    busyKey = key;
+    try { await memory_index(backend); } finally { busyKey = null; }
+  }
+
+  async function doMemoryReset(backend: BackendId) {
+    const key = `mem-reset:${backend}`;
+    busyKey = key;
+    try { await memory_reset(backend); } finally { busyKey = null; }
+  }
+
+  async function togglePlugin(p: Plugin, backend: BackendId) {
+    const key = `plugin:${backend}:${p.id}`;
+    busyKey = key;
+    try {
+      await set_plugin_enabled(backend, p.id, !p.enabled);
+      await load();
+    } finally { busyKey = null; }
+  }
+
+  async function doRemovePlugin(p: Plugin, backend: BackendId) {
+    const key = `plugin-remove:${backend}:${p.id}`;
+    busyKey = key;
+    try {
+      await remove_plugin(backend, p.id);
+      await load();
+    } finally { busyKey = null; }
+  }
+
+  async function doInstallPlugin(backend: BackendId) {
+    const source = newPluginSource.trim();
+    if (!source) return;
+    const key = `plugin-install:${backend}`;
+    busyKey = key;
+    try {
+      await install_plugin(backend, source);
+      newPluginSource = '';
+      await load();
+    } finally { busyKey = null; }
+  }
+
+  async function toggleHook(h: Hook, backend: BackendId) {
+    const key = `hook:${backend}:${h.id}`;
+    busyKey = key;
+    try {
+      await set_hook_enabled(backend, h.id, !h.enabled);
       await load();
     } finally { busyKey = null; }
   }
@@ -152,6 +285,194 @@
             {/if}
           </section>
         {/each}
+        {#if skillErrors.length > 0}
+          <div class="errors">
+            {#each skillErrors as err (err.backend + ':' + err.message)}
+              <p class="error-line">{err.backend}: {err.message}</p>
+            {/each}
+          </div>
+        {/if}
+      </div>
+    {:else if activeTab === 'mcp'}
+      <div class="backend-panels">
+        {#each backends as backend (backend.id)}
+          <section class="backend-section">
+            <header class="backend-header">
+              <span class="backend-chip" data-backend={backend.id}>{backend.displayName}</span>
+              {#if backend.installed}
+                <span class="backend-count">{mcpByBackend[backend.id]?.length ?? 0}</span>
+              {:else}
+                <span class="empty">{$_('capabilities.notInstalled')}</span>
+              {/if}
+            </header>
+
+            {#if backend.installed && (mcpByBackend[backend.id]?.length ?? 0) > 0}
+              {#each mcpByBackend[backend.id] as s (s.name)}
+                {@const key = `mcp-remove:${backend.id}:${s.name}`}
+                <div class="item-row">
+                  <div class="item-info">
+                    <div class="item-name">{s.name}</div>
+                    <div class="item-meta">
+                      <span class="desc">{s.transport || '—'}</span>
+                      <code class="version">{s.status}</code>
+                    </div>
+                  </div>
+                  <div class="item-actions">
+                    <button class="action-btn" onclick={() => doRemoveMcp(s, backend.id)} disabled={busyKey === key}
+                      title="Remove">🗑️</button>
+                  </div>
+                </div>
+              {/each}
+            {:else if backend.installed}
+              <p class="empty">{$_('capabilities.noItems')}</p>
+            {/if}
+
+            {#if backend.installed}
+              <details class="add-form">
+                <summary>＋ Add MCP server</summary>
+                <div class="form-body">
+                  <input
+                    class="text-input"
+                    type="text"
+                    placeholder="name"
+                    bind:value={newMcpName}
+                  />
+                  <textarea
+                    class="text-input"
+                    rows="3"
+                    placeholder='config json (e.g. &lbrace;"command": "uvx my-mcp"&rbrace;)'
+                    bind:value={newMcpConfig}
+                  ></textarea>
+                  <button class="action-btn primary" onclick={() => doAddMcp(backend.id)}
+                    disabled={busyKey === `mcp-add:${backend.id}` || !newMcpName.trim()}>
+                    Add
+                  </button>
+                </div>
+              </details>
+            {/if}
+          </section>
+        {/each}
+        {#if mcpErrors.length > 0}
+          <div class="errors">
+            {#each mcpErrors as err (err.backend + ':' + err.message)}
+              <p class="error-line">{err.backend}: {err.message}</p>
+            {/each}
+          </div>
+        {/if}
+      </div>
+    {:else if activeTab === 'memory'}
+      <div class="backend-panels">
+        {#each backends as backend (backend.id)}
+          <section class="backend-section">
+            <header class="backend-header">
+              <span class="backend-chip" data-backend={backend.id}>{backend.displayName}</span>
+              {#if !backend.installed}
+                <span class="empty">{$_('capabilities.notInstalled')}</span>
+              {/if}
+            </header>
+
+            {#if backend.installed}
+              {@const status = memoryByBackend[backend.id]}
+              {#if status}
+                <div class="item-row">
+                  <div class="item-info">
+                    <div class="item-name">{status.provider || '(unknown)'}</div>
+                    <div class="item-meta">
+                      <span class="desc">built-in:</span>
+                      {#if status.builtinActive}
+                        <code class="version">active</code>
+                      {:else}
+                        <span class="empty">inactive</span>
+                      {/if}
+                    </div>
+                  </div>
+                  <div class="item-actions">
+                    {#if backend.id === 'openclaw'}
+                      <button class="action-btn primary" onclick={() => doMemoryIndex(backend.id)}
+                        disabled={busyKey === `mem-index:${backend.id}`}
+                        title="Index">📥</button>
+                    {/if}
+                    {#if backend.id === 'hermes'}
+                      <button class="action-btn" onclick={() => doMemoryReset(backend.id)}
+                        disabled={busyKey === `mem-reset:${backend.id}`}
+                        title="Reset">♻️</button>
+                    {/if}
+                  </div>
+                </div>
+              {:else}
+                <p class="empty">{$_('capabilities.noItems')}</p>
+              {/if}
+            {/if}
+          </section>
+        {/each}
+        {#if memoryErrors.length > 0}
+          <div class="errors">
+            {#each memoryErrors as err (err.backend + ':' + err.message)}
+              <p class="error-line">{err.backend}: {err.message}</p>
+            {/each}
+          </div>
+        {/if}
+      </div>
+    {:else if activeTab === 'plugins'}
+      <div class="backend-panels">
+        {#each backends as backend (backend.id)}
+          <section class="backend-section">
+            <header class="backend-header">
+              <span class="backend-chip" data-backend={backend.id}>{backend.displayName}</span>
+              {#if backend.installed}
+                <span class="backend-count">{pluginsByBackend[backend.id]?.length ?? 0}</span>
+              {:else}
+                <span class="empty">{$_('capabilities.notInstalled')}</span>
+              {/if}
+            </header>
+
+            {#if backend.installed && (pluginsByBackend[backend.id]?.length ?? 0) > 0}
+              {#each pluginsByBackend[backend.id] as p (p.id)}
+                {@const key = `plugin:${backend.id}:${p.id}`}
+                <div class="item-row" class:disabled={!p.enabled}>
+                  <div class="item-info">
+                    <div class="item-name">{p.name}</div>
+                    <div class="item-meta">
+                      <code class="version">v{p.version}</code>
+                    </div>
+                  </div>
+                  <div class="item-actions">
+                    <button class="action-btn" onclick={() => togglePlugin(p, backend.id)} disabled={busyKey === key}
+                      title={p.enabled ? $_('capabilities.skills.disable') : $_('capabilities.skills.enable')}>
+                      {p.enabled ? '⏸️' : '▶️'}
+                    </button>
+                    <button class="action-btn" onclick={() => doRemovePlugin(p, backend.id)} disabled={busyKey === `plugin-remove:${backend.id}:${p.id}`}
+                      title="Remove">🗑️</button>
+                  </div>
+                </div>
+              {/each}
+            {:else if backend.installed}
+              <p class="empty">{$_('capabilities.noItems')}</p>
+            {/if}
+
+            {#if backend.installed}
+              <div class="inline-form">
+                <input
+                  class="text-input"
+                  type="text"
+                  placeholder="source URL or local path"
+                  bind:value={newPluginSource}
+                />
+                <button class="action-btn primary" onclick={() => doInstallPlugin(backend.id)}
+                  disabled={busyKey === `plugin-install:${backend.id}` || !newPluginSource.trim()}>
+                  Install
+                </button>
+              </div>
+            {/if}
+          </section>
+        {/each}
+        {#if pluginsErrors.length > 0}
+          <div class="errors">
+            {#each pluginsErrors as err (err.backend + ':' + err.message)}
+              <p class="error-line">{err.backend}: {err.message}</p>
+            {/each}
+          </div>
+        {/if}
       </div>
     {:else if activeTab === 'tools'}
       <div class="backend-panels">
@@ -186,19 +507,61 @@
             {/if}
           </section>
         {/each}
+        {#if toolErrors.length > 0}
+          <div class="errors">
+            {#each toolErrors as err (err.backend + ':' + err.message)}
+              <p class="error-line">{err.backend}: {err.message}</p>
+            {/each}
+          </div>
+        {/if}
       </div>
-    {:else}
-      <div class="coming-soon">
-        <span class="coming-soon-icon">🚧</span>
-        <p>{$_('capabilities.comingSoon')}</p>
-      </div>
-    {/if}
+    {:else if activeTab === 'hooks'}
+      <div class="backend-panels">
+        {#each backends as backend (backend.id)}
+          <section class="backend-section">
+            <header class="backend-header">
+              <span class="backend-chip" data-backend={backend.id}>{backend.displayName}</span>
+              {#if backend.installed}
+                <span class="backend-count">{hooksByBackend[backend.id]?.length ?? 0}</span>
+              {:else}
+                <span class="empty">{$_('capabilities.notInstalled')}</span>
+              {/if}
+            </header>
 
-    {#if errors.length > 0}
-      <div class="errors">
-        {#each errors as err (err.backend + ':' + err.message)}
-          <p class="error-line">{err.backend}: {err.message}</p>
+            {#if backend.id === 'hermes'}
+              <p class="hint">Hermes hooks are managed via <code>~/.hermes/config.yaml</code> — toggle the <code>enabled</code> flag there and re-run <code>hermes hooks list</code>.</p>
+            {/if}
+
+            {#if backend.installed && (hooksByBackend[backend.id]?.length ?? 0) > 0}
+              {#each hooksByBackend[backend.id] as h (h.id)}
+                {@const key = `hook:${backend.id}:${h.id}`}
+                <div class="item-row" class:disabled={!h.enabled}>
+                  <div class="item-info">
+                    <div class="item-name">{h.name}</div>
+                    <div class="item-meta">
+                      <code class="version">{h.event}</code>
+                    </div>
+                  </div>
+                  <div class="item-actions">
+                    <button class="action-btn" onclick={() => toggleHook(h, backend.id)} disabled={busyKey === key}
+                      title={h.enabled ? $_('capabilities.skills.disable') : $_('capabilities.skills.enable')}>
+                      {h.enabled ? '⏸️' : '▶️'}
+                    </button>
+                  </div>
+                </div>
+              {/each}
+            {:else if backend.installed}
+              <p class="empty">{$_('capabilities.noItems')}</p>
+            {/if}
+          </section>
         {/each}
+        {#if hooksErrors.length > 0}
+          <div class="errors">
+            {#each hooksErrors as err (err.backend + ':' + err.message)}
+              <p class="error-line">{err.backend}: {err.message}</p>
+            {/each}
+          </div>
+        {/if}
       </div>
     {/if}
   </div>
@@ -296,6 +659,7 @@
 
   .backend-count { color: var(--text-muted); }
   .empty { color: var(--text-muted); font-style: italic; margin: 0.25rem 0; }
+  .hint { color: var(--text-secondary); font-size: 0.75rem; margin: 0.25rem 0; }
 
   .item-row {
     display: flex;
@@ -345,16 +709,57 @@
   .action-btn.primary:hover { background: rgba(0,245,255,0.2); color: var(--neon-cyan); }
   .action-btn:disabled { opacity: 0.5; cursor: not-allowed; }
 
-  .coming-soon {
+  .inline-form {
+    display: flex;
+    gap: 0.5rem;
+    align-items: center;
+    margin-top: 0.5rem;
+  }
+  .inline-form .text-input {
+    flex: 1;
+  }
+  .inline-form .action-btn {
+    width: auto;
+    padding: 0 0.75rem;
+    font-size: 0.75rem;
+  }
+
+  .add-form {
+    margin-top: 0.5rem;
+    background: var(--bg-primary);
+    border-radius: 0.375rem;
+  }
+  .add-form summary {
+    cursor: pointer;
+    padding: 0.375rem 0.5rem;
+    font-size: 0.75rem;
+    color: var(--text-secondary);
+  }
+  .add-form summary:hover { color: var(--text-primary); }
+  .form-body {
     display: flex;
     flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    gap: 1rem;
-    padding: 3rem;
-    color: var(--text-muted);
+    gap: 0.5rem;
+    padding: 0.5rem;
   }
-  .coming-soon-icon { font-size: 3rem; opacity: 0.6; }
+  .form-body .action-btn {
+    width: auto;
+    align-self: flex-start;
+    padding: 0 0.75rem;
+    font-size: 0.75rem;
+  }
+
+  .text-input {
+    background: var(--bg-tertiary);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 0.25rem;
+    color: var(--text-primary);
+    padding: 0.375rem 0.5rem;
+    font-size: 0.75rem;
+    font-family: inherit;
+    resize: vertical;
+  }
+  .text-input:focus { outline: none; border-color: var(--neon-cyan); }
 
   .errors {
     margin-top: 1rem;
