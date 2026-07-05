@@ -170,6 +170,75 @@ fn parse_openclaw_memory_status(raw: serde_json::Value) -> super::capabilities::
     super::capabilities::MemoryStatus { provider, builtin_active, raw }
 }
 
+impl super::capabilities::PluginsCapability for OpenClawBackend {
+    fn plugins_list(&self) -> Result<Vec<super::capabilities::Plugin>, String> {
+        // openclaw plugins list has no --json; capture stdout as text
+        let output = std::process::Command::new("openclaw")
+            .args(["plugins", "list"])
+            .output()
+            .map_err(|e| format!("Failed to run openclaw: {}", e))?;
+        if !output.status.success() {
+            return Err(format!("openclaw plugins list failed: {}",
+                String::from_utf8_lossy(&output.stderr).trim()));
+        }
+        Ok(parse_openclaw_plugins_text(&String::from_utf8_lossy(&output.stdout)))
+    }
+    fn plugins_install(&self, source: &str) -> Result<String, String> {
+        openclaw_run(&["plugins", "install", source])
+    }
+    fn plugins_remove(&self, id: &str) -> Result<String, String> {
+        openclaw_run(&["plugins", "disable", id])  // openclaw uses disable, not remove
+    }
+    fn plugins_set_enabled(&self, id: &str, enabled: bool) -> Result<String, String> {
+        let action = if enabled { "enable" } else { "disable" };
+        openclaw_run(&["plugins", action, id])
+    }
+}
+
+fn parse_openclaw_plugins_text(text: &str) -> Vec<super::capabilities::Plugin> {
+    if text.trim().is_empty() || text.contains("No plugins") { return vec![]; }
+    let mut plugins: Vec<super::capabilities::Plugin> = Vec::new();
+    let mut current: Option<super::capabilities::Plugin> = None;
+    for line in text.lines() {
+        let trimmed = line.trim();
+        if !trimmed.starts_with('│') { continue; }
+        let cells: Vec<&str> = trimmed.split('│').map(str::trim).collect();
+        if cells.len() < 7 { continue; }
+        // Skip header/separator rows.
+        if cells[1].eq_ignore_ascii_case("name") || cells[1].contains('─') || cells[1].contains('┼') { continue; }
+        let status = cells[4];
+        let is_data_row = status == "loaded" || status == "disabled"
+            || (status.contains("enabled") && !status.contains("disabled"));
+        if is_data_row {
+            if let Some(p) = current.take() { plugins.push(p); }
+            current = Some(super::capabilities::Plugin {
+                id: cells[2].to_string(),
+                name: cells[1].to_string(),
+                version: cells[6].to_string(),
+                enabled: status == "loaded" || (status.contains("enabled") && !status.contains("disabled")),
+                raw: serde_json::json!({}),
+            });
+        } else if let Some(ref mut p) = current {
+            // Continuation row: wrapped name (cells[1]) or wrapped source description (cells[5]).
+            if !cells[1].is_empty() { p.name.push(' '); p.name.push_str(cells[1]); }
+            if !cells[2].is_empty() { p.id.push_str(cells[2]); }
+            if !cells[5].is_empty() {
+                if !p.raw.as_object().map(|o| o.contains_key("description")).unwrap_or(false) {
+                    p.raw["description"] = serde_json::Value::String(cells[5].to_string());
+                }
+            }
+        }
+    }
+    if let Some(p) = current.take() { plugins.push(p); }
+    plugins
+}
+
+fn parse_openclaw_plugins(raw: serde_json::Value) -> Vec<super::capabilities::Plugin> {
+    // openclaw plugins list doesn't have --json; fall back to text parser
+    if let Some(text) = raw.as_str() { return parse_openclaw_plugins_text(text); }
+    vec![]
+}
+
 fn openclaw_create_args(params: &NewCron) -> Vec<String> {
     let mut args = vec!["cron".into(), "add".into(), "--json".into(), "--name".into(), params.name.clone()];
     let is_interval = params.schedule.contains(char::is_alphabetic);
@@ -411,5 +480,42 @@ mod tests {
         let s = parse_openclaw_memory_status(raw);
         assert_eq!(s.provider, "external");
         assert!(!s.builtin_active);
+    }
+
+    // Real fixture captured verbatim from `openclaw plugins list` (2026.4.11).
+    const OPENCLAW_PLUGINS_FIXTURE: &str = "\
+Plugins (54/97 loaded)
+Source roots:
+  stock: /opt/homebrew/lib/node_modules/openclaw/dist/extensions
+
+┌──────────────┬──────────┬──────────┬──────────┬──────────────────────────────────────────────────────────┬───────────┐
+│ Name         │ ID       │ Format   │ Status   │ Source                                                   │ Version   │
+├──────────────┼──────────┼──────────┼──────────┼──────────────────────────────────────────────────────────┼───────────┤
+│ ACPX Runtime │ acpx     │ openclaw │ loaded   │ stock:acpx/index.js                                      │ 2026.4.11 │
+│              │          │          │          │ Embedded ACP runtime backend with plugin-owned session   │           │
+│              │          │          │          │ and transport management.                                │           │
+│ Active       │ active-  │ openclaw │ disabled │ stock:active-memory/index.js                             │ 2026.4.11 │
+│ Memory       │ memory   │          │          │ Runs a bounded blocking memory sub-agent before          │           │
+│              │          │          │          │ eligible conversational replies and injects relevant     │           │
+│              │          │          │          │ memory into prompt context.                              │           │
+└──────────────┴──────────┴──────────┴──────────┴──────────────────────────────────────────────────────────┴───────────┘
+";
+
+    #[test]
+    fn openclaw_plugins_parses_table() {
+        let plugins = parse_openclaw_plugins_text(OPENCLAW_PLUGINS_FIXTURE);
+        assert_eq!(plugins.len(), 2);
+        assert_eq!(plugins[0].id, "acpx");
+        assert!(plugins[0].enabled);
+        assert_eq!(plugins[0].name, "ACPX Runtime");
+        assert_eq!(plugins[1].id, "active-memory");
+        assert_eq!(plugins[1].name, "Active Memory");
+        assert!(!plugins[1].enabled);
+    }
+
+    #[test]
+    fn openclaw_plugins_empty() {
+        let plugins = parse_openclaw_plugins_text("No plugins.\n");
+        assert!(plugins.is_empty());
     }
 }
