@@ -118,3 +118,22 @@ fn memory_status_runs_against_live_backends() {
     }
     assert!(found);
 }
+
+#[test]
+fn plugins_list_runs_against_live_backends() {
+    if !openclaw_installed() && !hermes_installed() {
+        eprintln!("skip");
+        return;
+    }
+    let entries = clawbox_lib::backends::entries();
+    let mut found = false;
+    for entry in entries {
+        if !entry.backend.is_installed() { continue; }
+        if let Some(plugins) = entry.plugins {
+            found = true;
+            let r = plugins.plugins_list();
+            eprintln!("{}: plugins_list reachable, ok={}", entry.backend.id(), r.is_ok());
+        }
+    }
+    assert!(found);
+}
