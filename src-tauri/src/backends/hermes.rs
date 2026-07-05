@@ -206,22 +206,48 @@ impl super::capabilities::HooksCapability for HermesBackend {
         Ok(parse_hermes_hooks_text(&String::from_utf8_lossy(&output.stdout)))
     }
     fn hooks_set_enabled(&self, _id: &str, _enabled: bool) -> Result<String, String> {
-        // hermes hooks are managed via config.yaml; per-hook enable/disable not in CLI surface for MVP
-        Err("hermes hooks are config-managed, not CLI-toggleable in MVP".to_string())
+        // hermes hooks CLI surface is list/test/revoke/doctor only — no enable/disable subcommand.
+        // Hooks are declared in ~/.hermes/config.yaml; toggle the `enabled` flag there and re-run
+        // `hermes hooks list`. See `hermes hooks --help` and website/docs/user-guide/features/hooks.md.
+        Err("hermes hooks are config-managed (edit ~/.hermes/config.yaml); no enable/disable CLI subcommand".to_string())
     }
 }
 
+/// Parse `hermes hooks list` output.
+///
+/// Best-effort defensive parser: the real hermes `hooks list` output format is
+/// undocumented (the live hermes on this machine has no hooks configured, so we
+/// have no real fixture to capture). We handle the empty case explicitly and
+/// fall back to a line-based best-guess for non-empty output.
+///
+/// When hermes hooks are configured on a host, capture output via
+/// `hermes hooks list > /tmp/hermes_hooks.txt` and improve the parser.
 fn parse_hermes_hooks_text(text: &str) -> Vec<super::capabilities::Hook> {
     if text.trim().is_empty() || text.contains("No shell hooks configured") {
         return vec![];
     }
-    // Hermes's actual hooks list output format is unknown to us. Try a defensive line-based parse.
-    let hooks = Vec::new();
+    let mut hooks: Vec<super::capabilities::Hook> = Vec::new();
     for line in text.lines() {
         let trimmed = line.trim();
-        if trimmed.is_empty() || trimmed.contains("───") { continue; }
-        // If we encounter something resembling "name | event | enabled", parse it.
-        // Otherwise skip (MVP: hermes hooks listing is best-effort).
+        if trimmed.is_empty() { continue; }
+        // Skip separator rows (────────────) and obvious header rows.
+        if trimmed.chars().all(|c| c == '─' || c == ' ') { continue; }
+        if trimmed.starts_with("Hook Name") || trimmed.starts_with("Match") { continue; }
+        // Skip trailing help/instructions lines if they slip through.
+        if trimmed.starts_with("See `") || trimmed.starts_with("for the config") { continue; }
+        // Best-effort: first whitespace-delimited token is the hook id/name.
+        let id = match trimmed.split_whitespace().next() {
+            Some(tok) if !tok.is_empty() => tok.to_string(),
+            _ => continue,
+        };
+        let enabled = trimmed.contains("allowed") || trimmed.contains("✓");
+        hooks.push(super::capabilities::Hook {
+            id,
+            name: trimmed.to_string(),
+            event: "shell".to_string(),
+            enabled,
+            raw: serde_json::json!({"raw_line": line}),
+        });
     }
     hooks
 }
@@ -730,5 +756,24 @@ for the config schema and worked examples.
     fn parses_hermes_hooks_empty() {
         let hooks = parse_hermes_hooks_text(HERMES_HOOKS_EMPTY_FIXTURE);
         assert!(hooks.is_empty());
+    }
+
+    // Hypothetical fixture (per hermes hooks docs suggestion — actual format
+    // unverified on this host since live hermes has no hooks configured).
+    const HERMES_HOOKS_NONEMPTY_FIXTURE: &str = "\
+Hook Name         Match                  Timeout  Consent
+─────────────     ──────────────────     ───────  ───────
+notify-desktop    command=notify-send    30s      ✓ allowed
+log-event         match=*                60s      ✗ pending
+";
+
+    #[test]
+    fn parses_hermes_hooks_nonempty() {
+        let hooks = parse_hermes_hooks_text(HERMES_HOOKS_NONEMPTY_FIXTURE);
+        assert_eq!(hooks.len(), 2);
+        assert_eq!(hooks[0].id, "notify-desktop");
+        assert!(hooks[0].enabled);  // "allowed" → enabled
+        assert_eq!(hooks[1].id, "log-event");
+        assert!(!hooks[1].enabled);  // "pending" → disabled
     }
 }
