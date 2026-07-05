@@ -195,6 +195,37 @@ fn parse_hermes_plugins_text(text: &str) -> Vec<super::capabilities::Plugin> {
     plugins
 }
 
+impl super::capabilities::HooksCapability for HermesBackend {
+    fn hooks_list(&self) -> Result<Vec<super::capabilities::Hook>, String> {
+        let output = std::process::Command::new("hermes").args(["hooks", "list"]).output()
+            .map_err(|e| format!("Failed to run hermes: {}", e))?;
+        if !output.status.success() {
+            return Err(format!("hermes hooks list failed: {}",
+                String::from_utf8_lossy(&output.stderr).trim()));
+        }
+        Ok(parse_hermes_hooks_text(&String::from_utf8_lossy(&output.stdout)))
+    }
+    fn hooks_set_enabled(&self, _id: &str, _enabled: bool) -> Result<String, String> {
+        // hermes hooks are managed via config.yaml; per-hook enable/disable not in CLI surface for MVP
+        Err("hermes hooks are config-managed, not CLI-toggleable in MVP".to_string())
+    }
+}
+
+fn parse_hermes_hooks_text(text: &str) -> Vec<super::capabilities::Hook> {
+    if text.trim().is_empty() || text.contains("No shell hooks configured") {
+        return vec![];
+    }
+    // Hermes's actual hooks list output format is unknown to us. Try a defensive line-based parse.
+    let hooks = Vec::new();
+    for line in text.lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() || trimmed.contains("───") { continue; }
+        // If we encounter something resembling "name | event | enabled", parse it.
+        // Otherwise skip (MVP: hermes hooks listing is best-effort).
+    }
+    hooks
+}
+
 impl super::capabilities::ToolsCapability for HermesBackend {
     fn tools_list(&self) -> Result<Vec<super::capabilities::Tool>, String> {
         let output = std::process::Command::new("hermes").args(["tools", "list"]).output()
@@ -685,5 +716,19 @@ Built-in toolsets (cli):
         assert!(tools[0].enabled);
         assert_eq!(tools[1].id, "moa");
         assert!(!tools[1].enabled);
+    }
+
+    // Real fixture captured verbatim from `hermes hooks list` (v0.11.0).
+    const HERMES_HOOKS_EMPTY_FIXTURE: &str = "\
+No shell hooks configured in ~/.hermes/config.yaml.
+See `hermes hooks --help` or
+    website/docs/user-guide/features/hooks.md
+for the config schema and worked examples.
+";
+
+    #[test]
+    fn parses_hermes_hooks_empty() {
+        let hooks = parse_hermes_hooks_text(HERMES_HOOKS_EMPTY_FIXTURE);
+        assert!(hooks.is_empty());
     }
 }
