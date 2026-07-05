@@ -11,8 +11,8 @@
     "monitor": "监控",
     "tasks": "任务",
     "logs": "日志",
-    "skills": "技能",
-    "about": "关于"
+    "about": "关于",
+    "capabilities": "能力"
   },
   "gateway": {
     "title": "网关",
@@ -178,5 +178,29 @@
   },
   "task": {
     "newBackend": "后端"
+  },
+  "capabilities": {
+    "title": "能力",
+    "tab": {
+      "skills": "技能",
+      "mcp": "MCP",
+      "memory": "记忆",
+      "plugins": "插件",
+      "tools": "工具",
+      "hooks": "钩子"
+    },
+    "section": {
+      "openclaw": "OpenClaw",
+      "hermes": "Hermes"
+    },
+    "notInstalled": "未安装",
+    "noItems": "无项目",
+    "comingSoon": "即将推出",
+    "skills": {
+      "install": "安装",
+      "uninstall": "卸载",
+      "enable": "启用",
+      "disable": "禁用"
+    }
   }
 }

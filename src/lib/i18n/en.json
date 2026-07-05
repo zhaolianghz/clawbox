@@ -11,8 +11,8 @@
     "monitor": "Monitor",
     "tasks": "Tasks",
     "logs": "Logs",
-    "skills": "Skills",
-    "about": "About"
+    "about": "About",
+    "capabilities": "Capabilities"
   },
   "gateway": {
     "title": "Gateway",
@@ -178,5 +178,29 @@
   },
   "task": {
     "newBackend": "Backend"
+  },
+  "capabilities": {
+    "title": "Capabilities",
+    "tab": {
+      "skills": "Skills",
+      "mcp": "MCP",
+      "memory": "Memory",
+      "plugins": "Plugins",
+      "tools": "Tools",
+      "hooks": "Hooks"
+    },
+    "section": {
+      "openclaw": "OpenClaw",
+      "hermes": "Hermes"
+    },
+    "notInstalled": "Not installed",
+    "noItems": "No items",
+    "comingSoon": "Coming soon",
+    "skills": {
+      "install": "Install",
+      "uninstall": "Uninstall",
+      "enable": "Enable",
+      "disable": "Disable"
+    }
   }
 }
