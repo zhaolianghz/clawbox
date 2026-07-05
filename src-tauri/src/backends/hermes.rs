@@ -97,6 +97,26 @@ impl super::capabilities::SkillsCapability for HermesBackend {
     }
 }
 
+impl super::capabilities::McpCapability for HermesBackend {
+    fn mcp_list(&self) -> Result<Vec<super::capabilities::McpServer>, String> {
+        let output = std::process::Command::new("hermes")
+            .args(["mcp", "list"])
+            .output()
+            .map_err(|e| format!("Failed to run hermes: {}", e))?;
+        if !output.status.success() {
+            return Err(format!("hermes mcp list failed: {}",
+                String::from_utf8_lossy(&output.stderr).trim()));
+        }
+        Ok(parse_hermes_mcp_text(&String::from_utf8_lossy(&output.stdout)))
+    }
+    fn mcp_add(&self, name: &str, config_json: &str) -> Result<String, String> {
+        run_hermes(&["mcp", "add", name, "--config", config_json])
+    }
+    fn mcp_remove(&self, name: &str) -> Result<String, String> {
+        run_hermes(&["mcp", "remove", name])
+    }
+}
+
 fn hermes_create_args(params: &NewCron) -> Vec<String> {
     let mut args = vec!["cron".into(), "create".into(), params.schedule.clone()];
     if let Some(m) = &params.message {
@@ -244,6 +264,65 @@ fn parse_hermes_skills_text(text: &str) -> Vec<super::capabilities::Skill> {
     skills
 }
 
+/// Parse `hermes mcp list` output. Real output is an ASCII table with columns
+/// `Name | Transport | Tools | Status`. Captured fixture (verbatim from
+/// Hermes v0.11.0):
+///
+/// ```text
+///   MCP Servers:
+///
+///   Name             Transport                      Tools        Status
+///   ──────────────── ────────────────────────────── ──────────── ─────────
+///   mx_data          uvx mxAi/mcp-mxdata            all          ✓ enabled
+///   codegraph        codegraph serve --mcp          all          ✓ enabled
+///   paused_one       foo                            all          ✗ disabled
+/// ```
+fn parse_hermes_mcp_text(text: &str) -> Vec<super::capabilities::McpServer> {
+    if text.trim().is_empty() {
+        return vec![];
+    }
+    let mut servers = Vec::new();
+    let mut in_data = false;
+    for line in text.lines() {
+        let trimmed = line.trim();
+        if !in_data {
+            if trimmed.starts_with("Name ") {
+                in_data = true;
+            }
+            continue;
+        }
+        // In data section now.
+        if trimmed.is_empty() { continue; }
+        // Skip the ─── separator line.
+        if trimmed.starts_with('─') { continue; }
+        let parts: Vec<&str> = trimmed.split_whitespace().collect();
+        if parts.len() < 3 { continue; }
+        let name = parts[0].to_string();
+        let status_token = parts[parts.len() - 1];
+        let transport = parts[1..parts.len() - 2].join(" ");
+        let status = if status_token == "enabled" || status_token == "disabled" {
+            status_token.to_string()
+        } else {
+            // Status line is `✓ enabled` / `✗ disabled` — joined tokens.
+            let joined = parts[parts.len() - 2..].join(" ");
+            if joined.contains("enabled") && !joined.contains("disabled") {
+                "enabled".to_string()
+            } else if joined.contains("disabled") {
+                "disabled".to_string()
+            } else {
+                "unknown".to_string()
+            }
+        };
+        servers.push(super::capabilities::McpServer {
+            name,
+            transport,
+            status,
+            raw: serde_json::json!({"raw_line": line}),
+        });
+    }
+    servers
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -382,5 +461,26 @@ mod tests {
         let text = "No skills installed.\n";
         let skills = parse_hermes_skills_text(text);
         assert!(skills.is_empty());
+    }
+
+    // Real fixture captured verbatim from `hermes mcp list` (v0.11.0).
+    const HERMES_MCP_FIXTURE: &str = "\
+  MCP Servers:
+
+  Name             Transport                      Tools        Status
+  ──────────────── ────────────────────────────── ──────────── ─────────
+  mx_data          uvx mxAi/mcp-mxdata            all          ✓ enabled
+  codegraph        codegraph serve --mcp          all          ✓ enabled
+  paused_one       foo                            all          ✗ disabled
+";
+
+    #[test]
+    fn parses_hermes_mcp_table() {
+        let servers = parse_hermes_mcp_text(HERMES_MCP_FIXTURE);
+        assert_eq!(servers.len(), 3);
+        assert_eq!(servers[0].name, "mx_data");
+        assert!(servers[0].status.contains("enabled"));
+        assert_eq!(servers[2].name, "paused_one");
+        assert!(servers[2].status.contains("disabled"));
     }
 }
