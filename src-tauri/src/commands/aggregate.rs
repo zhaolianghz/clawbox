@@ -265,6 +265,63 @@ pub fn mcp_remove(backend: String, name: String) -> Result<String, String> {
     mcp.mcp_remove(&name)
 }
 
+use crate::backends::capabilities::MemoryCapability;
+
+fn collect_capability_memory<T, F>(f: F) -> TaggedListResult<T>
+where
+    T: Send,
+    F: Fn(&dyn MemoryCapability) -> Result<Vec<T>, String> + Sync + Send,
+{
+    use rayon::prelude::*;
+    let results: Vec<_> = backends::entries().par_iter()
+        .filter_map(|e| e.memory.map(|m| (e, m)))
+        .map(|(e, m)| {
+            if !e.backend.is_installed() {
+                return (e.backend.id().to_string(), None, None);
+            }
+            match f(m) {
+                Ok(v) => (e.backend.id().to_string(), Some(v), None),
+                Err(err) => (e.backend.id().to_string(), None, Some(BackendError {
+                    backend: e.backend.id().to_string(), message: err,
+                })),
+            }
+        }).collect();
+    let mut items = Vec::new();
+    let mut errors = Vec::new();
+    for (id, val, err) in results {
+        if let Some(e) = err { errors.push(e); }
+        if let Some(v) = val {
+            for item in v {
+                items.push(TaggedItem { backend: id.clone(), item });
+            }
+        }
+    }
+    TaggedListResult { items, errors }
+}
+
+#[tauri::command]
+pub fn memory_status_all() -> TaggedListResult<crate::backends::capabilities::MemoryStatus> {
+    collect_capability_memory(|m| m.memory_status().map(|s| vec![s]))
+}
+
+#[tauri::command]
+pub fn memory_index(backend: String) -> Result<String, String> {
+    let entry = backends::find_entry(&backend)
+        .ok_or_else(|| format!("Unknown backend: {}", backend))?;
+    let mem = entry.memory
+        .ok_or_else(|| format!("{} does not support memory", backend))?;
+    mem.memory_index()
+}
+
+#[tauri::command]
+pub fn memory_reset(backend: String) -> Result<String, String> {
+    let entry = backends::find_entry(&backend)
+        .ok_or_else(|| format!("Unknown backend: {}", backend))?;
+    let mem = entry.memory
+        .ok_or_else(|| format!("{} does not support memory", backend))?;
+    mem.memory_reset()
+}
+
 #[derive(Serialize)]
 pub struct Stats {
     pub gateway_running: bool,
