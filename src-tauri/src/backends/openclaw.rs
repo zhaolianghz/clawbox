@@ -36,13 +36,37 @@ pub fn openclaw_run(args: &[&str]) -> Result<String, String> {
 
 use super::{Backend, CronJob, GatewayStatus, NewCron};
 
+/// Trust boundary: `gateway_pid()` discovers any PID listening on
+/// `GATEWAY_PORT` and trusts that it is openclaw's gateway. Before claiming or
+/// killing it, we re-check the process's comm (via `ps -o comm=`) and reject
+/// anything that is not openclaw itself or the Node.js interpreter running
+/// openclaw's bundled JS. This guards against a stale dev server or stray
+/// `nc -l 18789` causing `gateway_start` to skip starting or `gateway_stop`
+/// to kill an unrelated PID.
 fn gateway_pid() -> Option<i32> {
-    Command::new("lsof")
+    let pid = Command::new("lsof")
         .args(["-t", "-i", &format!(":{}", GATEWAY_PORT), "-sTCP:LISTEN"])
         .output().ok()
         .filter(|o| o.status.success())
         .and_then(|o| String::from_utf8_lossy(&o.stdout).lines().next()
-            .and_then(|l| l.trim().parse::<i32>().ok()))
+            .and_then(|l| l.trim().parse::<i32>().ok()))?;
+
+    let comm = Command::new("ps")
+        .args(["-p", &pid.to_string(), "-o", "comm="])
+        .output().ok()
+        .filter(|o| o.status.success())
+        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+        .unwrap_or_default();
+    if is_openclaw_process(&comm) { Some(pid) } else { None }
+}
+
+/// Pure helper: returns true when `comm` (the trimmed output of
+/// `ps -o comm=`) looks like the openclaw gateway process. Accepts the
+/// `openclaw` binary itself and any `node` process (openclaw ships a
+/// Node.js entrypoint).
+fn is_openclaw_process(comm: &str) -> bool {
+    let lower = comm.trim().to_lowercase();
+    lower.contains("openclaw") || lower.starts_with("node")
 }
 
 pub struct OpenClawBackend;
@@ -595,5 +619,27 @@ Hooks (5/5 ready)
         assert_eq!(hooks[0].id, "🚀 boot-md");
         assert!(hooks[0].enabled);  // "ready" → enabled
         assert_eq!(hooks[1].id, "📎 bootstrap-extra-files");
+    }
+
+    #[test]
+    fn is_openclaw_process_accepts_openclaw_binary() {
+        assert!(is_openclaw_process("openclaw"));
+        assert!(is_openclaw_process("/opt/homebrew/bin/openclaw"));
+        assert!(is_openclaw_process("OpenClaw"));
+        assert!(is_openclaw_process("openclaw-dev-server"));
+    }
+
+    #[test]
+    fn is_openclaw_process_accepts_node_runtime() {
+        assert!(is_openclaw_process("node"));
+    }
+
+    #[test]
+    fn is_openclaw_process_rejects_unrelated_processes() {
+        assert!(!is_openclaw_process("nc"));
+        assert!(!is_openclaw_process("python3"));
+        assert!(!is_openclaw_process(""));
+        assert!(!is_openclaw_process("/usr/local/bin/node"));
+        assert!(!is_openclaw_process("rustc"));
     }
 }

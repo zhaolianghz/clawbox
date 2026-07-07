@@ -56,13 +56,13 @@ where
     let results: Vec<_> = backends::entries().par_iter()
         .filter_map(|e| e.skills.map(|s| (e, s)))
         .map(|(e, s)| {
-            if !e.backend.is_installed() {
-                return (e.backend.id().to_string(), None, None);
-            }
+            let installed = e.backend.is_installed();
+            let id = e.backend.id().to_string();
+            if !installed { return (id, None, None); }
             match f(s) {
-                Ok(v) => (e.backend.id().to_string(), Some(v), None),
-                Err(err) => (e.backend.id().to_string(), None, Some(BackendError {
-                    backend: e.backend.id().to_string(), message: err,
+                Ok(v) => (id, Some(v), None),
+                Err(err) => (id.clone(), None, Some(BackendError {
+                    backend: id, message: err,
                 })),
             }
         }).collect();
@@ -86,13 +86,13 @@ where
 {
     let results: Vec<_> = backends::backends().par_iter()
         .map(|b| {
-            if !b.is_installed() {
-                return (b.id().to_string(), None, None);
-            }
+            let installed = b.is_installed();
+            let id = b.id().to_string();
+            if !installed { return (id, None, None); }
             match f(b.as_ref()) {
-                Ok(v) => (b.id().to_string(), Some(v), None),
-                Err(e) => (b.id().to_string(), None, Some(BackendError {
-                    backend: b.id().to_string(), message: e,
+                Ok(v) => (id, Some(v), None),
+                Err(e) => (id.clone(), None, Some(BackendError {
+                    backend: id, message: e,
                 })),
             }
         }).collect();
@@ -219,13 +219,13 @@ where
     let results: Vec<_> = backends::entries().par_iter()
         .filter_map(|e| e.mcp.map(|m| (e, m)))
         .map(|(e, m)| {
-            if !e.backend.is_installed() {
-                return (e.backend.id().to_string(), None, None);
-            }
+            let installed = e.backend.is_installed();
+            let id = e.backend.id().to_string();
+            if !installed { return (id, None, None); }
             match f(m) {
-                Ok(v) => (e.backend.id().to_string(), Some(v), None),
-                Err(err) => (e.backend.id().to_string(), None, Some(BackendError {
-                    backend: e.backend.id().to_string(), message: err,
+                Ok(v) => (id, Some(v), None),
+                Err(err) => (id.clone(), None, Some(BackendError {
+                    backend: id, message: err,
                 })),
             }
         }).collect();
@@ -274,13 +274,13 @@ where
     let results: Vec<_> = backends::entries().par_iter()
         .filter_map(|e| e.plugins.map(|p| (e, p)))
         .map(|(e, p)| {
-            if !e.backend.is_installed() {
-                return (e.backend.id().to_string(), None, None);
-            }
+            let installed = e.backend.is_installed();
+            let id = e.backend.id().to_string();
+            if !installed { return (id, None, None); }
             match f(p) {
-                Ok(v) => (e.backend.id().to_string(), Some(v), None),
-                Err(err) => (e.backend.id().to_string(), None, Some(BackendError {
-                    backend: e.backend.id().to_string(), message: err,
+                Ok(v) => (id, Some(v), None),
+                Err(err) => (id.clone(), None, Some(BackendError {
+                    backend: id, message: err,
                 })),
             }
         }).collect();
@@ -340,13 +340,13 @@ where
     let results: Vec<_> = backends::entries().par_iter()
         .filter_map(|e| e.tools.map(|t| (e, t)))
         .map(|(e, t)| {
-            if !e.backend.is_installed() {
-                return (e.backend.id().to_string(), None, None);
-            }
+            let installed = e.backend.is_installed();
+            let id = e.backend.id().to_string();
+            if !installed { return (id, None, None); }
             match f(t) {
-                Ok(v) => (e.backend.id().to_string(), Some(v), None),
-                Err(err) => (e.backend.id().to_string(), None, Some(BackendError {
-                    backend: e.backend.id().to_string(), message: err,
+                Ok(v) => (id, Some(v), None),
+                Err(err) => (id.clone(), None, Some(BackendError {
+                    backend: id, message: err,
                 })),
             }
         }).collect();
@@ -388,13 +388,13 @@ where
     let results: Vec<_> = backends::entries().par_iter()
         .filter_map(|e| e.hooks.map(|h| (e, h)))
         .map(|(e, h)| {
-            if !e.backend.is_installed() {
-                return (e.backend.id().to_string(), None, None);
-            }
+            let installed = e.backend.is_installed();
+            let id = e.backend.id().to_string();
+            if !installed { return (id, None, None); }
             match f(h) {
-                Ok(v) => (e.backend.id().to_string(), Some(v), None),
-                Err(err) => (e.backend.id().to_string(), None, Some(BackendError {
-                    backend: e.backend.id().to_string(), message: err,
+                Ok(v) => (id, Some(v), None),
+                Err(err) => (id.clone(), None, Some(BackendError {
+                    backend: id, message: err,
                 })),
             }
         }).collect();
@@ -434,13 +434,13 @@ where
     let results: Vec<_> = backends::entries().par_iter()
         .filter_map(|e| e.memory.map(|m| (e, m)))
         .map(|(e, m)| {
-            if !e.backend.is_installed() {
-                return (e.backend.id().to_string(), None, None);
-            }
+            let installed = e.backend.is_installed();
+            let id = e.backend.id().to_string();
+            if !installed { return (id, None, None); }
             match f(m) {
-                Ok(v) => (e.backend.id().to_string(), Some(v), None),
-                Err(err) => (e.backend.id().to_string(), None, Some(BackendError {
-                    backend: e.backend.id().to_string(), message: err,
+                Ok(v) => (id, Some(v), None),
+                Err(err) => (id.clone(), None, Some(BackendError {
+                    backend: id, message: err,
                 })),
             }
         }).collect();
