@@ -58,11 +58,18 @@
       const map: typeof gatewayByBackend = {};
       for (const s of gs.statuses) map[s.backend] = s.status;
       gatewayByBackend = map;
-      const firstOpenclaw = bl.find((b) => b.id === 'openclaw' && b.installed);
-      if (firstOpenclaw) {
-        const s = map[firstOpenclaw.id];
+      // Pick first installed backend whose gateway is actually running, else first installed.
+      let pick: BackendInfo | undefined;
+      for (const b of bl) {
+        if (!b.installed) continue;
+        const running = map[b.id]?.status === 'running';
+        if (running) { pick = b; break; }
+      }
+      if (!pick) pick = bl.find((b) => b.installed);
+      if (pick) {
+        const s = map[pick.id];
         gatewayStatus = s?.status ?? 'stopped';
-        gatewayVersion = s?.version ?? firstOpenclaw.version ?? 'v1.0.0';
+        gatewayVersion = s?.version ?? pick.version ?? 'v1.0.0';
       }
     } catch (e) {
       console.error('Failed to load backends:', e);
