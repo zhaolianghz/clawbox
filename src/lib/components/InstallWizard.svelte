@@ -8,7 +8,7 @@
     installComplete,
     type SystemCheck,
     type InstallProgress
-  } from '../../stores/install';
+  } from '$lib/stores/install';
   import { invoke } from '@tauri-apps/api/core';
 
   let agreedToTerms = $state(false);
