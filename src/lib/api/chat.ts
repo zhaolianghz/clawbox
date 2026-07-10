@@ -54,7 +54,6 @@ class OpenClawGateway {
     this.onStatusChangeCallback = onStatusChange || null;
 
     return new Promise(async (resolve, reject) => {
-      const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
       const host = APP_CONFIG.gateway.host;
       const port = APP_CONFIG.gateway.port;
       const token = await getGatewayToken();
@@ -90,7 +89,7 @@ class OpenClawGateway {
         console.error('WebSocket error:', error);
       };
 
-      this.ws.onclose = (event) => {
+      this.ws.onclose = (_event) => {
         onStatusChange?.('disconnected');
         if (this.reconnectAttempts < this.maxReconnectAttempts) {
           this.reconnectAttempts++;

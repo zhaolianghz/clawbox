@@ -27,7 +27,6 @@
   let messages: {role: string, content: string, id?: string}[] = $state([]);
   let inputValue = $state('');
   let isLoading = $state(false);
-  let chatConnected = $state(false);
   
   let isUpdating = $state(false);
   let updateProgress = $state(0);
@@ -94,8 +93,8 @@
           (msg) => {
             messages = [...messages, { role: msg.role, content: msg.content, id: msg.id }];
           },
-          (status) => {
-            chatConnected = status === 'connected';
+          (_status) => {
+            // Status updates from chat connection (not currently surfaced in UI).
           }
         );
         const history = await openclawGateway.getHistory();
