@@ -181,6 +181,44 @@ async fn acp_claude_handshake_and_prompt() {
     );
 }
 
+// Live ACP review smoke: runs a REAL review over this crate's directory
+// (scope = git diff HEAD~1...HEAD) through the full run_review orchestration:
+// reviewer session -> findings parse -> summarizer session -> save_report.
+// Skipped when the bridge binary is missing. Expect 1-5 minutes (two live
+// sessions). Writes a real report to ~/.clawbox/reviews/smoke_<ts>.json.
+#[tokio::test]
+async fn acp_review_produces_report() {
+    use clawbox_lib::acp::adapters::find_adapter;
+    use clawbox_lib::acp::review::*;
+
+    if !find_adapter("claude-agent-acp").unwrap().is_installed() {
+        eprintln!("skip: claude-agent-acp not installed");
+        return;
+    }
+
+    let task = ReviewTask {
+        id: format!("smoke_{}", now_secs()),
+        project_path: env!("CARGO_MANIFEST_DIR").to_string(),
+        scope: ReviewScope::GitDiff { base: "HEAD~1".into() },
+        reviewers: vec![RoleAssignment { adapter_id: "claude-agent-acp".into(), model: None }],
+        summarizer: RoleAssignment { adapter_id: "claude-agent-acp".into(), model: None },
+        created_at: now_secs(),
+    };
+
+    let report = run_review(task).await.expect("run_review");
+    eprintln!(
+        "status={:?} findings={} summary={:?}",
+        report.status,
+        report.findings.len(),
+        report.summary
+    );
+    assert!(matches!(report.status, ReviewStatus::Completed));
+    assert!(!report.summary.is_empty());
+    // Report was persisted:
+    let reloaded = load_report(&report.task_id).expect("load");
+    assert_eq!(reloaded.task_id, report.task_id);
+}
+
 #[test]
 fn hooks_list_runs_against_live_backends() {
     if !openclaw_installed() && !hermes_installed() {
