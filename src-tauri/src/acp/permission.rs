@@ -1,8 +1,11 @@
 //! Permission policy — decides how to answer `session/request_permission`.
 //!
-//! ReadOnly is fail-closed: only tools on the read-only allowlist may be
-//! allowed; every other tool (writes, shell/exec, and any unrecognized or
-//! ambiguous name) is rejected at the protocol layer. A reviewer literally
+//! ReadOnly is fail-closed and uses a two-tier check: FIRST deny any tool whose
+//! name contains a mutation/exec marker (`is_mutating_tool`), so that compound
+//! names such as `search_and_replace` or `create_pull_request_review` are
+//! rejected even though they also contain a read marker (deny wins on conflict);
+//! THEN allow tools on the read-only allowlist (`is_read_tool`); every other
+//! tool (unrecognized or ambiguous names) is rejected. A reviewer literally
 //! cannot mutate the workspace or run commands, regardless of its prompt.
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -34,10 +37,29 @@ pub fn is_read_tool(tool_name: &str) -> bool {
     READ_MARKERS.iter().any(|m| t.contains(m))
 }
 
+/// Tool names that mutate the workspace or execute commands. Checked BEFORE the
+/// read allowlist so that compound names (e.g. `search_and_replace`,
+/// `create_pull_request_review`, `write_xlsx`) are denied even though they also
+/// contain a read marker. Matches common write/exec verb substrings.
+pub fn is_mutating_tool(tool_name: &str) -> bool {
+    let t = tool_name.to_lowercase();
+    const MUTATION_MARKERS: &[&str] = &[
+        "write", "edit", "create", "delete", "remove", "replace", "apply",
+        "update", "patch", "move", "rename", "mkdir", "chmod", "insert",
+        "append", "save", "submit", "post", "put", "exec", "run", "shell",
+        "bash", "command", "terminal", "kill", "install",
+    ];
+    MUTATION_MARKERS.iter().any(|m| t.contains(m))
+}
+
 pub fn decide(policy: PermissionPolicy, tool_name: &str, options: &[PermOption]) -> PermDecision {
     match policy {
         PermissionPolicy::ReadOnly => {
-            if is_read_tool(tool_name) {
+            if is_mutating_tool(tool_name) {
+                // Deny wins on conflict: mutation/exec markers fail closed even
+                // if a read marker is also present in the name.
+                PermDecision::RejectAll
+            } else if is_read_tool(tool_name) {
                 // Prefer an allow_once option; fall back to any allow.
                 options
                     .iter()
@@ -110,6 +132,42 @@ mod tests {
         }];
         let d = decide(PermissionPolicy::ReadOnly, "read_file", &only_reject);
         assert!(matches!(d, PermDecision::RejectAll));
+    }
+
+    #[test]
+    fn readonly_rejects_compound_mutating_names() {
+        // The residual hole: mutating tool names that also contain a read
+        // marker must still be rejected (deny wins on conflict).
+        for tool in [
+            "search_and_replace",
+            "find_and_replace",
+            "create_pull_request_review",
+            "write_xlsx",
+            "update_spreadsheet",
+        ] {
+            let d = decide(PermissionPolicy::ReadOnly, tool, &opts());
+            assert!(
+                matches!(d, PermDecision::RejectAll),
+                "{tool} should be rejected"
+            );
+        }
+    }
+
+    #[test]
+    fn is_mutating_tool_detection() {
+        // Positive: write/exec markers, including compound read-colliding names.
+        assert!(is_mutating_tool("write_file"));
+        assert!(is_mutating_tool("search_and_replace"));
+        assert!(is_mutating_tool("find_and_replace"));
+        assert!(is_mutating_tool("create_pull_request_review"));
+        assert!(is_mutating_tool("write_xlsx"));
+        assert!(is_mutating_tool("update_spreadsheet"));
+        assert!(is_mutating_tool("shell"));
+        assert!(is_mutating_tool("bash"));
+        // Negative: pure read tools are not mutating.
+        assert!(!is_mutating_tool("read_file"));
+        assert!(!is_mutating_tool("grep"));
+        assert!(!is_mutating_tool("list_directory"));
     }
 
     #[test]
