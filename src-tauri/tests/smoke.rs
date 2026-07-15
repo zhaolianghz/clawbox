@@ -147,6 +147,40 @@ fn tools_list_only_hermes() {
     assert!(openclaw_entry.tools.is_none(), "openclaw has no tools subcommand");
 }
 
+// Live ACP smoke: drives the real claude-agent-acp bridge end-to-end
+// (spawn -> initialize -> session/new -> session/prompt). Skipped when the
+// bridge binary is missing. Cold start can take ~40-90s on first run.
+#[tokio::test]
+async fn acp_claude_handshake_and_prompt() {
+    use clawbox_lib::acp::adapters::find_adapter;
+    use clawbox_lib::acp::permission::PermissionPolicy;
+    use clawbox_lib::acp::session::AcpSession;
+
+    let adapter = find_adapter("claude-agent-acp").unwrap();
+    if !adapter.is_installed() {
+        eprintln!("skip: claude-agent-acp not installed");
+        return;
+    }
+
+    let cwd = std::env::temp_dir();
+    let session = AcpSession::start("claude-agent-acp", &cwd, PermissionPolicy::ReadOnly)
+        .await
+        .expect("session start");
+
+    let result = session
+        .prompt("Reply with exactly the word: pong")
+        .await
+        .expect("prompt");
+
+    eprintln!("stop_reason={:?} reply={:?}", result.stop_reason, result.text);
+    assert!(!result.stop_reason.is_empty());
+    assert!(
+        result.text.to_lowercase().contains("pong"),
+        "expected 'pong' in reply, got: {}",
+        result.text
+    );
+}
+
 #[test]
 fn hooks_list_runs_against_live_backends() {
     if !openclaw_installed() && !hermes_installed() {
