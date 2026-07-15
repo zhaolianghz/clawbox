@@ -1,6 +1,6 @@
 # ClawBox Backend Roadmap
 
-**Last updated:** 2026-07-03
+**Last updated:** 2026-07-15
 
 ClawBox is a desktop GUI for managing multiple agent-runtime CLIs in parallel.
 This file tracks the state of backend support.
@@ -16,32 +16,26 @@ Both are wired through the `Backend` trait + `BackendEntry` registry
 (see `docs/plans/2026-07-03-backend-trait-hermes-design.md` and
 `2026-07-03-agent-capabilities-design.md`).
 
-## Planned for future iterations
+## Supported via ACP (Agent Client Protocol)
 
-These CLIs are installed on the dev host today and confirmed as agent
-runtimes with gateway / capability surfaces. Each will get its own backend
-struct (`ClaudeCodeBackend`, `CodexBackend`, ...) implementing the same
-`Backend` trait + capability sub-traits.
+Claude Code and Codex were originally planned as per-CLI backends
+(`ClaudeCodeBackend`, `CodexBackend` implementing the `Backend` trait).
+That approach was superseded: they are now integrated through ACP bridges
+spoken over stdio JSON-RPC — no CLI-output parsing needed.
 
-### Claude Code CLI (Anthropic)
+| Agent | ACP bridge | Status |
+|---|---|---|
+| **Claude Code** (Anthropic) | `claude-agent-acp` | Supported; live-verified against the real bridge |
+| **Codex** (OpenAI) | `codex-acp` | Supported via ACP (bridge installable, not yet live-verified) |
 
-- Binary: `claude` (Homebrew / `~/.local/bin/claude`)
-- Version: 2.1.179
-- Subcommands: primarily interactive; `--print` (-p) for non-interactive output
-- Open questions to resolve before implementation:
-  - Does it expose a long-running gateway/WebSocket service, or is it session-only?
-    If session-only, the `Backend::gateway_*` methods need a sensible "not applicable" return shape.
-  - Skills / MCP / Memory / Plugins / Tools / Hooks — which capabilities map to Claude Code concepts (plugins? sub-agents? permissions? CLAUDE.md?).
-- Effort: 1-2 days to scope. Implementation will follow the same pattern as hermes (verify real CLI outputs, write parsers from captured fixtures, TDD).
+The ACP subsystem lives in `src-tauri/src/acp/` (adapters, jsonrpc,
+permission, session, review). Adding another ACP-compatible agent is a
+registry entry in `acp/adapters.rs`, not a new parser.
 
-### Codex CLI (OpenAI)
-
-- Binary: `codex` (Homebrew)
-- Version: 0.131.0
-- Subcommands: `exec`, `review`, `mcp`, `plugin`, `mcp-server`, `app-server`, `update`, `doctor`, `sandbox`, `debug`, `apply`, `resume`, `fork`, `cloud`
-- Strong overlap with openclaw/hermes surface — `mcp` and `plugin` map directly to existing capability traits.
-- Likely less hermes-style CLI parsing work than Claude Code (subcommand structure is well-defined).
-- Effort: 1 day.
+Shipped on top of ACP: a read-only multi-agent **code review** feature —
+reviewer + summarizer roles, read-only enforced at the ACP permission
+layer, reports persisted to `~/.clawbox/reviews/` — exposed via Tauri
+commands and the Review page.
 
 ## Out of scope (no plans, can revisit on request)
 
