@@ -171,6 +171,76 @@ pub fn parse_findings(reviewer: &str, agent_text: &str) -> Vec<Finding> {
     }]
 }
 
+use crate::acp::permission::PermissionPolicy;
+use crate::acp::session::AcpSession;
+use std::path::Path;
+
+pub fn now_secs() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0)
+}
+
+pub fn reviewer_prompt(scope: &ReviewScope) -> String {
+    let scope_desc = match scope {
+        ReviewScope::WholeProject => "the entire project in the working directory".to_string(),
+        ReviewScope::GitDiff { base } => {
+            format!("the changes in `git diff {}...HEAD` (only the modified lines)", base)
+        }
+    };
+    format!(
+        "You are a strict code reviewer. Review {scope_desc}. \
+Read files as needed (you have read-only access; do not attempt to modify anything). \
+Report concrete issues: bugs, security problems, and clear correctness defects. \
+Respond with ONLY a JSON array in a ```json fenced block, each item: \
+{{\"file\": string, \"line\": number|null, \"severity\": \"info\"|\"warning\"|\"error\", \
+\"title\": short string, \"detail\": string}}. \
+If you find nothing, return []."
+    )
+}
+
+pub fn summarizer_prompt(findings: &[Finding]) -> String {
+    let json = serde_json::to_string_pretty(findings).unwrap_or_else(|_| "[]".to_string());
+    format!(
+        "You are a review summarizer. Below are findings from multiple reviewers as JSON. \
+Deduplicate near-identical items and write a concise plain-text executive summary \
+(3-6 sentences) highlighting the most important issues by severity. \
+Do not output JSON, just the prose summary.\n\nFINDINGS:\n{json}"
+    )
+}
+
+/// Run all reviewers (sequentially for v1 — simpler; parallel is a v2 opt),
+/// collect findings, run the summarizer, persist and return the report.
+pub async fn run_review(task: ReviewTask) -> Result<ReviewReport, String> {
+    let cwd = Path::new(&task.project_path);
+    let mut all: Vec<Finding> = Vec::new();
+
+    for role in &task.reviewers {
+        let session = AcpSession::start(&role.adapter_id, cwd, PermissionPolicy::ReadOnly).await?;
+        let res = session.prompt(&reviewer_prompt(&task.scope)).await?;
+        all.extend(parse_findings(&role.adapter_id, &res.text));
+    }
+
+    let summary = if all.is_empty() {
+        "No issues found.".to_string()
+    } else {
+        let session =
+            AcpSession::start(&task.summarizer.adapter_id, cwd, PermissionPolicy::ReadOnly).await?;
+        session.prompt(&summarizer_prompt(&all)).await?.text
+    };
+
+    let report = ReviewReport {
+        task_id: task.id.clone(),
+        findings: all,
+        summary,
+        status: ReviewStatus::Completed,
+        created_at: now_secs(),
+    };
+    save_report(&report)?;
+    Ok(report)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -228,5 +298,33 @@ mod parse_tests {
     fn empty_array_yields_no_findings() {
         let f = parse_findings("claude-agent-acp", "```json\n[]\n```");
         assert_eq!(f.len(), 0);
+    }
+}
+
+#[cfg(test)]
+mod orchestration_tests {
+    use super::*;
+
+    #[test]
+    fn reviewer_prompt_mentions_json_and_scope() {
+        let p = reviewer_prompt(&ReviewScope::GitDiff { base: "main".into() });
+        assert!(p.to_lowercase().contains("json"));
+        assert!(p.contains("main"));
+    }
+
+    #[test]
+    fn reviewer_prompt_wholeproject() {
+        let p = reviewer_prompt(&ReviewScope::WholeProject);
+        assert!(p.to_lowercase().contains("json"));
+    }
+
+    #[test]
+    fn summarizer_prompt_includes_findings() {
+        let f = vec![Finding {
+            file: "a.rs".into(), line: Some(1), severity: Severity::Error,
+            title: "boom".into(), detail: "d".into(), reviewer: "r".into(),
+        }];
+        let p = summarizer_prompt(&f);
+        assert!(p.contains("boom"));
     }
 }
