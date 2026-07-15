@@ -231,6 +231,7 @@
     "findings": "Findings",
     "summary": "Summary",
     "noAdapters": "No ACP agents installed.",
-    "install": "Install"
+    "install": "Install",
+    "validation": "Pick a project and at least one reviewer."
   }
 }

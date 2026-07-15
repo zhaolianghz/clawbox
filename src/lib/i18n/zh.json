@@ -231,6 +231,7 @@
     "findings": "问题",
     "summary": "摘要",
     "noAdapters": "未安装任何 ACP agent。",
-    "install": "安装"
+    "install": "安装",
+    "validation": "请选择项目路径和至少一个审核者。"
   }
 }

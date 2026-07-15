@@ -78,7 +78,20 @@ fn ensure_dir() -> Result<(), String> {
     Ok(())
 }
 
+/// A task id must be non-empty and contain only `[A-Za-z0-9_-]` — it is used
+/// as a filename under the reviews dir, so this blocks path traversal
+/// (`../../etc/passwd`) and separator/odd-char injection.
+fn valid_task_id(id: &str) -> bool {
+    !id.is_empty()
+        && id
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+}
+
 pub fn save_report(r: &ReviewReport) -> Result<(), String> {
+    if !valid_task_id(&r.task_id) {
+        return Err("invalid task id".to_string());
+    }
     ensure_dir()?;
     let path = reviews_dir().join(format!("{}.json", r.task_id));
     let content = serde_json::to_string_pretty(r).map_err(|e| e.to_string())?;
@@ -86,6 +99,9 @@ pub fn save_report(r: &ReviewReport) -> Result<(), String> {
 }
 
 pub fn load_report(task_id: &str) -> Result<ReviewReport, String> {
+    if !valid_task_id(task_id) {
+        return Err("invalid task id".to_string());
+    }
     let path = reviews_dir().join(format!("{}.json", task_id));
     let content = fs::read_to_string(path).map_err(|e| format!("read report: {}", e))?;
     serde_json::from_str(&content).map_err(|e| format!("parse report: {}", e))
@@ -268,6 +284,35 @@ mod tests {
         let s = ReviewScope::GitDiff { base: "main".into() };
         let j = serde_json::to_string(&s).unwrap();
         assert!(j.contains("main"));
+    }
+
+    #[test]
+    fn valid_task_id_spot_checks() {
+        assert!(valid_task_id("review_1720000000"));
+        assert!(valid_task_id("abc-DEF_123"));
+        assert!(!valid_task_id(""));
+        assert!(!valid_task_id("../../etc/passwd"));
+        assert!(!valid_task_id("a/b"));
+        assert!(!valid_task_id("a.b"));
+        assert!(!valid_task_id("a b"));
+    }
+
+    #[test]
+    fn load_report_rejects_path_traversal() {
+        let e = load_report("../../etc/passwd").unwrap_err();
+        assert_eq!(e, "invalid task id");
+    }
+
+    #[test]
+    fn save_report_rejects_invalid_task_id() {
+        let r = ReviewReport {
+            task_id: "../evil".into(),
+            findings: vec![],
+            summary: String::new(),
+            status: ReviewStatus::Completed,
+            created_at: 1,
+        };
+        assert_eq!(save_report(&r).unwrap_err(), "invalid task id");
     }
 }
 

@@ -21,10 +21,12 @@ pub struct PromptResult {
     pub text: String,
 }
 
-/// Pull assistant text out of a `session/update` payload; None for non-text updates.
+/// Pull assistant text out of a `session/update` payload; None for non-text
+/// updates. Thought chunks are deliberately dropped: reasoning text pollutes
+/// summaries and a fenced block inside it can hijack findings JSON parsing.
 pub fn extract_text(update: &Value) -> Option<String> {
     let kind = update.get("sessionUpdate").and_then(|v| v.as_str())?;
-    if kind != "agent_message_chunk" && kind != "agent_thought_chunk" {
+    if kind != "agent_message_chunk" {
         return None;
     }
     update
@@ -51,13 +53,20 @@ fn parse_perm_options(params: &Value) -> Vec<PermOption> {
         .unwrap_or_default()
 }
 
-fn tool_name_from_perm(params: &Value) -> String {
-    params
-        .get("toolCall")
-        .and_then(|tc| tc.get("title").or_else(|| tc.get("kind")))
-        .and_then(|v| v.as_str())
-        .unwrap_or("")
-        .to_string()
+/// Extract the structured `toolCall.kind` and display `toolCall.title` from a
+/// `session/request_permission` payload (empty strings when absent). `kind` is
+/// the reliable signal (`read|edit|delete|move|search|execute|think|fetch|other`);
+/// `title` is a human display string — for shell tools it is the raw command
+/// line — and is only used as a secondary deny layer / fallback.
+fn perm_tool_fields(params: &Value) -> (String, String) {
+    let tc = params.get("toolCall");
+    let get = |field: &str| {
+        tc.and_then(|t| t.get(field))
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string()
+    };
+    (get("kind"), get("title"))
 }
 
 impl AcpSession {
@@ -187,8 +196,8 @@ impl AcpSession {
             Inbound::Request { id, method, params } => {
                 if method == "session/request_permission" {
                     let opts = parse_perm_options(&params);
-                    let tool = tool_name_from_perm(&params);
-                    let decision = decide(self.policy, &tool, &opts);
+                    let (kind, title) = perm_tool_fields(&params);
+                    let decision = decide(self.policy, &kind, &title, &opts);
                     let result = match decision {
                         PermDecision::Select(opt) => json!({
                             "outcome": { "outcome": "selected", "optionId": opt }
@@ -222,5 +231,32 @@ mod tests {
     fn ignores_non_text_updates() {
         let update = json!({ "sessionUpdate": "tool_call", "toolCallId": "x" });
         assert_eq!(extract_text(&update), None);
+    }
+
+    #[test]
+    fn drops_agent_thought_chunks() {
+        // Reasoning text must not leak into summaries or findings parsing.
+        let update = json!({
+            "sessionUpdate": "agent_thought_chunk",
+            "content": { "type": "text", "text": "```json\n[]\n```" }
+        });
+        assert_eq!(extract_text(&update), None);
+    }
+
+    #[test]
+    fn perm_tool_fields_extracts_kind_and_title() {
+        let params = json!({
+            "toolCall": { "kind": "execute", "title": "cat a.txt | tee b.txt" }
+        });
+        let (kind, title) = perm_tool_fields(&params);
+        assert_eq!(kind, "execute");
+        assert_eq!(title, "cat a.txt | tee b.txt");
+    }
+
+    #[test]
+    fn perm_tool_fields_defaults_to_empty() {
+        let (kind, title) = perm_tool_fields(&json!({}));
+        assert_eq!(kind, "");
+        assert_eq!(title, "");
     }
 }

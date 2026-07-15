@@ -1,12 +1,19 @@
 //! Permission policy — decides how to answer `session/request_permission`.
 //!
-//! ReadOnly is fail-closed and uses a two-tier check: FIRST deny any tool whose
-//! name contains a mutation/exec marker (`is_mutating_tool`), so that compound
-//! names such as `search_and_replace` or `create_pull_request_review` are
-//! rejected even though they also contain a read marker (deny wins on conflict);
-//! THEN allow tools on the read-only allowlist (`is_read_tool`); every other
-//! tool (unrecognized or ambiguous names) is rejected. A reviewer literally
-//! cannot mutate the workspace or run commands, regardless of its prompt.
+//! ReadOnly is fail-closed and keys PRIMARILY on the structured `toolCall.kind`
+//! field (`read|edit|delete|move|search|execute|think|fetch|other`), because
+//! `toolCall.title` is a human display string — for shell tools it is the raw
+//! command line (e.g. `cat a.txt | tee b.txt`) and substring checks on it are
+//! trivially spoofable. Mutating/exec kinds are denied outright; read-ish kinds
+//! are allowed but the title check remains as an ADDITIONAL deny layer (title
+//! can veto, never rescue). When no kind is present we fall back to the
+//! two-tier title check: FIRST deny any tool whose name contains a
+//! mutation/exec marker (`is_mutating_tool`), so that compound names such as
+//! `search_and_replace` or `create_pull_request_review` are rejected even
+//! though they also contain a read marker (deny wins on conflict); THEN allow
+//! tools on the read-only allowlist (`is_read_tool`); every other tool
+//! (unrecognized or ambiguous) is rejected. A reviewer literally cannot mutate
+//! the workspace or run commands, regardless of its prompt.
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum PermissionPolicy {
@@ -52,21 +59,51 @@ pub fn is_mutating_tool(tool_name: &str) -> bool {
     MUTATION_MARKERS.iter().any(|m| t.contains(m))
 }
 
-pub fn decide(policy: PermissionPolicy, tool_name: &str, options: &[PermOption]) -> PermDecision {
+/// ACP `toolCall.kind` values that mutate the workspace, run commands, or are
+/// too ambiguous to trust (deny outright — the title can never rescue these).
+const DENY_KINDS: &[&str] = &["edit", "delete", "move", "execute", "switch_mode", "other"];
+
+/// ACP `toolCall.kind` values that only observe the workspace.
+const ALLOW_KINDS: &[&str] = &["read", "search", "fetch", "think"];
+
+/// Prefer an allow_once option; fall back to any allow; else reject.
+fn select_allow(options: &[PermOption]) -> PermDecision {
+    options
+        .iter()
+        .find(|o| o.kind == "allow_once")
+        .or_else(|| options.iter().find(|o| o.kind.starts_with("allow")))
+        .map(|o| PermDecision::Select(o.option_id.clone()))
+        .unwrap_or(PermDecision::RejectAll)
+}
+
+pub fn decide(
+    policy: PermissionPolicy,
+    tool_kind: &str,
+    tool_title: &str,
+    options: &[PermOption],
+) -> PermDecision {
     match policy {
         PermissionPolicy::ReadOnly => {
-            if is_mutating_tool(tool_name) {
+            let kind = tool_kind.to_lowercase();
+            if DENY_KINDS.contains(&kind.as_str()) {
+                // Structured kind says mutate/exec/ambiguous: fail closed. The
+                // title (often a raw command line) can never rescue a bad kind.
+                PermDecision::RejectAll
+            } else if ALLOW_KINDS.contains(&kind.as_str()) {
+                // Kind allows, but the title check stays as an extra deny
+                // layer: a "read" kind with a mutating-looking title fails.
+                if is_mutating_tool(tool_title) {
+                    PermDecision::RejectAll
+                } else {
+                    select_allow(options)
+                }
+            } else if is_mutating_tool(tool_title) {
+                // No usable kind: fall back to the two-tier title check.
                 // Deny wins on conflict: mutation/exec markers fail closed even
                 // if a read marker is also present in the name.
                 PermDecision::RejectAll
-            } else if is_read_tool(tool_name) {
-                // Prefer an allow_once option; fall back to any allow.
-                options
-                    .iter()
-                    .find(|o| o.kind == "allow_once")
-                    .or_else(|| options.iter().find(|o| o.kind.starts_with("allow")))
-                    .map(|o| PermDecision::Select(o.option_id.clone()))
-                    .unwrap_or(PermDecision::RejectAll)
+            } else if is_read_tool(tool_title) {
+                select_allow(options)
             } else {
                 // Writes, shell/exec, and unknown/ambiguous names fail closed.
                 PermDecision::RejectAll
@@ -93,24 +130,76 @@ mod tests {
 
     #[test]
     fn readonly_allows_read_tools() {
-        let d = decide(PermissionPolicy::ReadOnly, "read_file", &opts());
+        // No kind present: falls back to the title allowlist.
+        let d = decide(PermissionPolicy::ReadOnly, "", "read_file", &opts());
         assert!(matches!(d, PermDecision::Select(ref id) if id == "allow"));
     }
 
     #[test]
     fn readonly_rejects_write_tools() {
-        let d = decide(PermissionPolicy::ReadOnly, "write_file", &opts());
+        let d = decide(PermissionPolicy::ReadOnly, "", "write_file", &opts());
         assert!(matches!(d, PermDecision::RejectAll));
     }
 
     #[test]
     fn readonly_rejects_command_execution_tools() {
-        // The Critical scenario: command-execution tools must fail closed.
+        // Title-only fallback: command-execution names must fail closed.
         for tool in ["shell", "bash", "execute_command", "rm"] {
-            let d = decide(PermissionPolicy::ReadOnly, tool, &opts());
+            let d = decide(PermissionPolicy::ReadOnly, "", tool, &opts());
             assert!(
                 matches!(d, PermDecision::RejectAll),
                 "{tool} should be rejected"
+            );
+        }
+    }
+
+    #[test]
+    fn readonly_rejects_execute_kind_with_readlike_title() {
+        // The Critical repro: for Bash tool calls, ACP `title` is the raw
+        // command line — `cat a.txt | tee b.txt` contains the read marker
+        // "cat" and previously passed the title-only check. The structured
+        // kind "execute" must reject it regardless of title.
+        let d = decide(
+            PermissionPolicy::ReadOnly,
+            "execute",
+            "cat a.txt | tee b.txt",
+            &opts(),
+        );
+        assert!(matches!(d, PermDecision::RejectAll));
+    }
+
+    #[test]
+    fn readonly_rejects_all_mutating_kinds_despite_read_title() {
+        // A read-looking title can never rescue a mutating/ambiguous kind.
+        for kind in ["edit", "delete", "move", "execute", "switch_mode", "other"] {
+            let d = decide(PermissionPolicy::ReadOnly, kind, "read_file", &opts());
+            assert!(
+                matches!(d, PermDecision::RejectAll),
+                "kind={kind} should be rejected"
+            );
+        }
+    }
+
+    #[test]
+    fn readonly_allows_read_kind() {
+        let d = decide(PermissionPolicy::ReadOnly, "read", "Read file src/main.rs", &opts());
+        assert!(matches!(d, PermDecision::Select(ref id) if id == "allow"));
+    }
+
+    #[test]
+    fn readonly_read_kind_title_can_still_veto() {
+        // Kind allows, title vetoes: extra deny layer on top of the kind.
+        let d = decide(PermissionPolicy::ReadOnly, "read", "write something", &opts());
+        assert!(matches!(d, PermDecision::RejectAll));
+    }
+
+    #[test]
+    fn readonly_allows_other_readish_kinds() {
+        for kind in ["search", "fetch", "think"] {
+            let d = decide(PermissionPolicy::ReadOnly, kind, "Look around", &opts());
+            assert!(
+                matches!(d, PermDecision::Select(ref id) if id == "allow"),
+                "kind={kind} should be allowed"
             );
         }
     }
@@ -120,7 +209,7 @@ mod tests {
         // Note: a literal "frobnicate" contains the substring "cat" and would
         // match the read allowlist under substring matching, so we use a
         // genuinely non-colliding unknown token to prove fail-closed default.
-        let d = decide(PermissionPolicy::ReadOnly, "xyzzy", &opts());
+        let d = decide(PermissionPolicy::ReadOnly, "", "xyzzy", &opts());
         assert!(matches!(d, PermDecision::RejectAll));
     }
 
@@ -130,7 +219,7 @@ mod tests {
             option_id: "reject".into(),
             kind: "reject_once".into(),
         }];
-        let d = decide(PermissionPolicy::ReadOnly, "read_file", &only_reject);
+        let d = decide(PermissionPolicy::ReadOnly, "read", "read_file", &only_reject);
         assert!(matches!(d, PermDecision::RejectAll));
     }
 
@@ -145,7 +234,7 @@ mod tests {
             "write_xlsx",
             "update_spreadsheet",
         ] {
-            let d = decide(PermissionPolicy::ReadOnly, tool, &opts());
+            let d = decide(PermissionPolicy::ReadOnly, "", tool, &opts());
             assert!(
                 matches!(d, PermDecision::RejectAll),
                 "{tool} should be rejected"
@@ -172,7 +261,7 @@ mod tests {
 
     #[test]
     fn ask_user_rejects_all() {
-        let d = decide(PermissionPolicy::AskUser, "read_file", &opts());
+        let d = decide(PermissionPolicy::AskUser, "read", "read_file", &opts());
         assert!(matches!(d, PermDecision::RejectAll));
     }
 

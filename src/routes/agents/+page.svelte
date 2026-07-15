@@ -17,6 +17,10 @@
   let history = $state<ReviewReport[]>([]);
   let error = $state('');
 
+  const failedMessage = $derived(
+    current && current.status.state === 'failed' ? current.status.message : null
+  );
+
   async function refresh() {
     adapters = await acp_list_adapters();
     history = await review_list();
@@ -38,7 +42,7 @@
       .filter((a) => a.installed && selectedReviewers[a.id])
       .map((a) => ({ adapter_id: a.id, model: null }));
     if (!projectPath || reviewers.length === 0) {
-      error = 'Pick a project and at least one reviewer.';
+      error = $_('review.validation');
       return;
     }
     const scope: ReviewScope = scopeKind === 'whole' ? 'whole_project' : { git_diff: { base: diffBase } };
@@ -49,6 +53,8 @@
       history = await review_list();
     } catch (e) {
       error = e instanceof Error ? e.message : String(e);
+      // The backend persists a Failed report on error — surface it in history.
+      history = await review_list();
     } finally {
       running = false;
     }
@@ -110,8 +116,11 @@
 
     {#if current}
       <div class="glass-card report">
-        <h2>{$_('review.summary')}</h2>
-        <p class="summary">{current.summary}</p>
+        <h2>
+          {$_('review.summary')}
+          {#if failedMessage !== null}<span class="failed-badge">failed</span>{/if}
+        </h2>
+        <p class="summary">{failedMessage !== null ? failedMessage : current.summary}</p>
         <h2>{$_('review.findings')} ({current.findings.length})</h2>
         {#each current.findings as f}
           <div class="finding" data-sev={f.severity}>
@@ -131,7 +140,10 @@
       {:else}
         {#each history as r (r.task_id)}
           <button class="history-item" onclick={() => (current = r)}>
-            <span>{r.task_id}</span>
+            <span>
+              {r.task_id}
+              {#if r.status.state === 'failed'}<span class="failed-badge">failed</span>{/if}
+            </span>
             <span class="muted">{r.findings.length} findings · {new Date(r.created_at * 1000).toLocaleString()}</span>
           </button>
         {/each}
@@ -165,6 +177,10 @@
   .finding[data-sev="error"] .sev { background: rgba(255,0,110,0.15); color: var(--neon-pink); }
   .finding[data-sev="warning"] .sev { background: rgba(255,136,0,0.15); color: var(--neon-orange); }
   .finding[data-sev="info"] .sev { background: rgba(0,245,255,0.15); color: var(--neon-cyan); }
+  .failed-badge {
+    font-size: 0.7rem; font-weight: 700; padding: 0.1rem 0.5rem; border-radius: 999px;
+    margin-left: 0.5rem; background: rgba(255,0,110,0.15); color: var(--neon-pink);
+  }
   .finding .loc { font-family: monospace; color: var(--text-muted); margin-right: 0.5rem; }
   .fdetail { margin: 0.4rem 0 0; color: var(--text-secondary); }
   .history-item {

@@ -69,6 +69,7 @@ impl JsonRpcClient {
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::null())
+            .kill_on_drop(true) // reap the bridge when the client is dropped (no zombie processes across review runs)
             .spawn()
             .map_err(|e| format!("failed to spawn {}: {}", binary, e))?;
 
