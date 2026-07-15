@@ -214,5 +214,23 @@
       "enable": "Enable",
       "disable": "Disable"
     }
+  },
+  "review": {
+    "title": "Code Review",
+    "projectPath": "Project path",
+    "browse": "Browse",
+    "scope": "Scope",
+    "wholeProject": "Whole project",
+    "gitDiff": "Git diff (base)",
+    "reviewers": "Reviewers",
+    "summarizer": "Summarizer",
+    "run": "Run Review",
+    "running": "Reviewing...",
+    "history": "History",
+    "empty": "No reviews yet.",
+    "findings": "Findings",
+    "summary": "Summary",
+    "noAdapters": "No ACP agents installed.",
+    "install": "Install"
   }
 }

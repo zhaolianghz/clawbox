@@ -214,5 +214,23 @@
       "enable": "启用",
       "disable": "禁用"
     }
+  },
+  "review": {
+    "title": "代码审核",
+    "projectPath": "项目路径",
+    "browse": "浏览",
+    "scope": "范围",
+    "wholeProject": "整个项目",
+    "gitDiff": "Git 差异（基准）",
+    "reviewers": "审核者",
+    "summarizer": "汇总者",
+    "run": "开始审核",
+    "running": "审核中...",
+    "history": "历史",
+    "empty": "还没有审核记录。",
+    "findings": "问题",
+    "summary": "摘要",
+    "noAdapters": "未安装任何 ACP agent。",
+    "install": "安装"
   }
 }
