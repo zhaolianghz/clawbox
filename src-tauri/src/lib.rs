@@ -47,6 +47,11 @@ pub fn run() {
             commands::install::check_openclaw_update,
             commands::logs::get_log_files,
             commands::logs::get_log_content,
+            commands::acp::acp_list_adapters,
+            commands::acp::acp_install_adapter,
+            commands::acp::review_run,
+            commands::acp::review_list,
+            commands::acp::review_get,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
