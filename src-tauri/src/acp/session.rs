@@ -77,7 +77,7 @@ impl AcpSession {
                 "initialize",
                 json!({
                     "protocolVersion": 1,
-                    "clientCapabilities": { "fs": { "readTextFile": true, "writeTextFile": false } },
+                    "clientCapabilities": { "fs": { "readTextFile": false, "writeTextFile": false } }, // don't advertise fs reads — we have no fs/read_text_file handler; agents read via their own process
                     "clientInfo": { "name": "clawbox", "version": env!("CARGO_PKG_VERSION") }
                 }),
                 90,
