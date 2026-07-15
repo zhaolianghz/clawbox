@@ -1,453 +1,177 @@
 <script lang="ts">
   import { _ } from 'svelte-i18n';
   import { onMount } from 'svelte';
-  
-  interface AgentFlow {
-    id: string;
-    name: string;
-    status: 'idle' | 'running' | 'completed' | 'error';
-    nodes: number;
-    createdAt: string;
+  import { open } from '@tauri-apps/plugin-dialog';
+  import {
+    acp_list_adapters, acp_install_adapter, review_run, review_list,
+    type AdapterInfo, type ReviewReport, type ReviewScope, type RoleAssignment,
+  } from '$lib/api/acp';
+
+  let adapters = $state<AdapterInfo[]>([]);
+  let projectPath = $state('');
+  let scopeKind = $state<'whole' | 'diff'>('diff');
+  let diffBase = $state('main');
+  let selectedReviewers = $state<Record<string, boolean>>({});
+  let running = $state(false);
+  let current = $state<ReviewReport | null>(null);
+  let history = $state<ReviewReport[]>([]);
+  let error = $state('');
+
+  async function refresh() {
+    adapters = await acp_list_adapters();
+    history = await review_list();
   }
-  
-  let flows = $state<AgentFlow[]>([]);
-  let selectedFlow = $state<AgentFlow | null>(null);
-  let isLoading = $state(true);
-  
-  async function loadFlows() {
-    await new Promise(resolve => setTimeout(resolve, 500));
-    flows = [
-      { id: '1', name: 'Code Review Pipeline', status: 'running', nodes: 4, createdAt: '2024-03-24 14:30' },
-      { id: '2', name: 'Documentation Generator', status: 'completed', nodes: 3, createdAt: '2024-03-24 12:15' },
-      { id: '3', name: 'Test & Deploy', status: 'idle', nodes: 5, createdAt: '2024-03-23 18:00' },
-      { id: '4', name: 'Data Analysis Flow', status: 'error', nodes: 2, createdAt: '2024-03-23 10:30' },
-    ];
-    isLoading = false;
+
+  async function pickDir() {
+    const picked = await open({ directory: true, multiple: false });
+    if (typeof picked === 'string') projectPath = picked;
   }
-  
-  function getStatusColor(status: string): string {
-    switch (status) {
-      case 'running': return 'var(--neon-green)';
-      case 'completed': return 'var(--neon-cyan)';
-      case 'error': return 'var(--neon-pink)';
-      default: return 'var(--text-muted)';
+
+  async function install(id: string) {
+    try { await acp_install_adapter(id); await refresh(); }
+    catch (e) { error = e instanceof Error ? e.message : String(e); }
+  }
+
+  async function run() {
+    error = '';
+    const reviewers: RoleAssignment[] = adapters
+      .filter((a) => a.installed && selectedReviewers[a.id])
+      .map((a) => ({ adapter_id: a.id, model: null }));
+    if (!projectPath || reviewers.length === 0) {
+      error = 'Pick a project and at least one reviewer.';
+      return;
+    }
+    const scope: ReviewScope = scopeKind === 'whole' ? 'whole_project' : { git_diff: { base: diffBase } };
+    running = true;
+    current = null;
+    try {
+      current = await review_run(projectPath, scope, reviewers, reviewers[0]);
+      history = await review_list();
+    } catch (e) {
+      error = e instanceof Error ? e.message : String(e);
+    } finally {
+      running = false;
     }
   }
-  
-  function getStatusIcon(status: string): string {
-    switch (status) {
-      case 'running': return '▶️';
-      case 'completed': return '✅';
-      case 'error': return '❌';
-      default: return '⏸️';
-    }
-  }
-  
-  onMount(loadFlows);
+
+  onMount(refresh);
 </script>
 
-<svelte:head>
-  <title>{$_('agents.title')} - ClawBox</title>
-</svelte:head>
+<div class="review-page">
+  <h1>{$_('review.title')}</h1>
 
-<div class="agents-page">
-  <div class="page-header">
-    <div>
-      <h1>{$_('agents.title')}</h1>
-      <p class="subtitle">{$_('agents.subtitle')}</p>
-    </div>
-    <button class="neon-button">➕ {$_('agents.newFlow')}</button>
-  </div>
-  
-  <div class="agents-container">
-    <div class="flows-sidebar glass-card">
-      <div class="sidebar-header">
-        <span>{$_('agents.flows')}</span>
-        <span class="count">{flows.length}</span>
-      </div>
-      
-      {#if isLoading}
-        <div class="loading">
-          <div class="spinner"></div>
+  {#if adapters.filter((a) => a.installed).length === 0}
+    <div class="glass-card empty-adapters">
+      <p>{$_('review.noAdapters')}</p>
+      {#each adapters as a (a.id)}
+        <div class="adapter-row">
+          <span>{a.label}</span>
+          <button class="neon-button" onclick={() => install(a.id)}>{$_('review.install')}</button>
         </div>
-      {:else}
-        <div class="flow-list">
-          {#each flows as flow}
-            <button
-              class="flow-item"
-              class:selected={selectedFlow?.id === flow.id}
-              onclick={() => selectedFlow = flow}
-            >
-              <span class="flow-icon">{getStatusIcon(flow.status)}</span>
-              <div class="flow-info">
-                <span class="flow-name">{flow.name}</span>
-                <span class="flow-meta">{flow.nodes} {$_('agents.nodes')} · {flow.createdAt}</span>
-              </div>
-              <span class="flow-status" style="color: {getStatusColor(flow.status)}">
-                {flow.status}
-              </span>
-            </button>
+      {/each}
+    </div>
+  {:else}
+    <div class="glass-card form">
+      <label class="row">
+        <span>{$_('review.projectPath')}</span>
+        <input type="text" bind:value={projectPath} placeholder="/path/to/project" />
+        <button class="neon-button" onclick={pickDir}>{$_('review.browse')}</button>
+      </label>
+
+      <div class="row">
+        <span>{$_('review.scope')}</span>
+        <select bind:value={scopeKind}>
+          <option value="diff">{$_('review.gitDiff')}</option>
+          <option value="whole">{$_('review.wholeProject')}</option>
+        </select>
+        {#if scopeKind === 'diff'}
+          <input type="text" bind:value={diffBase} placeholder="main" />
+        {/if}
+      </div>
+
+      <div class="row">
+        <span>{$_('review.reviewers')}</span>
+        <div class="reviewer-list">
+          {#each adapters.filter((a) => a.installed) as a (a.id)}
+            <label class="reviewer-chip">
+              <input type="checkbox" bind:checked={selectedReviewers[a.id]} />
+              {a.label}
+            </label>
           {/each}
         </div>
-      {/if}
+      </div>
+
+      {#if error}<div class="error">{error}</div>{/if}
+
+      <button class="neon-button primary" onclick={run} disabled={running}>
+        {running ? $_('review.running') : $_('review.run')}
+      </button>
     </div>
-    
-    <div class="flow-editor glass-card">
-      {#if selectedFlow}
-        <div class="editor-header">
-          <h2>{selectedFlow.name}</h2>
-          <div class="editor-actions">
-            <button class="neon-button">▶️ {$_('agents.run')}</button>
-            <button class="neon-button">✏️ {$_('agents.edit')}</button>
+
+    {#if current}
+      <div class="glass-card report">
+        <h2>{$_('review.summary')}</h2>
+        <p class="summary">{current.summary}</p>
+        <h2>{$_('review.findings')} ({current.findings.length})</h2>
+        {#each current.findings as f}
+          <div class="finding" data-sev={f.severity}>
+            <span class="sev">{f.severity}</span>
+            <span class="loc">{f.file}{f.line != null ? ':' + f.line : ''}</span>
+            <span class="ftitle">{f.title}</span>
+            <p class="fdetail">{f.detail}</p>
           </div>
-        </div>
-        
-        <div class="flow-canvas">
-          <div class="placeholder-canvas">
-            <div class="placeholder-content">
-              <span class="placeholder-icon">🔀</span>
-              <p>{$_('agents.flowEditorPlaceholder')}</p>
-              <p class="placeholder-hint">{$_('agents.flowEditorHint')}</p>
-            </div>
-            
-            <div class="mock-nodes">
-              <div class="mock-node node-start">
-                <span>🚀</span>
-                <span>Start</span>
-              </div>
-              <div class="node-connector"></div>
-              <div class="mock-node node-agent">
-                <span>🤖</span>
-                <span>Agent 1</span>
-              </div>
-              <div class="node-connector"></div>
-              <div class="mock-node node-agent">
-                <span>🤖</span>
-                <span>Agent 2</span>
-              </div>
-              <div class="node-connector"></div>
-              <div class="mock-node node-end">
-                <span>✅</span>
-                <span>Output</span>
-              </div>
-            </div>
-          </div>
-        </div>
-        
-        <div class="message-trace">
-          <div class="trace-header">
-            <span>{$_('agents.messageTrace')}</span>
-          </div>
-          <div class="trace-content">
-            <div class="trace-item">
-              <span class="trace-time">14:30:01</span>
-              <span class="trace-node">Agent 1</span>
-              <span class="trace-msg">Processing input data...</span>
-            </div>
-            <div class="trace-item">
-              <span class="trace-time">14:30:03</span>
-              <span class="trace-node">Agent 1 → 2</span>
-              <span class="trace-msg">Transferring context (245 tokens)</span>
-            </div>
-            <div class="trace-item">
-              <span class="trace-time">14:30:05</span>
-              <span class="trace-node">Agent 2</span>
-              <span class="trace-msg">Generating response...</span>
-            </div>
-          </div>
-        </div>
+        {/each}
+      </div>
+    {/if}
+
+    <div class="glass-card history">
+      <h2>{$_('review.history')}</h2>
+      {#if history.length === 0}
+        <p class="muted">{$_('review.empty')}</p>
       {:else}
-        <div class="no-selection">
-          <span class="no-selection-icon">👈</span>
-          <p>{$_('agents.selectFlow')}</p>
-        </div>
+        {#each history as r (r.task_id)}
+          <button class="history-item" onclick={() => (current = r)}>
+            <span>{r.task_id}</span>
+            <span class="muted">{r.findings.length} findings · {new Date(r.created_at * 1000).toLocaleString()}</span>
+          </button>
+        {/each}
       {/if}
     </div>
-  </div>
+  {/if}
 </div>
 
 <style>
-  .agents-page {
-    height: calc(100vh - 60px - 32px - 3rem);
-    display: flex;
-    flex-direction: column;
-    margin: -1.5rem;
-    background: var(--bg-primary);
+  .review-page { max-width: 900px; margin: 0 auto; }
+  .review-page h1 { color: var(--neon-cyan); text-shadow: var(--glow-cyan); margin-bottom: 1.5rem; }
+  .glass-card { padding: 1.5rem; margin-bottom: 1.5rem; }
+  .row { display: flex; align-items: center; gap: 0.75rem; margin-bottom: 1rem; }
+  .row > span:first-child { min-width: 90px; color: var(--text-secondary); }
+  .row input[type="text"], .row select {
+    flex: 1; padding: 0.6rem 0.75rem; background: var(--bg-tertiary);
+    border: 1px solid rgba(255,255,255,0.1); border-radius: 0.5rem; color: var(--text-primary);
   }
-  
-  .page-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    padding: 1rem 1.5rem;
-    background: var(--bg-secondary);
-    border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+  .reviewer-list { display: flex; gap: 0.75rem; flex-wrap: wrap; }
+  .reviewer-chip { display: flex; align-items: center; gap: 0.4rem; }
+  .neon-button {
+    background: var(--bg-tertiary); border: 1px solid var(--neon-cyan); color: var(--neon-cyan);
+    padding: 0.6rem 1.2rem; border-radius: 0.5rem; cursor: pointer;
   }
-  
-  .page-header h1 {
-    margin: 0;
-    font-size: 1.25rem;
+  .neon-button.primary { background: linear-gradient(135deg, var(--neon-cyan), var(--neon-purple)); color: #001; }
+  .neon-button:disabled { opacity: 0.5; cursor: not-allowed; }
+  .error { color: var(--neon-pink); margin-bottom: 1rem; }
+  .summary { color: var(--text-secondary); white-space: pre-wrap; }
+  .finding { padding: 0.75rem 0; border-top: 1px solid rgba(255,255,255,0.08); }
+  .finding .sev { font-size: 0.7rem; font-weight: 700; padding: 0.1rem 0.5rem; border-radius: 999px; margin-right: 0.5rem; }
+  .finding[data-sev="error"] .sev { background: rgba(255,0,110,0.15); color: var(--neon-pink); }
+  .finding[data-sev="warning"] .sev { background: rgba(255,136,0,0.15); color: var(--neon-orange); }
+  .finding[data-sev="info"] .sev { background: rgba(0,245,255,0.15); color: var(--neon-cyan); }
+  .finding .loc { font-family: monospace; color: var(--text-muted); margin-right: 0.5rem; }
+  .fdetail { margin: 0.4rem 0 0; color: var(--text-secondary); }
+  .history-item {
+    display: flex; justify-content: space-between; width: 100%; text-align: left;
+    padding: 0.6rem; background: none; border: none; border-top: 1px solid rgba(255,255,255,0.08);
+    color: var(--text-primary); cursor: pointer;
   }
-  
-  .subtitle {
-    margin: 0.25rem 0 0;
-    color: var(--text-muted);
-    font-size: 0.875rem;
-  }
-  
-  .agents-container {
-    flex: 1;
-    display: flex;
-    gap: 1rem;
-    padding: 1rem;
-    overflow: hidden;
-  }
-  
-  .flows-sidebar {
-    width: 280px;
-    display: flex;
-    flex-direction: column;
-    padding: 1rem;
-  }
-  
-  .sidebar-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    margin-bottom: 1rem;
-    font-weight: 600;
-  }
-  
-  .count {
-    background: var(--bg-tertiary);
-    padding: 0.125rem 0.5rem;
-    border-radius: 0.25rem;
-    font-size: 0.75rem;
-    color: var(--text-muted);
-  }
-  
-  .flow-list {
-    flex: 1;
-    overflow-y: auto;
-    display: flex;
-    flex-direction: column;
-    gap: 0.5rem;
-  }
-  
-  .flow-item {
-    display: flex;
-    align-items: center;
-    gap: 0.75rem;
-    padding: 0.75rem;
-    background: var(--bg-tertiary);
-    border: none;
-    border-radius: 0.5rem;
-    cursor: pointer;
-    transition: all 0.2s ease;
-    text-align: left;
-    width: 100%;
-  }
-  
-  .flow-item:hover, .flow-item.selected {
-    background: rgba(0, 245, 255, 0.1);
-  }
-  
-  .flow-icon {
-    font-size: 1.25rem;
-  }
-  
-  .flow-info {
-    flex: 1;
-    min-width: 0;
-    display: flex;
-    flex-direction: column;
-    gap: 0.25rem;
-  }
-  
-  .flow-name {
-    font-size: 0.875rem;
-    color: var(--text-primary);
-  }
-  
-  .flow-meta {
-    font-size: 0.75rem;
-    color: var(--text-muted);
-  }
-  
-  .flow-status {
-    font-size: 0.75rem;
-    text-transform: uppercase;
-  }
-  
-  .loading {
-    display: flex;
-    justify-content: center;
-    padding: 2rem;
-  }
-  
-  .spinner {
-    width: 24px;
-    height: 24px;
-    border: 2px solid var(--bg-tertiary);
-    border-top-color: var(--neon-cyan);
-    border-radius: 50%;
-    animation: spin 1s linear infinite;
-  }
-  
-  @keyframes spin {
-    to { transform: rotate(360deg); }
-  }
-  
-  .flow-editor {
-    flex: 1;
-    display: flex;
-    flex-direction: column;
-    padding: 1rem;
-  }
-  
-  .editor-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    margin-bottom: 1rem;
-  }
-  
-  .editor-header h2 {
-    margin: 0;
-    font-size: 1rem;
-  }
-  
-  .editor-actions {
-    display: flex;
-    gap: 0.5rem;
-  }
-  
-  .flow-canvas {
-    flex: 1;
-    background: var(--bg-primary);
-    border-radius: 0.5rem;
-    margin-bottom: 1rem;
-    overflow: hidden;
-  }
-  
-  .placeholder-canvas {
-    height: 100%;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    position: relative;
-  }
-  
-  .placeholder-content {
-    text-align: center;
-    color: var(--text-muted);
-    margin-bottom: 2rem;
-  }
-  
-  .placeholder-icon {
-    font-size: 3rem;
-    display: block;
-    margin-bottom: 1rem;
-    opacity: 0.5;
-  }
-  
-  .placeholder-hint {
-    font-size: 0.75rem;
-    opacity: 0.7;
-  }
-  
-  .mock-nodes {
-    display: flex;
-    align-items: center;
-    gap: 0;
-    opacity: 0.6;
-  }
-  
-  .mock-node {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: 0.25rem;
-    padding: 1rem;
-    background: var(--bg-secondary);
-    border-radius: 0.5rem;
-    border: 1px solid rgba(255, 255, 255, 0.1);
-    min-width: 80px;
-    font-size: 0.75rem;
-  }
-  
-  .node-connector {
-    width: 40px;
-    height: 2px;
-    background: var(--neon-cyan);
-    opacity: 0.5;
-  }
-  
-  .node-start {
-    border-color: var(--neon-green);
-  }
-  
-  .node-end {
-    border-color: var(--neon-cyan);
-  }
-  
-  .message-trace {
-    background: var(--bg-primary);
-    border-radius: 0.5rem;
-    max-height: 150px;
-    overflow: hidden;
-    display: flex;
-    flex-direction: column;
-  }
-  
-  .trace-header {
-    padding: 0.5rem 1rem;
-    background: var(--bg-tertiary);
-    font-size: 0.75rem;
-    font-weight: 600;
-    color: var(--text-secondary);
-  }
-  
-  .trace-content {
-    flex: 1;
-    overflow-y: auto;
-    padding: 0.5rem 0;
-    font-family: monospace;
-    font-size: 0.75rem;
-  }
-  
-  .trace-item {
-    display: flex;
-    gap: 1rem;
-    padding: 0.25rem 1rem;
-  }
-  
-  .trace-time {
-    color: var(--text-muted);
-  }
-  
-  .trace-node {
-    color: var(--neon-cyan);
-    min-width: 100px;
-  }
-  
-  .trace-msg {
-    color: var(--text-secondary);
-  }
-  
-  .no-selection {
-    flex: 1;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    color: var(--text-muted);
-  }
-  
-  .no-selection-icon {
-    font-size: 3rem;
-    margin-bottom: 1rem;
-    opacity: 0.5;
-  }
+  .muted { color: var(--text-muted); }
+  .empty-adapters .adapter-row { display: flex; justify-content: space-between; align-items: center; padding: 0.5rem 0; }
 </style>
