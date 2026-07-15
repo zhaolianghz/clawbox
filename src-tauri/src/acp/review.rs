@@ -109,6 +109,68 @@ pub fn list_reports() -> Vec<ReviewReport> {
     out
 }
 
+/// Extract a JSON array from agent text: prefer a ```json fenced block,
+/// else the first top-level `[...]` span.
+pub fn extract_json_block(text: &str) -> Option<&str> {
+    if let Some(start) = text.find("```json") {
+        let rest = &text[start + 7..];
+        if let Some(end) = rest.find("```") {
+            return Some(rest[..end].trim());
+        }
+    }
+    let lb = text.find('[')?;
+    let rb = text.rfind(']')?;
+    if rb > lb {
+        Some(&text[lb..=rb])
+    } else {
+        None
+    }
+}
+
+#[derive(Deserialize)]
+struct RawFinding {
+    file: String,
+    line: Option<u32>,
+    severity: Option<String>,
+    title: String,
+    detail: Option<String>,
+}
+
+fn severity_from_str(s: Option<&str>) -> Severity {
+    match s.map(|x| x.to_lowercase()).as_deref() {
+        Some("error") => Severity::Error,
+        Some("warning") => Severity::Warning,
+        _ => Severity::Info,
+    }
+}
+
+pub fn parse_findings(reviewer: &str, agent_text: &str) -> Vec<Finding> {
+    if let Some(block) = extract_json_block(agent_text) {
+        if let Ok(raws) = serde_json::from_str::<Vec<RawFinding>>(block) {
+            return raws
+                .into_iter()
+                .map(|r| Finding {
+                    file: r.file,
+                    line: r.line,
+                    severity: severity_from_str(r.severity.as_deref()),
+                    title: r.title,
+                    detail: r.detail.unwrap_or_default(),
+                    reviewer: reviewer.to_string(),
+                })
+                .collect();
+        }
+    }
+    // Fallback: keep the agent's prose as one Info finding so nothing is lost.
+    vec![Finding {
+        file: String::new(),
+        line: None,
+        severity: Severity::Info,
+        title: "Unstructured review output".to_string(),
+        detail: agent_text.trim().to_string(),
+        reviewer: reviewer.to_string(),
+    }]
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -136,5 +198,35 @@ mod tests {
         let s = ReviewScope::GitDiff { base: "main".into() };
         let j = serde_json::to_string(&s).unwrap();
         assert!(j.contains("main"));
+    }
+}
+
+#[cfg(test)]
+mod parse_tests {
+    use super::*;
+
+    #[test]
+    fn parses_fenced_json() {
+        let text = "Here are issues:\n```json\n[{\"file\":\"a.rs\",\"line\":3,\"severity\":\"warning\",\"title\":\"t\",\"detail\":\"d\"}]\n```\ndone";
+        let f = parse_findings("claude-agent-acp", text);
+        assert_eq!(f.len(), 1);
+        assert_eq!(f[0].file, "a.rs");
+        assert_eq!(f[0].line, Some(3));
+        assert_eq!(f[0].reviewer, "claude-agent-acp");
+    }
+
+    #[test]
+    fn falls_back_to_text_on_invalid_json() {
+        let text = "I found a null-deref but I'm not giving you JSON.";
+        let f = parse_findings("codex-acp", text);
+        assert_eq!(f.len(), 1);
+        assert!(matches!(f[0].severity, Severity::Info));
+        assert!(f[0].detail.contains("null-deref"));
+    }
+
+    #[test]
+    fn empty_array_yields_no_findings() {
+        let f = parse_findings("claude-agent-acp", "```json\n[]\n```");
+        assert_eq!(f.len(), 0);
     }
 }
