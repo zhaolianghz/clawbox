@@ -76,6 +76,46 @@ pub fn install_openclaw(use_mirror: bool) -> Result<String, String> {
     }
 }
 
+/// Install Node.js via the platform package manager. Elevation-free managers
+/// only (brew/winget) — anything else needs a manual install from nodejs.org.
+#[tauri::command]
+pub fn install_nodejs() -> Result<String, String> {
+    let (cmd, args): (&str, &[&str]) = match std::env::consts::OS {
+        "macos" => ("brew", &["install", "node"]),
+        "windows" => (
+            "winget",
+            &["install", "--id", "OpenJS.NodeJS.LTS", "--silent"],
+        ),
+        _ => {
+            return Err(
+                "Automatic Node.js install is not supported on this platform. \
+                 Please install Node.js from https://nodejs.org"
+                    .to_string(),
+            )
+        }
+    };
+
+    let output = Command::new(cmd).args(args).output();
+
+    match output {
+        Ok(output) if output.status.success() => {
+            let version = check_command_version("node", "--version")
+                .version
+                .unwrap_or_else(|| "unknown".to_string());
+            Ok(format!("Installed Node.js {}", version))
+        }
+        Ok(output) => {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            Err(format!("Failed to install Node.js: {}", stderr.trim()))
+        }
+        Err(_) => Err(format!(
+            "Failed to install Node.js: `{}` is not available. \
+             Please install Node.js from https://nodejs.org",
+            cmd
+        )),
+    }
+}
+
 #[derive(Serialize)]
 pub struct UpdateCheck {
     pub has_update: bool,
@@ -85,18 +125,60 @@ pub struct UpdateCheck {
 }
 
 // About 页面用：检查 ClawBox 应用更新
+//
+// Set to Some("owner/repo") once ClawBox has a public GitHub repo; None keeps
+// the check local-only (just reports the current version).
+const GITHUB_REPO: Option<&str> = None;
+
 #[tauri::command]
 pub fn check_update() -> UpdateCheck {
     let current = env!("CARGO_PKG_VERSION");
 
-    // TODO: 替换为你自己的 GitHub 仓库 URL，例如 "openclaw/clawbox"
-    // 目前先显示当前版本，没有远程检查
-    UpdateCheck {
-        has_update: false,
-        current_version: current.to_string(),
-        latest_version: None,
-        message: format!("Current version: {}", current),
+    let Some(repo) = GITHUB_REPO else {
+        return UpdateCheck {
+            has_update: false,
+            current_version: current.to_string(),
+            latest_version: None,
+            message: format!("Current version: {}", current),
+        };
+    };
+
+    match fetch_latest_release_tag(repo) {
+        Some(latest) => {
+            let latest_clean = latest.trim_start_matches('v').to_string();
+            let has_update = latest_clean != current;
+            UpdateCheck {
+                has_update,
+                current_version: current.to_string(),
+                latest_version: Some(latest_clean.clone()),
+                message: if has_update {
+                    format!("New version {} available! (Current: {})", latest_clean, current)
+                } else {
+                    "You're up to date!".to_string()
+                },
+            }
+        }
+        None => UpdateCheck {
+            has_update: false,
+            current_version: current.to_string(),
+            latest_version: None,
+            message: "Unable to check for updates".to_string(),
+        },
     }
+}
+
+// GitHub Releases 最新 tag（用系统 curl，避免引入 HTTP 客户端依赖）
+fn fetch_latest_release_tag(repo: &str) -> Option<String> {
+    let url = format!("https://api.github.com/repos/{}/releases/latest", repo);
+    let output = Command::new("curl")
+        .args(["-fsSL", "--max-time", "10", &url])
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let body: serde_json::Value = serde_json::from_slice(&output.stdout).ok()?;
+    body.get("tag_name")?.as_str().map(|s| s.to_string())
 }
 
 // 首页用：检查 openclaw CLI 更新

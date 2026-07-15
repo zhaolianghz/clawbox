@@ -98,35 +98,35 @@
   }
 
   async function installWithProgress(cmd: string, targetProgress: number) {
+    // 真正执行安装（install_nodejs / install_openclaw）
     try {
-      // 先验证组件状态
-      const status = await invoke<{
-        nodejs: { installed: boolean; version: string | null };
-        openclaw: { installed: boolean; version: string | null };
-      }>('check_system');
-
-      // 根据命令类型验证对应组件
-      if (cmd === 'install_nodejs' && !status.nodejs.installed) {
-        addLog('Node.js not available. Please install Node.js manually.');
-        throw new Error('Node.js installation failed - component not available');
-      }
-      if (cmd === 'install_openclaw' && !status.openclaw.installed) {
-        addLog('OpenClaw not available. Please install OpenClaw CLI manually.');
-        throw new Error('OpenClaw installation failed - component not available');
-      }
-
-      // 验证通过
-      const newProgress: InstallProgress = { ...progressData, progress: targetProgress };
-      installProgress.set(newProgress);
-      progressData = newProgress;
-      addLog('Component verified as available.');
+      const result = await invoke<string>(cmd, cmd === 'install_openclaw' ? { useMirror: checkData.network === 'cn' } : {});
+      addLog(result);
     } catch (e) {
-      if (e instanceof Error && e.message.includes('installation failed')) {
-        throw e;
-      }
-      // 其他错误（如命令不存在）也记录
-      addLog(`Verification warning: ${e instanceof Error ? e.message : String(e)}`);
+      const msg = e instanceof Error ? e.message : String(e);
+      addLog(msg);
+      throw new Error(msg);
     }
+
+    // 安装后验证组件状态
+    const status = await invoke<{
+      nodejs: { installed: boolean; version: string | null };
+      openclaw: { installed: boolean; version: string | null };
+    }>('check_system');
+
+    if (cmd === 'install_nodejs' && !status.nodejs.installed) {
+      addLog('Node.js not available. Please install Node.js manually.');
+      throw new Error('Node.js installation failed - component not available');
+    }
+    if (cmd === 'install_openclaw' && !status.openclaw.installed) {
+      addLog('OpenClaw not available. Please install OpenClaw CLI manually.');
+      throw new Error('OpenClaw installation failed - component not available');
+    }
+
+    const newProgress: InstallProgress = { ...progressData, progress: targetProgress };
+    installProgress.set(newProgress);
+    progressData = newProgress;
+    addLog('Component verified as available.');
   }
 
   function addLog(message: string) {

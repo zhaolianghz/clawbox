@@ -119,7 +119,19 @@
     "checkUpdates": "Check for Updates",
     "checking": "Checking...",
     "updateAvailable": "Update Available!",
-    "updateNow": "Update Now"
+    "updateNow": "Update Now",
+    "feedback": "Feedback",
+    "feedbackPlaceholder": "Tell us what's working, what's broken, or what you'd like to see...",
+    "feedbackContact": "Contact (optional)",
+    "feedbackCategory": "Category",
+    "feedbackCategoryBug": "Bug",
+    "feedbackCategoryFeature": "Feature Request",
+    "feedbackCategoryOther": "Other",
+    "feedbackSubmit": "Submit Feedback",
+    "feedbackSubmitting": "Submitting...",
+    "feedbackThanks": "Thanks for your feedback!",
+    "feedbackHistory": "Previous Feedback",
+    "feedbackEmpty": "No feedback submitted yet."
   },
   "agents": {
     "title": "Agent Collaboration",

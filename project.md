@@ -4,9 +4,9 @@
 
 | 层级 | 语言 | 框架/工具 |
 |------|------|----------|
-| 后端 | Go | Wails v2 |
-| 前端 | TypeScript | React 18, TailwindCSS, Vite |
-| 桌面 | Go + TypeScript | Wails v2 |
+| 后端 | Rust | Tauri v2 |
+| 前端 | TypeScript | Svelte 5, TailwindCSS, Vite |
+| 桌面 | Rust + TypeScript | Tauri v2 |
 
 ## 核心需求
 
