@@ -107,7 +107,7 @@ where
 }
 
 #[tauri::command]
-pub fn list_backends() -> Vec<BackendInfo> {
+pub async fn list_backends() -> Vec<BackendInfo> {
     backends::backends().iter().map(|b| BackendInfo {
         id: b.id().to_string(),
         display_name: b.display_name().to_string(),
@@ -117,7 +117,7 @@ pub fn list_backends() -> Vec<BackendInfo> {
 }
 
 #[tauri::command]
-pub fn gateway_status_all() -> GatewayStatusAllResult {
+pub async fn gateway_status_all() -> GatewayStatusAllResult {
     let (pairs, errors) = collect_backends(|b| b.gateway_status());
     let statuses = pairs.into_iter().map(|(backend, status)| TaggedGatewayStatus {
         backend, status,
@@ -126,21 +126,21 @@ pub fn gateway_status_all() -> GatewayStatusAllResult {
 }
 
 #[tauri::command]
-pub fn gateway_start(backend: String) -> Result<String, String> {
+pub async fn gateway_start(backend: String) -> Result<String, String> {
     backends::find_backend(&backend)
         .ok_or_else(|| format!("Unknown backend: {}", backend))?
         .gateway_start()
 }
 
 #[tauri::command]
-pub fn gateway_stop(backend: String) -> Result<String, String> {
+pub async fn gateway_stop(backend: String) -> Result<String, String> {
     backends::find_backend(&backend)
         .ok_or_else(|| format!("Unknown backend: {}", backend))?
         .gateway_stop()
 }
 
 #[tauri::command]
-pub fn cron_list_all() -> CronListAllResult {
+pub async fn cron_list_all() -> CronListAllResult {
     let (pairs, errors) = collect_backends(|b| b.cron_list());
     let jobs = pairs.into_iter()
         .flat_map(|(id, js)| js.into_iter().map(move |j| TaggedCronJob {
@@ -151,40 +151,40 @@ pub fn cron_list_all() -> CronListAllResult {
 }
 
 #[tauri::command]
-pub fn cron_create(backend: String, params: NewCron) -> Result<String, String> {
+pub async fn cron_create(backend: String, params: NewCron) -> Result<String, String> {
     backends::find_backend(&backend)
         .ok_or_else(|| format!("Unknown backend: {}", backend))?
         .cron_create(params)
 }
 
 #[tauri::command]
-pub fn cron_remove(backend: String, id: String) -> Result<String, String> {
+pub async fn cron_remove(backend: String, id: String) -> Result<String, String> {
     backends::find_backend(&backend)
         .ok_or_else(|| format!("Unknown backend: {}", backend))?
         .cron_remove(&id)
 }
 
 #[tauri::command]
-pub fn cron_set_enabled(backend: String, id: String, enabled: bool) -> Result<String, String> {
+pub async fn cron_set_enabled(backend: String, id: String, enabled: bool) -> Result<String, String> {
     backends::find_backend(&backend)
         .ok_or_else(|| format!("Unknown backend: {}", backend))?
         .cron_set_enabled(&id, enabled)
 }
 
 #[tauri::command]
-pub fn cron_run(backend: String, id: String) -> Result<String, String> {
+pub async fn cron_run(backend: String, id: String) -> Result<String, String> {
     backends::find_backend(&backend)
         .ok_or_else(|| format!("Unknown backend: {}", backend))?
         .cron_run(&id)
 }
 
 #[tauri::command]
-pub fn skills_list_all() -> TaggedListResult<crate::backends::capabilities::Skill> {
+pub async fn skills_list_all() -> TaggedListResult<crate::backends::capabilities::Skill> {
     collect_capability(|s| s.skills_list())
 }
 
 #[tauri::command]
-pub fn skills_install(backend: String, id: String) -> Result<String, String> {
+pub async fn skills_install(backend: String, id: String) -> Result<String, String> {
     let entry = backends::find_entry(&backend)
         .ok_or_else(|| format!("Unknown backend: {}", backend))?;
     let skills = entry.skills
@@ -193,7 +193,7 @@ pub fn skills_install(backend: String, id: String) -> Result<String, String> {
 }
 
 #[tauri::command]
-pub fn skills_uninstall(backend: String, id: String) -> Result<String, String> {
+pub async fn skills_uninstall(backend: String, id: String) -> Result<String, String> {
     let entry = backends::find_entry(&backend)
         .ok_or_else(|| format!("Unknown backend: {}", backend))?;
     let skills = entry.skills
@@ -202,7 +202,7 @@ pub fn skills_uninstall(backend: String, id: String) -> Result<String, String> {
 }
 
 #[tauri::command]
-pub fn skills_set_enabled(backend: String, id: String, enabled: bool) -> Result<String, String> {
+pub async fn skills_set_enabled(backend: String, id: String, enabled: bool) -> Result<String, String> {
     let entry = backends::find_entry(&backend)
         .ok_or_else(|| format!("Unknown backend: {}", backend))?;
     let skills = entry.skills
@@ -243,12 +243,12 @@ where
 }
 
 #[tauri::command]
-pub fn mcp_list_all() -> TaggedListResult<crate::backends::capabilities::McpServer> {
+pub async fn mcp_list_all() -> TaggedListResult<crate::backends::capabilities::McpServer> {
     collect_capability_mcp(|m| m.mcp_list())
 }
 
 #[tauri::command]
-pub fn mcp_add(backend: String, name: String, config_json: String) -> Result<String, String> {
+pub async fn mcp_add(backend: String, name: String, config_json: String) -> Result<String, String> {
     let entry = backends::find_entry(&backend)
         .ok_or_else(|| format!("Unknown backend: {}", backend))?;
     let mcp = entry.mcp
@@ -257,7 +257,7 @@ pub fn mcp_add(backend: String, name: String, config_json: String) -> Result<Str
 }
 
 #[tauri::command]
-pub fn mcp_remove(backend: String, name: String) -> Result<String, String> {
+pub async fn mcp_remove(backend: String, name: String) -> Result<String, String> {
     let entry = backends::find_entry(&backend)
         .ok_or_else(|| format!("Unknown backend: {}", backend))?;
     let mcp = entry.mcp
@@ -298,12 +298,12 @@ where
 }
 
 #[tauri::command]
-pub fn plugins_list_all() -> TaggedListResult<crate::backends::capabilities::Plugin> {
+pub async fn plugins_list_all() -> TaggedListResult<crate::backends::capabilities::Plugin> {
     collect_capability_plugins(|p| p.plugins_list())
 }
 
 #[tauri::command]
-pub fn plugins_install(backend: String, source: String) -> Result<String, String> {
+pub async fn plugins_install(backend: String, source: String) -> Result<String, String> {
     let entry = backends::find_entry(&backend)
         .ok_or_else(|| format!("Unknown backend: {}", backend))?;
     let plugins = entry.plugins
@@ -312,7 +312,7 @@ pub fn plugins_install(backend: String, source: String) -> Result<String, String
 }
 
 #[tauri::command]
-pub fn plugins_remove(backend: String, id: String) -> Result<String, String> {
+pub async fn plugins_remove(backend: String, id: String) -> Result<String, String> {
     let entry = backends::find_entry(&backend)
         .ok_or_else(|| format!("Unknown backend: {}", backend))?;
     let plugins = entry.plugins
@@ -321,7 +321,7 @@ pub fn plugins_remove(backend: String, id: String) -> Result<String, String> {
 }
 
 #[tauri::command]
-pub fn plugins_set_enabled(backend: String, id: String, enabled: bool) -> Result<String, String> {
+pub async fn plugins_set_enabled(backend: String, id: String, enabled: bool) -> Result<String, String> {
     let entry = backends::find_entry(&backend)
         .ok_or_else(|| format!("Unknown backend: {}", backend))?;
     let plugins = entry.plugins
@@ -364,12 +364,12 @@ where
 }
 
 #[tauri::command]
-pub fn tools_list_all() -> TaggedListResult<crate::backends::capabilities::Tool> {
+pub async fn tools_list_all() -> TaggedListResult<crate::backends::capabilities::Tool> {
     collect_capability_tools(|t| t.tools_list())
 }
 
 #[tauri::command]
-pub fn tools_set_enabled(backend: String, id: String, enabled: bool) -> Result<String, String> {
+pub async fn tools_set_enabled(backend: String, id: String, enabled: bool) -> Result<String, String> {
     let entry = backends::find_entry(&backend)
         .ok_or_else(|| format!("Unknown backend: {}", backend))?;
     let tools = entry.tools
@@ -412,12 +412,12 @@ where
 }
 
 #[tauri::command]
-pub fn hooks_list_all() -> TaggedListResult<crate::backends::capabilities::Hook> {
+pub async fn hooks_list_all() -> TaggedListResult<crate::backends::capabilities::Hook> {
     collect_capability_hooks(|h| h.hooks_list())
 }
 
 #[tauri::command]
-pub fn hooks_set_enabled(backend: String, id: String, enabled: bool) -> Result<String, String> {
+pub async fn hooks_set_enabled(backend: String, id: String, enabled: bool) -> Result<String, String> {
     let entry = backends::find_entry(&backend)
         .ok_or_else(|| format!("Unknown backend: {}", backend))?;
     let hooks = entry.hooks
@@ -458,12 +458,12 @@ where
 }
 
 #[tauri::command]
-pub fn memory_status_all() -> TaggedListResult<crate::backends::capabilities::MemoryStatus> {
+pub async fn memory_status_all() -> TaggedListResult<crate::backends::capabilities::MemoryStatus> {
     collect_capability_memory(|m| m.memory_status().map(|s| vec![s]))
 }
 
 #[tauri::command]
-pub fn memory_index(backend: String) -> Result<String, String> {
+pub async fn memory_index(backend: String) -> Result<String, String> {
     let entry = backends::find_entry(&backend)
         .ok_or_else(|| format!("Unknown backend: {}", backend))?;
     let mem = entry.memory
@@ -472,7 +472,7 @@ pub fn memory_index(backend: String) -> Result<String, String> {
 }
 
 #[tauri::command]
-pub fn memory_reset(backend: String) -> Result<String, String> {
+pub async fn memory_reset(backend: String) -> Result<String, String> {
     let entry = backends::find_entry(&backend)
         .ok_or_else(|| format!("Unknown backend: {}", backend))?;
     let mem = entry.memory
@@ -488,7 +488,7 @@ pub struct Stats {
 }
 
 #[tauri::command]
-pub fn get_stats(days: Option<u32>) -> Stats {
+pub async fn get_stats(days: Option<u32>) -> Stats {
     let days_str = days.unwrap_or(30).to_string();
     let usage = backends::openclaw::openclaw_json(
         &["gateway", "usage-cost", "--days", &days_str, "--json"],

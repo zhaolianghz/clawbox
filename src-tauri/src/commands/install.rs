@@ -44,7 +44,7 @@ fn check_china_network() -> bool {
 }
 
 #[tauri::command]
-pub fn check_system() -> SystemCheck {
+pub async fn check_system() -> SystemCheck {
     SystemCheck {
         nodejs: check_command_version("node", "--version"),
         openclaw: check_command_version("openclaw", "--version"),
@@ -54,7 +54,7 @@ pub fn check_system() -> SystemCheck {
 }
 
 #[tauri::command]
-pub fn install_openclaw(use_mirror: bool) -> Result<String, String> {
+pub async fn install_openclaw(use_mirror: bool) -> Result<String, String> {
     let mut args = vec!["install", "-g", "openclaw"];
 
     if use_mirror {
@@ -79,7 +79,7 @@ pub fn install_openclaw(use_mirror: bool) -> Result<String, String> {
 /// Install Node.js via the platform package manager. Elevation-free managers
 /// only (brew/winget) — anything else needs a manual install from nodejs.org.
 #[tauri::command]
-pub fn install_nodejs() -> Result<String, String> {
+pub async fn install_nodejs() -> Result<String, String> {
     let (cmd, args): (&str, &[&str]) = match std::env::consts::OS {
         "macos" => ("brew", &["install", "node"]),
         "windows" => (
@@ -131,7 +131,7 @@ pub struct UpdateCheck {
 const GITHUB_REPO: Option<&str> = None;
 
 #[tauri::command]
-pub fn check_update() -> UpdateCheck {
+pub async fn check_update() -> UpdateCheck {
     let current = env!("CARGO_PKG_VERSION");
 
     let Some(repo) = GITHUB_REPO else {
@@ -183,7 +183,7 @@ fn fetch_latest_release_tag(repo: &str) -> Option<String> {
 
 // 首页用：检查 openclaw CLI 更新
 #[tauri::command]
-pub fn check_openclaw_update() -> UpdateCheck {
+pub async fn check_openclaw_update() -> UpdateCheck {
     // 获取已安装的 openclaw CLI 版本
     let installed_output = Command::new("openclaw")
         .arg("--version")

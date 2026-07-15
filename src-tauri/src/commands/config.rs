@@ -27,7 +27,7 @@ fn ensure_config_dir() -> Result<(), String> {
 }
 
 #[tauri::command]
-pub fn get_config() -> Result<Config, String> {
+pub async fn get_config() -> Result<Config, String> {
     let path = config_path();
     if !path.exists() {
         return Ok(Config::default());
@@ -41,10 +41,10 @@ pub fn get_config() -> Result<Config, String> {
 }
 
 #[tauri::command]
-pub fn set_config(path: String, value: serde_json::Value) -> Result<(), String> {
+pub async fn set_config(path: String, value: serde_json::Value) -> Result<(), String> {
     ensure_config_dir()?;
 
-    let mut config = get_config().unwrap_or_default();
+    let mut config = get_config().await.unwrap_or_default();
 
     let parts: Vec<&str> = path.split('.').collect();
     if parts.is_empty() {

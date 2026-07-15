@@ -5,7 +5,7 @@ use std::process::Command;
 /// config. An empty string means no token is configured (auth mode "none"),
 /// which the frontend handles by connecting without a token.
 #[tauri::command]
-pub fn get_gateway_token() -> Result<String, String> {
+pub async fn get_gateway_token() -> Result<String, String> {
     let output = Command::new("openclaw")
         .args(["config", "get", "gateway.auth.token"])
         .output()

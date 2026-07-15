@@ -25,7 +25,7 @@ fn logs_dir() -> PathBuf {
 }
 
 #[tauri::command]
-pub fn get_log_files() -> Result<Vec<LogFile>, String> {
+pub async fn get_log_files() -> Result<Vec<LogFile>, String> {
     let dir = logs_dir();
 
     if !dir.exists() {
@@ -66,7 +66,7 @@ pub fn get_log_files() -> Result<Vec<LogFile>, String> {
 }
 
 #[tauri::command]
-pub fn get_log_content(path: String, filter: Option<String>) -> Result<Vec<LogLine>, String> {
+pub async fn get_log_content(path: String, filter: Option<String>) -> Result<Vec<LogLine>, String> {
     let content = fs::read_to_string(&path).map_err(|e| e.to_string())?;
     let filter_lower = filter.map(|f| f.to_lowercase());
 

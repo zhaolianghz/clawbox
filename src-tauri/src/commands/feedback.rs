@@ -48,7 +48,7 @@ fn write_all(items: &[Feedback]) -> Result<(), String> {
 /// Append a feedback entry. Returns the created entry (with generated id +
 /// timestamp) so the frontend can render it without a re-fetch.
 #[tauri::command]
-pub fn feedback_submit(
+pub async fn feedback_submit(
     category: String,
     message: String,
     contact: Option<String>,
@@ -79,7 +79,7 @@ pub fn feedback_submit(
 
 /// List feedback entries, newest first.
 #[tauri::command]
-pub fn feedback_list() -> Result<Vec<Feedback>, String> {
+pub async fn feedback_list() -> Result<Vec<Feedback>, String> {
     let mut items = read_all();
     items.sort_by(|a, b| b.created_at.cmp(&a.created_at));
     Ok(items)
@@ -89,9 +89,11 @@ pub fn feedback_list() -> Result<Vec<Feedback>, String> {
 mod tests {
     use super::*;
 
-    #[test]
-    fn empty_message_is_rejected() {
-        let err = feedback_submit("bug".into(), "   ".into(), None).unwrap_err();
+    #[tokio::test]
+    async fn empty_message_is_rejected() {
+        let err = feedback_submit("bug".into(), "   ".into(), None)
+            .await
+            .unwrap_err();
         assert!(err.contains("empty"));
     }
 
