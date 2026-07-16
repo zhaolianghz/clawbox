@@ -1,3 +1,4 @@
+pub mod agents;
 pub mod backends;
 pub mod acp;
 pub mod path_env;
