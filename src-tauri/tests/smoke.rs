@@ -237,3 +237,94 @@ fn hooks_list_runs_against_live_backends() {
     }
     assert!(found);
 }
+
+// ---- unified agent registry smoke (real binaries on this host) ----
+
+#[test]
+fn agent_registry_detection_is_consistent_with_direct_probes() {
+    clawbox_lib::path_env::init();
+    let statuses = clawbox_lib::agents::list_agent_status();
+    assert_eq!(statuses.len(), 12);
+
+    // Every status must agree with probing the binary directly.
+    for s in &statuses {
+        let def = clawbox_lib::agents::find_agent(&s.id).unwrap();
+        let direct = std::process::Command::new(def.binary)
+            .args(def.check_probe)
+            .output()
+            .map(|o| o.status.success())
+            .unwrap_or(false);
+        assert_eq!(
+            s.installed, direct,
+            "detection mismatch for {} (status={}, direct={})",
+            s.id, s.installed, direct
+        );
+    }
+}
+
+#[test]
+fn node_is_detected_when_present() {
+    // node is a hard prerequisite of this repo's own toolchain; if the dev
+    // machine has it, the registry must see it (PATH fix regression guard).
+    clawbox_lib::path_env::init();
+    let has_node = std::process::Command::new("node")
+        .arg("--version")
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false);
+    if !has_node {
+        eprintln!("skip: node not on this host");
+        return;
+    }
+    let statuses = clawbox_lib::agents::list_agent_status();
+    let node = statuses.iter().find(|s| s.id == "node").unwrap();
+    assert!(node.installed, "registry failed to detect node");
+    assert!(node.version.is_some());
+}
+
+#[test]
+fn npm_package_names_exist_on_registry() {
+    // Guards against typo'd package names in the agent registry: `npm view`
+    // resolves each against the live npm registry. Needs network + npm;
+    // skipped when npm is absent (matches this file's skip convention).
+    let npm_ok = std::process::Command::new("npm")
+        .arg("--version")
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false);
+    if !npm_ok {
+        eprintln!("skip: npm not on this host");
+        return;
+    }
+    for def in clawbox_lib::agents::agents() {
+        if let clawbox_lib::agents::InstallMethod::Npm { package, .. } = def.install {
+            let out = std::process::Command::new("npm")
+                .args(["view", package, "version"])
+                .output()
+                .expect("npm view runs");
+            assert!(
+                out.status.success(),
+                "npm package for {} not found: {}",
+                def.id,
+                package
+            );
+        }
+    }
+}
+
+#[test]
+#[ignore = "mutates global npm state; run explicitly: cargo test --test smoke -- --ignored"]
+fn gated_npm_install_is_idempotent() {
+    // Reinstall an already-installed bridge (idempotent upgrade path) to
+    // exercise run_install end-to-end. Ignored by default: it hits the
+    // network and rewrites the global npm bin links.
+    clawbox_lib::path_env::init();
+    let def = clawbox_lib::agents::find_agent("claude-agent-acp").unwrap();
+    if !def.is_installed() {
+        eprintln!("skip: claude-agent-acp not installed; not installing fresh");
+        return;
+    }
+    let result = clawbox_lib::agents::install::run_install(def);
+    assert!(result.is_ok(), "reinstall failed: {:?}", result.err());
+    assert!(def.is_installed(), "binary vanished after reinstall");
+}
