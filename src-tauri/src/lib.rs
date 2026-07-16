@@ -1,9 +1,12 @@
 pub mod backends;
 pub mod acp;
+pub mod path_env;
 mod commands;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // Must run before the builder spawns any threads: set_var is process-wide.
+    path_env::init();
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_dialog::init())
