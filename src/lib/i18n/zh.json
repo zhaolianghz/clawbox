@@ -10,6 +10,7 @@
     "agents": "代理",
     "monitor": "监控",
     "tasks": "任务",
+    "review": "审核",
     "about": "关于",
     "capabilities": "能力"
   },
@@ -118,8 +119,24 @@
     "feedbackEmpty": "还没有提交过反馈。"
   },
   "agents": {
-    "title": "代理协作",
-    "subtitle": "设计和运行多代理工作流",
+    "title": "Agent 管理",
+    "subtitle": "检测、安装与升级 agent CLI",
+    "refresh": "刷新",
+    "loading": "正在检测 agent...",
+    "notInstalled": "未安装",
+    "install": "安装",
+    "upgrade": "升级",
+    "confirmRun": "执行命令",
+    "cancel": "取消",
+    "missingDeps": "依赖",
+    "detectOnly": "仅支持手动安装",
+    "docs": "文档",
+    "kind": {
+      "native_cli": "CLI",
+      "acp_bridge": "ACP 桥",
+      "runtime": "运行时",
+      "gateway": "网关"
+    },
     "flows": "工作流",
     "nodes": "节点",
     "newFlow": "新建工作流",

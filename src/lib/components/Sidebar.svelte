@@ -16,6 +16,7 @@
     { id: 'chat', label: 'Chat' },
     { id: 'config', label: 'Config' },
     { id: 'agents', label: 'Agents' },
+    { id: 'review', label: 'Review' },
     { id: 'monitor', label: 'Monitor' },
     { id: 'tasks', label: 'Tasks' },
     { id: 'capabilities', label: 'Capabilities' },
@@ -33,7 +34,7 @@
   function t(key: string): string {
     if (!isReady) {
       const labels: Record<string, string> = {
-        home: 'Home', chat: 'Chat', config: 'Config', agents: 'Agents',
+        home: 'Home', chat: 'Chat', config: 'Config', agents: 'Agents', review: 'Review',
         monitor: 'Monitor', tasks: 'Tasks', capabilities: 'Capabilities', about: 'About'
       };
       return labels[key] || key;
@@ -69,6 +70,12 @@
             <rect x="3" y="3" width="18" height="18" rx="2" ry="2"/>
             <circle cx="8.5" cy="8.5" r="1.5"/>
             <polyline points="21 15 16 10 5 21"/>
+          </svg>
+        {:else if item.id === 'review'}
+          <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <circle cx="11" cy="11" r="8"/>
+            <line x1="21" y1="21" x2="16.65" y2="16.65"/>
+            <polyline points="8 11 10.5 13.5 14.5 9"/>
           </svg>
         {:else if item.id === 'monitor'}
           <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">

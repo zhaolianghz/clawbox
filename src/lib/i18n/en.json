@@ -10,6 +10,7 @@
     "agents": "Agents",
     "monitor": "Monitor",
     "tasks": "Tasks",
+    "review": "Review",
     "about": "About",
     "capabilities": "Capabilities"
   },
@@ -118,8 +119,24 @@
     "feedbackEmpty": "No feedback submitted yet."
   },
   "agents": {
-    "title": "Agent Collaboration",
-    "subtitle": "Design and run multi-agent workflows",
+    "title": "Agents",
+    "subtitle": "Detect, install and upgrade agent CLIs",
+    "refresh": "Refresh",
+    "loading": "Detecting agents...",
+    "notInstalled": "Not installed",
+    "install": "Install",
+    "upgrade": "Upgrade",
+    "confirmRun": "Run command",
+    "cancel": "Cancel",
+    "missingDeps": "Requires",
+    "detectOnly": "Manual install only",
+    "docs": "Docs",
+    "kind": {
+      "native_cli": "CLI",
+      "acp_bridge": "ACP Bridge",
+      "runtime": "Runtime",
+      "gateway": "Gateway"
+    },
     "flows": "Flows",
     "nodes": "nodes",
     "newFlow": "New Flow",
