@@ -2,6 +2,8 @@
 //! can detect/install. Spec: docs/superpowers/specs/2026-07-16-agent-management-center-design.md
 //! ACP bridge entries here replace the old acp/adapters.rs registry.
 
+pub mod install;
+
 use serde::Serialize;
 use std::process::Command;
 

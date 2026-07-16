@@ -77,7 +77,7 @@ impl AcpSession {
     ) -> Result<AcpSession, String> {
         let adapter =
             find_adapter(adapter_id).ok_or_else(|| format!("unknown adapter: {}", adapter_id))?;
-        let (client, inbound) = JsonRpcClient::spawn(adapter.binary, &[], cwd).await?;
+        let (client, inbound) = JsonRpcClient::spawn(&adapter.binary, &[], cwd).await?;
         let client = Arc::new(client);
 
         // initialize (cold start can take ~40s on first launch)

@@ -1,11 +1,10 @@
 //! Tauri command layer for ACP adapters + multi-agent code review.
 
-use crate::acp::adapters::{find_adapter, list_adapter_info, AdapterInfo};
+use crate::acp::adapters::{list_adapter_info, AdapterInfo};
 use crate::acp::review::{
     list_reports, load_report, now_secs, run_review, save_report, ReviewReport, ReviewScope,
     ReviewStatus, ReviewTask, RoleAssignment,
 };
-use std::process::Command;
 
 #[tauri::command(async)]
 pub async fn acp_list_adapters() -> Vec<AdapterInfo> {
@@ -18,24 +17,12 @@ pub async fn acp_list_adapters() -> Vec<AdapterInfo> {
 
 #[tauri::command(async)]
 pub async fn acp_install_adapter(id: String) -> Result<String, String> {
-    // `npm install -g` can take minutes; run it on a blocking thread so the
-    // main thread (and thus the whole UI) stays responsive.
+    // `npm install -g` can take minutes; keep it off the main thread.
     tauri::async_runtime::spawn_blocking(move || {
-        let adapter = find_adapter(&id).ok_or_else(|| format!("unknown adapter: {}", id))?;
-        // install_hint form: "npm install -g <pkg>" (possibly with --force)
-        let parts: Vec<&str> = adapter.install_hint.split_whitespace().collect();
-        if parts.is_empty() || parts[0] != "npm" {
-            return Err(format!("unsupported install hint: {}", adapter.install_hint));
-        }
-        let out = Command::new(parts[0])
-            .args(&parts[1..])
-            .output()
-            .map_err(|e| format!("failed to run npm: {}", e))?;
-        if out.status.success() {
-            Ok(format!("Installed {}", adapter.label))
-        } else {
-            Err(String::from_utf8_lossy(&out.stderr).trim().to_string())
-        }
+        let def = crate::agents::find_agent(&id)
+            .filter(|a| a.kind == crate::agents::AgentKind::AcpBridge)
+            .ok_or_else(|| format!("unknown adapter: {}", id))?;
+        crate::agents::install::run_install(def)
     })
     .await
     .map_err(|e| e.to_string())?
