@@ -4,7 +4,6 @@
   import Sidebar from './lib/components/Sidebar.svelte';
   import TopBar from './lib/components/TopBar.svelte';
   import StatusBar from './lib/components/StatusBar.svelte';
-  import LogsPage from './routes/logs/+page.svelte';
   import AboutPage from './routes/about/+page.svelte';
   import AgentsPage from './routes/agents/+page.svelte';
   import MonitorPage from './routes/monitor/+page.svelte';
@@ -319,8 +318,6 @@
         <MonitorPage />
       {:else if currentPage === 'tasks'}
         <TasksPage />
-      {:else if currentPage === 'logs'}
-        <LogsPage />
       {:else if currentPage === 'capabilities'}
         <CapabilitiesPage />
       {:else if currentPage === 'about'}

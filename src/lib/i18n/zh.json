@@ -10,7 +10,6 @@
     "agents": "代理",
     "monitor": "监控",
     "tasks": "任务",
-    "logs": "日志",
     "about": "关于",
     "capabilities": "能力"
   },
@@ -77,21 +76,6 @@
     "disableSkill": "禁用",
     "save": "保存",
     "cancel": "取消"
-  },
-  "logs": {
-    "title": "日志",
-    "files": "日志文件",
-    "search": "搜索日志...",
-    "refresh": "刷新",
-    "loading": "加载中...",
-    "noFiles": "没有找到日志文件",
-    "noContent": "没有日志内容",
-    "level": {
-      "info": "信息",
-      "warn": "警告",
-      "error": "错误",
-      "debug": "调试"
-    }
   },
   "skills": {
     "title": "技能商店",

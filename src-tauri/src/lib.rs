@@ -50,8 +50,6 @@ pub fn run() {
             commands::install::install_nodejs,
             commands::install::check_update,
             commands::install::check_openclaw_update,
-            commands::logs::get_log_files,
-            commands::logs::get_log_content,
             commands::agents::agents_list,
             commands::agents::agent_install,
             commands::acp::acp_list_adapters,
