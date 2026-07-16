@@ -15,7 +15,12 @@ pub fn build_install_args(def: &AgentDef) -> Result<(String, Vec<String>), Strin
         }
         InstallMethod::Script { url } => Ok((
             "bash".to_string(),
-            vec!["-c".to_string(), format!("curl -fsSL {} | bash", url)],
+            // pipefail: without it a failed curl (offline/dead URL) leaves the
+            // trailing bash exiting 0 on empty stdin — a false "Installed".
+            vec![
+                "-c".to_string(),
+                format!("set -o pipefail; curl -fsSL {} | bash", url),
+            ],
         )),
         InstallMethod::PlatformPkg => Err(format!(
             "{} installs via the platform package manager (handled by install_nodejs)",
@@ -69,7 +74,7 @@ mod tests {
         assert_eq!(cmd, "bash");
         assert_eq!(args, vec![
             "-c".to_string(),
-            "curl -fsSL https://code.kimi.com/kimi-code/install.sh | bash".to_string(),
+            "set -o pipefail; curl -fsSL https://code.kimi.com/kimi-code/install.sh | bash".to_string(),
         ]);
     }
 

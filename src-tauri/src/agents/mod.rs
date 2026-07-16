@@ -5,7 +5,8 @@
 pub mod install;
 
 use serde::Serialize;
-use std::process::Command;
+use std::process::{Command, Stdio};
+use std::time::Duration;
 
 #[derive(Serialize, Clone, Copy, PartialEq)]
 #[serde(rename_all = "snake_case")]
@@ -131,8 +132,18 @@ pub fn find_agent(id: &str) -> Option<&'static AgentDef> {
 
 impl AgentDef {
     /// Probe the binary; same contract as the old AcpAdapter::version.
+    /// Bounded by a 10s watchdog: a hung `--version` (interactive prompt,
+    /// self-update check) must not stall list_agent_status' rayon collect
+    /// and freeze the frontend spinner forever.
     pub fn version(&self) -> Option<String> {
-        let out = Command::new(self.binary).args(self.check_probe).output().ok()?;
+        let child = Command::new(self.binary)
+            .args(self.check_probe)
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .spawn()
+            .ok()?;
+        let out = crate::path_env::wait_with_timeout(child, Duration::from_secs(10))?;
         if !out.status.success() {
             return None;
         }

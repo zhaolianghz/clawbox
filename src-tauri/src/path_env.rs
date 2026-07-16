@@ -36,13 +36,16 @@ pub fn merge_paths(shell_path: &str, current: &str) -> String {
 }
 
 /// Poll-wait with a deadline; std has no built-in child timeout.
-fn wait_with_timeout(mut child: std::process::Child, dur: Duration) -> Option<std::process::Output> {
+/// Shared by path_env's shell probe and agents' version probes.
+pub(crate) fn wait_with_timeout(mut child: std::process::Child, dur: Duration) -> Option<std::process::Output> {
     let start = Instant::now();
     loop {
         match child.try_wait() {
             Ok(Some(_)) => return child.wait_with_output().ok(),
             Ok(None) if start.elapsed() > dur => {
                 let _ = child.kill();
+                // Reap the killed child so it doesn't linger as a zombie.
+                let _ = child.wait();
                 return None;
             }
             Ok(None) => std::thread::sleep(Duration::from_millis(100)),
