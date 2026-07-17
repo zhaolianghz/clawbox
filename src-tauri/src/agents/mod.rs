@@ -1,6 +1,5 @@
 //! Unified agent registry — the single authority for every agent CLI ClawBox
 //! can detect/install. Spec: docs/superpowers/specs/2026-07-16-agent-management-center-design.md
-//! ACP bridge entries here replace the old acp/adapters.rs registry.
 
 pub mod install;
 
@@ -12,17 +11,21 @@ use std::time::Duration;
 #[serde(rename_all = "snake_case")]
 pub enum AgentKind {
     NativeCli,
-    AcpBridge,
     Runtime,
     Gateway,
 }
 
 pub enum InstallMethod {
     Npm { package: &'static str, force: bool },
-    Script { url: &'static str },
+    Script {
+        /// Unix (macOS/Linux) installer URL, run via `curl -fsSL {url} | bash`.
+        unix: &'static str,
+        /// Windows installer URL, run via PowerShell `irm {url} | iex`.
+        windows: &'static str,
+    },
     /// Platform package manager (node: brew on macOS / winget on Windows).
     PlatformPkg,
-    /// No auto-install; detection + docs link only (hermes: python venv).
+    /// No auto-install; detection + docs link only.
     DetectOnly,
 }
 
@@ -82,43 +85,36 @@ static AGENTS: &[AgentDef] = &[
     AgentDef {
         id: "cursor-agent", label: "Cursor", binary: "cursor-agent",
         kind: AgentKind::NativeCli,
-        install: InstallMethod::Script { url: "https://cursor.com/install" },
+        install: InstallMethod::Script { unix: "https://cursor.com/install", windows: "https://cursor.com/install" },
         check_probe: &["--version"], depends_on: &[],
         docs_url: Some("https://cursor.com/cli"),
     },
     AgentDef {
         id: "kimi", label: "Kimi", binary: "kimi",
         kind: AgentKind::NativeCli,
-        install: InstallMethod::Script { url: "https://code.kimi.com/kimi-code/install.sh" },
+        install: InstallMethod::Script { unix: "https://code.kimi.com/kimi-code/install.sh", windows: "https://code.kimi.com/kimi-code/install.sh" },
         check_probe: &["--version"], depends_on: &[],
         docs_url: Some("https://code.kimi.com"),
     },
     AgentDef {
         id: "qodercli", label: "Qoder", binary: "qodercli",
         kind: AgentKind::NativeCli,
-        install: InstallMethod::Script { url: "https://qoder.com/install" },
+        install: InstallMethod::Script { unix: "https://qoder.com/install", windows: "https://qoder.com/install" },
         check_probe: &["--version"], depends_on: &[],
         docs_url: Some("https://qoder.com"),
     },
     AgentDef {
-        id: "claude-agent-acp", label: "ClaudeCode ACP 桥", binary: "claude-agent-acp",
-        kind: AgentKind::AcpBridge,
-        install: InstallMethod::Npm { package: "@agentclientprotocol/claude-agent-acp", force: false },
-        check_probe: &["--version"], depends_on: &["claude-code"],
-        docs_url: Some("https://www.npmjs.com/package/@agentclientprotocol/claude-agent-acp"),
-    },
-    AgentDef {
-        id: "codex-acp", label: "Codex ACP 桥", binary: "codex-acp",
-        kind: AgentKind::AcpBridge,
-        install: InstallMethod::Npm { package: "@agentclientprotocol/codex-acp", force: true },
-        check_probe: &["--version"], depends_on: &[],
-        docs_url: Some("https://www.npmjs.com/package/@agentclientprotocol/codex-acp"),
-    },
-    AgentDef {
         id: "hermes", label: "Hermes", binary: "hermes",
-        kind: AgentKind::Gateway, install: InstallMethod::DetectOnly,
+        kind: AgentKind::Gateway,
+        // Hermes (NousResearch/hermes-agent) 分发跨平台安装脚本:
+        //   unix:    curl -fsSL https://hermes-agent.nousresearch.com/install.sh | bash
+        //   windows: irm https://hermes-agent.nousresearch.com/install.ps1 | iex
+        install: InstallMethod::Script {
+            unix: "https://hermes-agent.nousresearch.com/install.sh",
+            windows: "https://hermes-agent.nousresearch.com/install.ps1",
+        },
         check_probe: &["--version"], depends_on: &[],
-        docs_url: None,
+        docs_url: Some("https://github.com/NousResearch/hermes-agent"),
     },
 ];
 
@@ -131,7 +127,7 @@ pub fn find_agent(id: &str) -> Option<&'static AgentDef> {
 }
 
 impl AgentDef {
-    /// Probe the binary; same contract as the old AcpAdapter::version.
+    /// Probe the binary for its version string.
     /// Bounded by a 10s watchdog: a hung `--version` (interactive prompt,
     /// self-update check) must not stall list_agent_status' rayon collect
     /// and freeze the frontend spinner forever.
@@ -174,7 +170,11 @@ pub fn install_command_display(def: &AgentDef) -> Option<String> {
         } else {
             format!("npm install -g {}", package)
         }),
-        InstallMethod::Script { url } => Some(format!("curl -fsSL {} | bash", url)),
+        InstallMethod::Script { unix, windows } => Some(if cfg!(windows) {
+            format!("irm {} | iex", windows)
+        } else {
+            format!("curl -fsSL {} | bash", unix)
+        }),
         InstallMethod::PlatformPkg => Some(match std::env::consts::OS {
             "windows" => "winget install --id OpenJS.NodeJS.LTS --silent".to_string(),
             _ => "brew install node".to_string(),
@@ -199,7 +199,7 @@ pub struct AgentStatus {
 /// Probe every agent in parallel (each probe shells out, ~0.1-1s serial cost).
 pub fn list_agent_status() -> Vec<AgentStatus> {
     use rayon::prelude::*;
-    // Probe installed-state for all 12 first so dep checks reuse results.
+    // Probe installed-state for all 10 first so dep checks reuse results.
     let installed: std::collections::HashMap<&str, Option<String>> = AGENTS
         .par_iter()
         .map(|a| (a.id, a.version()))
@@ -233,20 +233,20 @@ mod tests {
     use super::*;
 
     #[test]
-    fn registry_has_exactly_12_unique_entries() {
+    fn registry_has_exactly_10_unique_entries() {
         let ids: Vec<_> = agents().iter().map(|a| a.id).collect();
-        assert_eq!(ids.len(), 12);
+        assert_eq!(ids.len(), 10);
         let mut dedup = ids.clone();
         dedup.sort();
         dedup.dedup();
-        assert_eq!(dedup.len(), 12, "duplicate agent ids");
+        assert_eq!(dedup.len(), 10, "duplicate agent ids");
     }
 
     #[test]
     fn registry_covers_spec_table() {
         for id in [
             "node", "claude-code", "codex", "openclaw", "opencode", "codebuddy",
-            "cursor-agent", "kimi", "qodercli", "claude-agent-acp", "codex-acp", "hermes",
+            "cursor-agent", "kimi", "qodercli", "hermes",
         ] {
             assert!(find_agent(id).is_some(), "missing agent: {}", id);
         }
@@ -262,17 +262,11 @@ mod tests {
     }
 
     #[test]
-    fn bridge_depends_on_claude_code() {
-        let bridge = find_agent("claude-agent-acp").unwrap();
-        assert!(bridge.depends_on.contains(&"claude-code"));
-        assert!(matches!(bridge.kind, AgentKind::AcpBridge));
-    }
-
-    #[test]
-    fn hermes_is_detect_only_with_no_install_command() {
+    fn hermes_uses_cross_platform_script_install() {
+        // Hermes 由脚本安装 (unix install.sh / windows install.ps1),不再 DetectOnly。
         let h = find_agent("hermes").unwrap();
-        assert!(matches!(h.install, InstallMethod::DetectOnly));
-        assert_eq!(install_command_display(h), None);
+        assert!(matches!(h.install, InstallMethod::Script { .. }));
+        assert!(install_command_display(h).is_some());
     }
 
     #[test]
@@ -280,10 +274,6 @@ mod tests {
         assert_eq!(
             install_command_display(find_agent("claude-code").unwrap()).as_deref(),
             Some("npm install -g @anthropic-ai/claude-code")
-        );
-        assert_eq!(
-            install_command_display(find_agent("codex-acp").unwrap()).as_deref(),
-            Some("npm install -g --force @agentclientprotocol/codex-acp")
         );
         assert_eq!(
             install_command_display(find_agent("cursor-agent").unwrap()).as_deref(),

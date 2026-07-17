@@ -1,29 +1,8 @@
-use serde::{Serialize, Deserialize};
+use serde::Serialize;
 
 mod hermes;
 pub mod openclaw;
 pub mod capabilities;
-
-#[derive(Serialize, Clone, Debug)]
-pub struct CronJob {
-    pub id: String,
-    pub name: String,
-    pub schedule: String,
-    pub enabled: bool,
-    pub last_run: Option<String>,
-    pub next_run: Option<String>,
-    pub agent: Option<String>,
-    pub message: Option<String>,
-    pub raw: serde_json::Value,
-}
-
-#[derive(Serialize, Deserialize, Clone, Debug)]
-pub struct NewCron {
-    pub name: String,
-    pub schedule: String,
-    pub message: Option<String>,
-    pub agent: Option<String>,
-}
 
 #[derive(Serialize, Clone, Debug)]
 pub struct GatewayStatus {
@@ -47,14 +26,6 @@ pub trait Backend: Send + Sync {
     fn is_installed(&self) -> bool;
 
     fn gateway_status(&self) -> Result<GatewayStatus, String>;
-    fn gateway_start(&self) -> Result<String, String>;
-    fn gateway_stop(&self) -> Result<String, String>;
-
-    fn cron_list(&self) -> Result<Vec<CronJob>, String>;
-    fn cron_create(&self, params: NewCron) -> Result<String, String>;
-    fn cron_remove(&self, id: &str) -> Result<String, String>;
-    fn cron_set_enabled(&self, id: &str, enabled: bool) -> Result<String, String>;
-    fn cron_run(&self, id: &str) -> Result<String, String>;
 }
 
 pub fn backends() -> &'static [Box<dyn Backend>] {

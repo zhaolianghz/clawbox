@@ -13,15 +13,28 @@ pub fn build_install_args(def: &AgentDef) -> Result<(String, Vec<String>), Strin
             args.push(package.to_string());
             Ok(("npm".to_string(), args))
         }
-        InstallMethod::Script { url } => Ok((
-            "bash".to_string(),
-            // pipefail: without it a failed curl (offline/dead URL) leaves the
-            // trailing bash exiting 0 on empty stdin — a false "Installed".
-            vec![
-                "-c".to_string(),
-                format!("set -o pipefail; curl -fsSL {} | bash", url),
-            ],
-        )),
+        InstallMethod::Script { unix, windows } => {
+            if cfg!(windows) {
+                // Windows: PowerShell 下载并执行安装脚本
+                Ok((
+                    "powershell".to_string(),
+                    vec![
+                        "-NoProfile".to_string(),
+                        "-Command".to_string(),
+                        format!("irm {} | iex", windows),
+                    ],
+                ))
+            } else {
+                // Unix: pipefail 保证 curl 失败时 bash 不会因空 stdin 误报成功
+                Ok((
+                    "bash".to_string(),
+                    vec![
+                        "-c".to_string(),
+                        format!("set -o pipefail; curl -fsSL {} | bash", unix),
+                    ],
+                ))
+            }
+        }
         InstallMethod::PlatformPkg => Err(format!(
             "{} installs via the platform package manager (handled by install_nodejs)",
             def.id
@@ -63,9 +76,18 @@ mod tests {
 
     #[test]
     fn npm_force_install_args() {
-        let (cmd, args) = build_install_args(find_agent("codex-acp").unwrap()).unwrap();
+        // No registry entry uses force anymore; construct a local def so the
+        // force branch stays covered.
+        let def = AgentDef {
+            id: "force-test", label: "Force Test", binary: "force-test",
+            kind: crate::agents::AgentKind::NativeCli,
+            install: InstallMethod::Npm { package: "some-forced-pkg", force: true },
+            check_probe: &["--version"], depends_on: &[],
+            docs_url: None,
+        };
+        let (cmd, args) = build_install_args(&def).unwrap();
         assert_eq!(cmd, "npm");
-        assert_eq!(args, vec!["install", "-g", "--force", "@agentclientprotocol/codex-acp"]);
+        assert_eq!(args, vec!["install", "-g", "--force", "some-forced-pkg"]);
     }
 
     #[test]
@@ -79,8 +101,8 @@ mod tests {
     }
 
     #[test]
-    fn platform_pkg_and_detect_only_are_not_buildable() {
+    fn platform_pkg_is_not_buildable() {
+        // node 走平台包管理器 (install_nodejs),不经 run_install。
         assert!(build_install_args(find_agent("node").unwrap()).is_err());
-        assert!(build_install_args(find_agent("hermes").unwrap()).is_err());
     }
 }

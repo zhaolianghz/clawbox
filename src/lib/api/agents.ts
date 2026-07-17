@@ -1,6 +1,6 @@
 import { invoke } from '@tauri-apps/api/core';
 
-export type AgentKind = 'native_cli' | 'acp_bridge' | 'runtime' | 'gateway';
+export type AgentKind = 'native_cli' | 'runtime' | 'gateway';
 
 export interface AgentStatus {
   id: string;
