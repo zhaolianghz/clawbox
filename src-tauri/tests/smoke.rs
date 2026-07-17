@@ -46,22 +46,6 @@ fn hermes_is_discoverable() {
 }
 
 #[test]
-fn hermes_cron_list_parses_real_output() {
-    if !hermes_installed() {
-        eprintln!("hermes missing — skipping");
-        return;
-    }
-    let bs = backends::backends();
-    let h = bs.iter().find(|b| b.id() == "hermes").unwrap();
-    let jobs = h.cron_list().expect("hermes cron list should run");
-    // Empty state is fine; we just need the call to round-trip a parsed shape.
-    for j in &jobs {
-        assert!(!j.id.is_empty(), "parsed job id should not be empty");
-        assert!(!j.name.is_empty(), "parsed job name should not be empty");
-    }
-}
-
-#[test]
 fn skills_list_runs_against_live_backends() {
     if !openclaw_installed() && !hermes_installed() {
         eprintln!("neither backend installed — skipping");
@@ -147,78 +131,6 @@ fn tools_list_only_hermes() {
     assert!(openclaw_entry.tools.is_none(), "openclaw has no tools subcommand");
 }
 
-// Live ACP smoke: drives the real claude-agent-acp bridge end-to-end
-// (spawn -> initialize -> session/new -> session/prompt). Skipped when the
-// bridge binary is missing. Cold start can take ~40-90s on first run.
-#[tokio::test]
-async fn acp_claude_handshake_and_prompt() {
-    use clawbox_lib::acp::adapters::find_adapter;
-    use clawbox_lib::acp::permission::PermissionPolicy;
-    use clawbox_lib::acp::session::AcpSession;
-
-    let adapter = find_adapter("claude-agent-acp").unwrap();
-    if !adapter.is_installed() {
-        eprintln!("skip: claude-agent-acp not installed");
-        return;
-    }
-
-    let cwd = std::env::temp_dir();
-    let session = AcpSession::start("claude-agent-acp", &cwd, PermissionPolicy::ReadOnly)
-        .await
-        .expect("session start");
-
-    let result = session
-        .prompt("Reply with exactly the word: pong")
-        .await
-        .expect("prompt");
-
-    eprintln!("stop_reason={:?} reply={:?}", result.stop_reason, result.text);
-    assert!(!result.stop_reason.is_empty());
-    assert!(
-        result.text.to_lowercase().contains("pong"),
-        "expected 'pong' in reply, got: {}",
-        result.text
-    );
-}
-
-// Live ACP review smoke: runs a REAL review over this crate's directory
-// (scope = git diff HEAD~1...HEAD) through the full run_review orchestration:
-// reviewer session -> findings parse -> summarizer session -> save_report.
-// Skipped when the bridge binary is missing. Expect 1-5 minutes (two live
-// sessions). Writes a real report to ~/.clawbox/reviews/smoke_<ts>.json.
-#[tokio::test]
-async fn acp_review_produces_report() {
-    use clawbox_lib::acp::adapters::find_adapter;
-    use clawbox_lib::acp::review::*;
-
-    if !find_adapter("claude-agent-acp").unwrap().is_installed() {
-        eprintln!("skip: claude-agent-acp not installed");
-        return;
-    }
-
-    let task = ReviewTask {
-        id: format!("smoke_{}", now_secs()),
-        project_path: env!("CARGO_MANIFEST_DIR").to_string(),
-        scope: ReviewScope::GitDiff { base: "HEAD~1".into() },
-        reviewers: vec![RoleAssignment { adapter_id: "claude-agent-acp".into(), model: None }],
-        summarizer: RoleAssignment { adapter_id: "claude-agent-acp".into(), model: None },
-        created_at: now_secs(),
-    };
-
-    let report = run_review(task).await.expect("run_review");
-    eprintln!(
-        "status={:?} findings={} summary={:?}",
-        report.status,
-        report.findings.len(),
-        report.summary
-    );
-    assert!(matches!(report.status, ReviewStatus::Completed));
-    assert!(!report.summary.is_empty());
-    // Report was persisted:
-    let reloaded = load_report(&report.task_id).expect("load");
-    assert_eq!(reloaded.task_id, report.task_id);
-}
-
 #[test]
 fn hooks_list_runs_against_live_backends() {
     if !openclaw_installed() && !hermes_installed() {
@@ -244,7 +156,7 @@ fn hooks_list_runs_against_live_backends() {
 fn agent_registry_detection_is_consistent_with_direct_probes() {
     clawbox_lib::path_env::init();
     let statuses = clawbox_lib::agents::list_agent_status();
-    assert_eq!(statuses.len(), 12);
+    assert_eq!(statuses.len(), 10);
 
     // Every status must agree with probing the binary directly.
     for s in &statuses {
@@ -315,13 +227,13 @@ fn npm_package_names_exist_on_registry() {
 #[test]
 #[ignore = "mutates global npm state; run explicitly: cargo test --test smoke -- --ignored"]
 fn gated_npm_install_is_idempotent() {
-    // Reinstall an already-installed bridge (idempotent upgrade path) to
+    // Reinstall an already-installed npm agent (idempotent upgrade path) to
     // exercise run_install end-to-end. Ignored by default: it hits the
     // network and rewrites the global npm bin links.
     clawbox_lib::path_env::init();
-    let def = clawbox_lib::agents::find_agent("claude-agent-acp").unwrap();
+    let def = clawbox_lib::agents::find_agent("openclaw").unwrap();
     if !def.is_installed() {
-        eprintln!("skip: claude-agent-acp not installed; not installing fresh");
+        eprintln!("skip: openclaw not installed; not installing fresh");
         return;
     }
     let result = clawbox_lib::agents::install::run_install(def);

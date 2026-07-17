@@ -1,24 +1,12 @@
 use rayon::prelude::*;
 use serde::Serialize;
 
-use crate::backends::{self, BackendInfo, Backend, CronJob, NewCron};
-
-#[derive(Serialize)]
-pub struct TaggedCronJob {
-    pub backend: String,
-    pub job: CronJob,
-}
+use crate::backends::{self, BackendInfo, Backend};
 
 #[derive(Serialize)]
 pub struct BackendError {
     pub backend: String,
     pub message: String,
-}
-
-#[derive(Serialize)]
-pub struct CronListAllResult {
-    pub jobs: Vec<TaggedCronJob>,
-    pub errors: Vec<BackendError>,
 }
 
 #[derive(Serialize)]
@@ -33,7 +21,7 @@ pub struct GatewayStatusAllResult {
     pub errors: Vec<BackendError>,
 }
 
-use crate::backends::capabilities::{McpCapability, PluginsCapability, SkillsCapability};
+use crate::backends::capabilities::{PluginsCapability, SkillsCapability};
 
 #[derive(Serialize)]
 pub struct TaggedItem<T> {
@@ -126,59 +114,6 @@ pub async fn gateway_status_all() -> GatewayStatusAllResult {
 }
 
 #[tauri::command]
-pub async fn gateway_start(backend: String) -> Result<String, String> {
-    backends::find_backend(&backend)
-        .ok_or_else(|| format!("Unknown backend: {}", backend))?
-        .gateway_start()
-}
-
-#[tauri::command]
-pub async fn gateway_stop(backend: String) -> Result<String, String> {
-    backends::find_backend(&backend)
-        .ok_or_else(|| format!("Unknown backend: {}", backend))?
-        .gateway_stop()
-}
-
-#[tauri::command]
-pub async fn cron_list_all() -> CronListAllResult {
-    let (pairs, errors) = collect_backends(|b| b.cron_list());
-    let jobs = pairs.into_iter()
-        .flat_map(|(id, js)| js.into_iter().map(move |j| TaggedCronJob {
-            backend: id.clone(), job: j,
-        }))
-        .collect();
-    CronListAllResult { jobs, errors }
-}
-
-#[tauri::command]
-pub async fn cron_create(backend: String, params: NewCron) -> Result<String, String> {
-    backends::find_backend(&backend)
-        .ok_or_else(|| format!("Unknown backend: {}", backend))?
-        .cron_create(params)
-}
-
-#[tauri::command]
-pub async fn cron_remove(backend: String, id: String) -> Result<String, String> {
-    backends::find_backend(&backend)
-        .ok_or_else(|| format!("Unknown backend: {}", backend))?
-        .cron_remove(&id)
-}
-
-#[tauri::command]
-pub async fn cron_set_enabled(backend: String, id: String, enabled: bool) -> Result<String, String> {
-    backends::find_backend(&backend)
-        .ok_or_else(|| format!("Unknown backend: {}", backend))?
-        .cron_set_enabled(&id, enabled)
-}
-
-#[tauri::command]
-pub async fn cron_run(backend: String, id: String) -> Result<String, String> {
-    backends::find_backend(&backend)
-        .ok_or_else(|| format!("Unknown backend: {}", backend))?
-        .cron_run(&id)
-}
-
-#[tauri::command]
 pub async fn skills_list_all() -> TaggedListResult<crate::backends::capabilities::Skill> {
     collect_capability(|s| s.skills_list())
 }
@@ -208,61 +143,6 @@ pub async fn skills_set_enabled(backend: String, id: String, enabled: bool) -> R
     let skills = entry.skills
         .ok_or_else(|| format!("{} does not support skills", backend))?;
     skills.skills_set_enabled(&id, enabled)
-}
-
-fn collect_capability_mcp<T, F>(f: F) -> TaggedListResult<T>
-where
-    T: Send,
-    F: Fn(&dyn McpCapability) -> Result<Vec<T>, String> + Sync + Send,
-{
-    use rayon::prelude::*;
-    let results: Vec<_> = backends::entries().par_iter()
-        .filter_map(|e| e.mcp.map(|m| (e, m)))
-        .map(|(e, m)| {
-            let installed = e.backend.is_installed();
-            let id = e.backend.id().to_string();
-            if !installed { return (id, None, None); }
-            match f(m) {
-                Ok(v) => (id, Some(v), None),
-                Err(err) => (id.clone(), None, Some(BackendError {
-                    backend: id, message: err,
-                })),
-            }
-        }).collect();
-    let mut items = Vec::new();
-    let mut errors = Vec::new();
-    for (id, val, err) in results {
-        if let Some(e) = err { errors.push(e); }
-        if let Some(v) = val {
-            for item in v {
-                items.push(TaggedItem { backend: id.clone(), item });
-            }
-        }
-    }
-    TaggedListResult { items, errors }
-}
-
-#[tauri::command]
-pub async fn mcp_list_all() -> TaggedListResult<crate::backends::capabilities::McpServer> {
-    collect_capability_mcp(|m| m.mcp_list())
-}
-
-#[tauri::command]
-pub async fn mcp_add(backend: String, name: String, config_json: String) -> Result<String, String> {
-    let entry = backends::find_entry(&backend)
-        .ok_or_else(|| format!("Unknown backend: {}", backend))?;
-    let mcp = entry.mcp
-        .ok_or_else(|| format!("{} does not support mcp", backend))?;
-    mcp.mcp_add(&name, &config_json)
-}
-
-#[tauri::command]
-pub async fn mcp_remove(backend: String, name: String) -> Result<String, String> {
-    let entry = backends::find_entry(&backend)
-        .ok_or_else(|| format!("Unknown backend: {}", backend))?;
-    let mcp = entry.mcp
-        .ok_or_else(|| format!("{} does not support mcp", backend))?;
-    mcp.mcp_remove(&name)
 }
 
 fn collect_capability_plugins<T, F>(f: F) -> TaggedListResult<T>
@@ -478,24 +358,4 @@ pub async fn memory_reset(backend: String) -> Result<String, String> {
     let mem = entry.memory
         .ok_or_else(|| format!("{} does not support memory", backend))?;
     mem.memory_reset()
-}
-
-#[derive(Serialize)]
-pub struct Stats {
-    pub gateway_running: bool,
-    pub usage: Option<serde_json::Value>,
-    pub health: Option<serde_json::Value>,
-}
-
-#[tauri::command]
-pub async fn get_stats(days: Option<u32>) -> Stats {
-    let days_str = days.unwrap_or(30).to_string();
-    let usage = backends::openclaw::openclaw_json(
-        &["gateway", "usage-cost", "--days", &days_str, "--json"],
-    ).ok();
-    let health = backends::openclaw::openclaw_json(&["health", "--json"]).ok();
-    Stats {
-        gateway_running: health.is_some() || usage.is_some(),
-        usage, health,
-    }
 }

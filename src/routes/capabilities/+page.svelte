@@ -11,10 +11,6 @@
     type Tool,
   } from '$lib/api/capabilities/tools';
   import {
-    list_mcp_all, add_mcp, remove_mcp,
-    type McpServer,
-  } from '$lib/api/capabilities/mcp';
-  import {
     list_memory_all, memory_index, memory_reset,
     type MemoryStatus,
   } from '$lib/api/capabilities/memory';
@@ -28,11 +24,10 @@
   } from '$lib/api/capabilities/hooks';
   import type { BackendError } from '$lib/api/capabilities/_shared';
 
-  type TabId = 'skills' | 'mcp' | 'memory' | 'plugins' | 'tools' | 'hooks';
+  type TabId = 'skills' | 'memory' | 'plugins' | 'tools' | 'hooks';
 
   const tabs: { id: TabId; key: string }[] = [
     { id: 'skills', key: 'capabilities.tab.skills' },
-    { id: 'mcp', key: 'capabilities.tab.mcp' },
     { id: 'memory', key: 'capabilities.tab.memory' },
     { id: 'plugins', key: 'capabilities.tab.plugins' },
     { id: 'tools', key: 'capabilities.tab.tools' },
@@ -43,14 +38,12 @@
   let backends = $state<BackendInfo[]>([]);
   let skillsByBackend = $state<Record<BackendId, Skill[]>>({ openclaw: [], hermes: [] });
   let toolsByBackend = $state<Record<BackendId, Tool[]>>({ openclaw: [], hermes: [] });
-  let mcpByBackend = $state<Record<BackendId, McpServer[]>>({ openclaw: [], hermes: [] });
   let memoryByBackend = $state<Record<BackendId, MemoryStatus | null>>({ openclaw: null, hermes: null });
   let pluginsByBackend = $state<Record<BackendId, Plugin[]>>({ openclaw: [], hermes: [] });
   let hooksByBackend = $state<Record<BackendId, Hook[]>>({ openclaw: [], hermes: [] });
 
   let skillErrors = $state<BackendError[]>([]);
   let toolErrors = $state<BackendError[]>([]);
-  let mcpErrors = $state<BackendError[]>([]);
   let memoryErrors = $state<BackendError[]>([]);
   let pluginsErrors = $state<BackendError[]>([]);
   let hooksErrors = $state<BackendError[]>([]);
@@ -58,17 +51,14 @@
   let isLoading = $state(true);
   let busyKey = $state<string | null>(null);
 
-  let newMcpName = $state('');
-  let newMcpConfig = $state('');
   let newPluginSource = $state('');
 
   async function load() {
     isLoading = true;
-    const [bl, skills, tools, mcp, mem, plugins, hooks] = await Promise.all([
+    const [bl, skills, tools, mem, plugins, hooks] = await Promise.all([
       list_backends(),
       list_skills_all(),
       list_tools_all(),
-      list_mcp_all(),
       list_memory_all(),
       list_plugins_all(),
       list_hooks_all(),
@@ -76,7 +66,6 @@
     backends = bl;
     skillErrors = skills.errors;
     toolErrors = tools.errors;
-    mcpErrors = mcp.errors;
     memoryErrors = mem.errors;
     pluginsErrors = plugins.errors;
     hooksErrors = hooks.errors;
@@ -88,10 +77,6 @@
     const tm: Record<BackendId, Tool[]> = { openclaw: [], hermes: [] };
     for (const t of tools.items) tm[t.backend].push(t.item);
     toolsByBackend = tm;
-
-    const mm: Record<BackendId, McpServer[]> = { openclaw: [], hermes: [] };
-    for (const t of mcp.items) mm[t.backend].push(t.item);
-    mcpByBackend = mm;
 
     const memMap: Record<BackendId, MemoryStatus | null> = { openclaw: null, hermes: null };
     for (const t of mem.items) memMap[t.backend] = t.item;
@@ -140,28 +125,6 @@
     busyKey = key;
     try {
       await set_tool_enabled(backend, t.id, !t.enabled);
-      await load();
-    } finally { busyKey = null; }
-  }
-
-  async function doRemoveMcp(server: McpServer, backend: BackendId) {
-    const key = `mcp-remove:${backend}:${server.name}`;
-    busyKey = key;
-    try {
-      await remove_mcp(backend, server.name);
-      await load();
-    } finally { busyKey = null; }
-  }
-
-  async function doAddMcp(backend: BackendId) {
-    const name = newMcpName.trim();
-    if (!name) return;
-    const key = `mcp-add:${backend}`;
-    busyKey = key;
-    try {
-      await add_mcp(backend, name, newMcpConfig);
-      newMcpName = '';
-      newMcpConfig = '';
       await load();
     } finally { busyKey = null; }
   }
@@ -220,9 +183,6 @@
   onMount(load);
 </script>
 
-<svelte:head>
-  <title>{$_('capabilities.title')} - ClawBox</title>
-</svelte:head>
 
 <div class="capabilities-page">
   <div class="page-header">
@@ -288,73 +248,6 @@
         {#if skillErrors.length > 0}
           <div class="errors">
             {#each skillErrors as err (err.backend + ':' + err.message)}
-              <p class="error-line">{err.backend}: {err.message}</p>
-            {/each}
-          </div>
-        {/if}
-      </div>
-    {:else if activeTab === 'mcp'}
-      <div class="backend-panels">
-        {#each backends as backend (backend.id)}
-          <section class="backend-section">
-            <header class="backend-header">
-              <span class="backend-chip" data-backend={backend.id}>{backend.displayName}</span>
-              {#if backend.installed}
-                <span class="backend-count">{mcpByBackend[backend.id]?.length ?? 0}</span>
-              {:else}
-                <span class="empty">{$_('capabilities.notInstalled')}</span>
-              {/if}
-            </header>
-
-            {#if backend.installed && (mcpByBackend[backend.id]?.length ?? 0) > 0}
-              {#each mcpByBackend[backend.id] as s (s.name)}
-                {@const key = `mcp-remove:${backend.id}:${s.name}`}
-                <div class="item-row">
-                  <div class="item-info">
-                    <div class="item-name">{s.name}</div>
-                    <div class="item-meta">
-                      <span class="desc">{s.transport || '—'}</span>
-                      <code class="version">{s.status}</code>
-                    </div>
-                  </div>
-                  <div class="item-actions">
-                    <button class="action-btn" onclick={() => doRemoveMcp(s, backend.id)} disabled={busyKey === key}
-                      title="Remove">🗑️</button>
-                  </div>
-                </div>
-              {/each}
-            {:else if backend.installed}
-              <p class="empty">{$_('capabilities.noItems')}</p>
-            {/if}
-
-            {#if backend.installed}
-              <details class="add-form">
-                <summary>＋ Add MCP server</summary>
-                <div class="form-body">
-                  <input
-                    class="text-input"
-                    type="text"
-                    placeholder="name"
-                    bind:value={newMcpName}
-                  />
-                  <textarea
-                    class="text-input"
-                    rows="3"
-                    placeholder='config json (e.g. &lbrace;"command": "uvx my-mcp"&rbrace;)'
-                    bind:value={newMcpConfig}
-                  ></textarea>
-                  <button class="action-btn primary" onclick={() => doAddMcp(backend.id)}
-                    disabled={busyKey === `mcp-add:${backend.id}` || !newMcpName.trim()}>
-                    Add
-                  </button>
-                </div>
-              </details>
-            {/if}
-          </section>
-        {/each}
-        {#if mcpErrors.length > 0}
-          <div class="errors">
-            {#each mcpErrors as err (err.backend + ':' + err.message)}
               <p class="error-line">{err.backend}: {err.message}</p>
             {/each}
           </div>
@@ -720,31 +613,6 @@
   }
   .inline-form .action-btn {
     width: auto;
-    padding: 0 0.75rem;
-    font-size: 0.75rem;
-  }
-
-  .add-form {
-    margin-top: 0.5rem;
-    background: var(--bg-primary);
-    border-radius: 0.375rem;
-  }
-  .add-form summary {
-    cursor: pointer;
-    padding: 0.375rem 0.5rem;
-    font-size: 0.75rem;
-    color: var(--text-secondary);
-  }
-  .add-form summary:hover { color: var(--text-primary); }
-  .form-body {
-    display: flex;
-    flex-direction: column;
-    gap: 0.5rem;
-    padding: 0.5rem;
-  }
-  .form-body .action-btn {
-    width: auto;
-    align-self: flex-start;
     padding: 0 0.75rem;
     font-size: 0.75rem;
   }
