@@ -4,15 +4,13 @@
     "welcome": "Welcome back"
   },
   "nav": {
-    "home": "Home",
-    "chat": "Chat",
+    "settings": "Settings",
+    "providers": "Providers",
+    "back": "Back",
     "config": "Config",
-    "agents": "Agents",
-    "monitor": "Monitor",
-    "tasks": "Tasks",
-    "review": "Review",
-    "about": "About",
-    "capabilities": "Capabilities"
+    "agents": "Agent Management",
+    "capabilities": "Capabilities",
+    "about": "About"
   },
   "gateway": {
     "title": "Gateway",
@@ -23,20 +21,6 @@
     "start": "Start",
     "stop": "Stop",
     "restart": "Restart"
-  },
-  "dashboard": {
-    "title": "Dashboard",
-    "subtitle": "Monitor your gateway and recent activity",
-    "tokensToday": "Today's Tokens",
-    "apiCalls": "API Calls",
-    "tasksCompleted": "Tasks Completed",
-    "recentSessions": "Recent Sessions",
-    "quickActions": "Quick Actions",
-    "newChat": "New Chat",
-    "newTask": "New Task",
-    "importConfig": "Import Config",
-    "exportLogs": "Export Logs",
-    "messages": "messages"
   },
   "actions": {
     "notifications": "Notifications",
@@ -57,7 +41,6 @@
   },
   "config": {
     "models": "Models",
-    "channels": "Channels",
     "agents": "Agents",
     "skills": "Skills",
     "addProvider": "Add Provider",
@@ -67,9 +50,6 @@
     "apiKey": "API Key",
     "baseUrl": "Base URL",
     "defaultModel": "Default Model",
-    "addChannel": "Add Channel",
-    "channelName": "Channel Name",
-    "endpoint": "Endpoint",
     "addAgent": "Add Agent",
     "agentName": "Agent Name",
     "systemPrompt": "System Prompt",
@@ -77,6 +57,97 @@
     "disableSkill": "Disable",
     "save": "Save",
     "cancel": "Cancel"
+  },
+  "mcp": {
+    "title": "MCP Servers",
+    "description": "Configure MCP servers once, then sync them to every agent",
+    "addServer": "Add Server",
+    "editServer": "Edit Server",
+    "syncToAgents": "Sync to Agents",
+    "loading": "Loading servers...",
+    "empty": "No MCP servers yet — add one and sync it to all your agents",
+    "enabled": "Enabled",
+    "disabled": "Disabled",
+    "edit": "Edit",
+    "delete": "Delete",
+    "confirmDelete": "Confirm Delete",
+    "cancel": "Cancel",
+    "save": "Save",
+    "close": "Close",
+    "form": {
+      "name": "Name",
+      "kind": "Type",
+      "command": "Command",
+      "args": "Arguments",
+      "argsHint": "One argument per line (or space-separated on a single line)",
+      "env": "Environment Variables",
+      "url": "URL",
+      "headers": "Headers",
+      "addRow": "Add Row",
+      "enabled": "Enabled",
+      "nameRequired": "Name is required",
+      "nameExists": "A server with this name already exists",
+      "commandRequired": "Command is required for stdio servers",
+      "urlRequired": "URL is required for http servers"
+    },
+    "sync": {
+      "previewTitle": "Sync Preview",
+      "planning": "Computing changes...",
+      "unsupported": "Not supported yet",
+      "error": "Error",
+      "noChanges": "No changes",
+      "unchangedCount": "{count} unchanged",
+      "action": {
+        "add": "Add",
+        "update": "Update",
+        "remove": "Remove",
+        "skip": "Skip"
+      },
+      "confirm": "Confirm Sync ({count})",
+      "applying": "Syncing...",
+      "resultTitle": "Sync Results",
+      "appliedCount": "{count} applied",
+      "failed": "Failed",
+      "backup": "Backup"
+    }
+  },
+  "providers": {
+    "search": "Search providers...",
+    "all": "All",
+    "website": "Website",
+    "add": "Add",
+    "enabled": "Enabled",
+    "disabled": "Disabled",
+    "remove": "Remove",
+    "noResults": "No matching providers",
+    "configure": "Configure",
+    "addTitle": "Add Provider",
+    "editTitle": "Edit Provider",
+    "save": "Save",
+    "cancel": "Cancel",
+    "form": {
+      "name": "Name",
+      "baseUrl": "Base URL",
+      "apiKey": "API Key",
+      "defaultModel": "Default Model",
+      "enabled": "Enabled",
+      "showKey": "Show key",
+      "hideKey": "Hide key",
+      "nameRequired": "Name is required",
+      "baseUrlRequired": "Base URL is required",
+      "endpointOpenai": "OpenAI compatible",
+      "endpointAnthropic": "Anthropic compatible",
+      "testConnection": "Test Connection",
+      "testing": "Testing...",
+      "testOk": "Latency {ms}ms · {count} models",
+      "models": "Models",
+      "addModel": "Add",
+      "removeModel": "Remove model",
+      "modelPlaceholder": "Type a model id and press Enter",
+      "fetchModels": "Fetch Models",
+      "noModelsFetched": "Connected, but no models returned"
+    },
+    "modelCount": "{count} models"
   },
   "skills": {
     "title": "Skills Store",
@@ -98,8 +169,6 @@
     "documentation": "Documentation",
     "reportIssue": "Report an Issue",
     "discord": "Discord Community",
-    "credits": "Credits",
-    "creditsText": "Built with ❤️ by the OpenClaw team. ClawBox is open-source software released under the MIT License.",
     "allRightsReserved": "All rights reserved.",
     "checkUpdates": "Check for Updates",
     "checking": "Checking...",
@@ -119,7 +188,7 @@
     "feedbackEmpty": "No feedback submitted yet."
   },
   "agents": {
-    "title": "Agents",
+    "title": "Agent Management",
     "subtitle": "Detect, install and upgrade agent CLIs",
     "refresh": "Refresh",
     "loading": "Detecting agents...",
@@ -133,7 +202,6 @@
     "docs": "Docs",
     "kind": {
       "native_cli": "CLI",
-      "acp_bridge": "ACP Bridge",
       "runtime": "Runtime",
       "gateway": "Gateway"
     },
@@ -145,7 +213,10 @@
     "flowEditorPlaceholder": "Flow Editor",
     "flowEditorHint": "Drag and drop nodes to build agent collaboration flows",
     "messageTrace": "Message Trace",
-    "selectFlow": "Select a flow from the sidebar to view details"
+    "selectFlow": "Select a flow from the sidebar to view details",
+    "checkUpdates": "Check Updates",
+    "upToDate": "Up to date",
+    "reinstallHint": "Already latest — click to reinstall"
   },
   "monitor": {
     "title": "Monitor",
@@ -156,29 +227,6 @@
     "events": "events",
     "resourceUsage": "Resource Usage",
     "chartPlaceholder": "Real-time metrics visualization"
-  },
-  "tasks": {
-    "title": "Tasks",
-    "subtitle": "Manage scheduled tasks and triggers",
-    "newTask": "New Task",
-    "scheduledTasks": "Scheduled Tasks",
-    "lastRun": "Last Run",
-    "nextRun": "Next Run",
-    "enable": "Enable",
-    "disable": "Disable",
-    "edit": "Edit",
-    "delete": "Delete",
-    "flowEditor": "Flow Editor",
-    "flowEditorPlaceholder": "Select a task to edit its workflow",
-    "scheduleBuilder": "Schedule Builder",
-    "frequency": "Frequency",
-    "time": "Time",
-    "cronExpression": "Cron Expression",
-    "everyMinute": "Every Minute",
-    "hourly": "Hourly",
-    "daily": "Daily",
-    "weekly": "Weekly",
-    "custom": "Custom"
   },
   "backend": {
     "openclaw": "OpenClaw",
@@ -196,7 +244,6 @@
     "title": "Capabilities",
     "tab": {
       "skills": "Skills",
-      "mcp": "MCP",
       "memory": "Memory",
       "plugins": "Plugins",
       "tools": "Tools",
@@ -215,24 +262,5 @@
       "enable": "Enable",
       "disable": "Disable"
     }
-  },
-  "review": {
-    "title": "Code Review",
-    "projectPath": "Project path",
-    "browse": "Browse",
-    "scope": "Scope",
-    "wholeProject": "Whole project",
-    "gitDiff": "Git diff (base)",
-    "reviewers": "Reviewers",
-    "summarizer": "Summarizer",
-    "run": "Run Review",
-    "running": "Reviewing...",
-    "history": "History",
-    "empty": "No reviews yet.",
-    "findings": "Findings",
-    "summary": "Summary",
-    "noAdapters": "No ACP agents installed.",
-    "install": "Install",
-    "validation": "Pick a project and at least one reviewer."
   }
 }

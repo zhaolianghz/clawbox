@@ -1,110 +1,43 @@
 import { invoke } from '@tauri-apps/api/core';
 
+// 与后端 ProviderSpec(serde camelCase)逐字段对齐,零转换。
 export interface ModelProvider {
   id: string;
   name: string;
   apiKey: string;
   baseUrl: string;
   defaultModel: string;
+  /** 已配置的模型 id 列表(旧配置无此字段,后端 serde default 补空数组) */
+  models: string[];
   enabled: boolean;
 }
 
-export interface Channel {
-  id: string;
-  name: string;
-  endpoint: string;
-  priority: number;
-  loadBalance: 'round-robin' | 'weighted' | 'least-connections';
-  enabled: boolean;
+// 与后端 ProviderTestResult(serde camelCase)对齐。
+export interface ProviderTestResult {
+  ok: boolean;
+  latencyMs: number;
+  /** 成功时拉取到的模型 id 列表(可能为空) */
+  models: string[];
+  /** 失败时的简短英文原因,原样展示 */
+  error: string | null;
 }
 
-export interface Agent {
-  id: string;
-  name: string;
-  systemPrompt: string;
-  model: string;
-  temperature: number;
-  maxTokens: number;
-  enabled: boolean;
-}
-
-export interface Skill {
-  id: string;
-  name: string;
-  description: string;
-  version: string;
-  enabled: boolean;
-  config: Record<string, unknown>;
-}
-
-export interface Config {
-  providers: ModelProvider[];
-  channels: Channel[];
-  agents: Agent[];
-  skills: Skill[];
-}
-
-const mockProviders: ModelProvider[] = [
-  { id: '1', name: 'OpenAI', apiKey: 'sk-***', baseUrl: 'https://api.openai.com/v1', defaultModel: 'gpt-4', enabled: true },
-  { id: '2', name: 'Anthropic', apiKey: 'sk-ant-***', baseUrl: 'https://api.anthropic.com', defaultModel: 'claude-3-opus', enabled: true },
-  { id: '3', name: 'MiniMax', apiKey: '***', baseUrl: 'https://api.minimax.chat', defaultModel: 'abab6.5-chat', enabled: false },
-];
-
-const mockChannels: Channel[] = [
-  { id: '1', name: 'Primary Channel', endpoint: 'https://api.openai.com/v1', priority: 1, loadBalance: 'round-robin', enabled: true },
-  { id: '2', name: 'Backup Channel', endpoint: 'https://backup.example.com/v1', priority: 2, loadBalance: 'weighted', enabled: true },
-];
-
-const mockAgents: Agent[] = [
-  { id: '1', name: 'General Assistant', systemPrompt: 'You are a helpful AI assistant.', model: 'gpt-4', temperature: 0.7, maxTokens: 4096, enabled: true },
-  { id: '2', name: 'Code Helper', systemPrompt: 'You are an expert programmer.', model: 'claude-3-opus', temperature: 0.5, maxTokens: 8192, enabled: true },
-  { id: '3', name: 'Creative Writer', systemPrompt: 'You are a creative writing assistant.', model: 'gpt-4', temperature: 0.9, maxTokens: 4096, enabled: false },
-];
-
-const mockSkills: Skill[] = [
-  { id: '1', name: 'Web Search', description: 'Search the web for information', version: '1.0.0', enabled: true, config: {} },
-  { id: '2', name: 'Code Interpreter', description: 'Execute and analyze code', version: '2.1.0', enabled: true, config: {} },
-  { id: '3', name: 'Image Generator', description: 'Generate images from text', version: '1.5.0', enabled: false, config: {} },
-  { id: '4', name: 'Document Parser', description: 'Parse and extract text from documents', version: '1.2.0', enabled: true, config: {} },
-];
-
-export async function get_config(): Promise<Config> {
-  try {
-    return await invoke<Config>('get_config');
-  } catch {
-    return {
-      providers: mockProviders,
-      channels: mockChannels,
-      agents: mockAgents,
-      skills: mockSkills,
-    };
-  }
-}
-
-export async function set_config(config: Config): Promise<void> {
-  try {
-    await invoke('set_config', { config });
-  } catch (error) {
-    console.warn('Config save failed (using mock):', error);
-  }
-}
+export type ProviderFlavor = 'openai' | 'anthropic';
 
 export async function get_providers(): Promise<ModelProvider[]> {
-  const config = await get_config();
-  return config.providers;
+  return await invoke<ModelProvider[]>('config_providers_get');
 }
 
-export async function get_channels(): Promise<Channel[]> {
-  const config = await get_config();
-  return config.channels;
+/** 整表覆盖写入 ~/.clawbox/config.json 的 providers 节 */
+export async function save_providers(providers: ModelProvider[]): Promise<void> {
+  await invoke('config_providers_set', { providers });
 }
 
-export async function get_agents(): Promise<Agent[]> {
-  const config = await get_config();
-  return config.agents;
-}
-
-export async function get_skills(): Promise<Skill[]> {
-  const config = await get_config();
-  return config.skills;
+/** 测试连接:GET 服务商 models 端点,返回延迟与模型列表。HTTP 失败也走 resolve(ok=false)。 */
+export async function provider_test(
+  baseUrl: string,
+  apiKey: string,
+  flavor: ProviderFlavor
+): Promise<ProviderTestResult> {
+  return await invoke<ProviderTestResult>('provider_test', { baseUrl, apiKey, flavor });
 }
