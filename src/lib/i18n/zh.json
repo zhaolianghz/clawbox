@@ -88,7 +88,21 @@
       "nameRequired": "名称必填",
       "nameExists": "已存在同名服务器",
       "commandRequired": "stdio 类型必须填写命令",
-      "urlRequired": "http 类型必须填写 URL"
+      "urlRequired": "http 类型必须填写 URL",
+      "modeForm": "表单",
+      "modeJson": "JSON",
+      "jsonLabel": "JSON 片段",
+      "jsonParsedCount": "将保存 {count} 个服务器：{names}",
+      "jsonMultiSwitch": "解析出多个服务器，请直接在 JSON 模式保存",
+      "jsonPartialFail": "以下服务器保存失败：{names}",
+      "jsonErrInvalid": "JSON 无效：{detail}",
+      "jsonErrNotObject": "顶层必须是 JSON 对象",
+      "jsonErrBareSpec": "这是一个没有名字的服务器定义 — 请在外层用服务器名包一层，如 \"my-server\": …",
+      "jsonErrNoServers": "JSON 中没有找到服务器",
+      "jsonErrEmptyName": "服务器名称不能为空",
+      "jsonErrNotServer": "\"{name}\" 不是服务器对象（需要包含 \"command\" 或 \"url\" 的对象）",
+      "jsonErrMissingCommand": "\"{name}\"：stdio 类型必须有 \"command\"",
+      "jsonErrMissingUrl": "\"{name}\"：http 类型必须有 \"url\""
     },
     "sync": {
       "previewTitle": "同步预览",

@@ -6,6 +6,10 @@
     sync_mcp_plan, sync_mcp_apply,
     type McpServerSpec, type AgentPlan, type ApplyResult, type ChangeItem,
   } from '$lib/api/mcpSync';
+  import {
+    parseMcpJson, serializeServers, MCP_JSON_EXAMPLE,
+    type NamedServer, type ParseIssue,
+  } from '$lib/api/mcpJson';
   import { agents_list } from '$lib/api/agents';
 
   // ---------- 服务器列表 ----------
@@ -98,6 +102,32 @@
   let formError = $state('');
   let saving = $state(false);
 
+  // JSON 模式:textarea 内容 + 实时解析结果
+  let editorMode = $state<'form' | 'json'>('form');
+  let jsonText = $state('');
+  const jsonParse = $derived(jsonText.trim() ? parseMcpJson(jsonText) : null);
+
+  function issueText(issue: ParseIssue): string {
+    switch (issue.code) {
+      case 'invalidJson':
+        return $_('mcp.form.jsonErrInvalid', { values: { detail: issue.detail } });
+      case 'notObject':
+        return $_('mcp.form.jsonErrNotObject');
+      case 'bareSpec':
+        return $_('mcp.form.jsonErrBareSpec');
+      case 'noServers':
+        return $_('mcp.form.jsonErrNoServers');
+      case 'emptyName':
+        return $_('mcp.form.jsonErrEmptyName');
+      case 'notServer':
+        return $_('mcp.form.jsonErrNotServer', { values: { name: issue.name } });
+      case 'missingCommand':
+        return $_('mcp.form.jsonErrMissingCommand', { values: { name: issue.name } });
+      case 'missingUrl':
+        return $_('mcp.form.jsonErrMissingUrl', { values: { name: issue.name } });
+    }
+  }
+
   function pairsFrom(rec: Record<string, string>): Array<{ key: string; value: string }> {
     return Object.entries(rec).map(([key, value]) => ({ key, value }));
   }
@@ -131,6 +161,8 @@
     formEnv = [];
     formHeaders = [];
     formError = '';
+    editorMode = 'form';
+    jsonText = '';
     editorOpen = true;
   }
 
@@ -152,6 +184,8 @@
     formEnv = pairsFrom(spec.env);
     formHeaders = pairsFrom(spec.headers);
     formError = '';
+    editorMode = 'form';
+    jsonText = '';
     editorOpen = true;
   }
 
@@ -161,6 +195,104 @@
     if (lines.length > 1) return lines;
     if (lines.length === 1) return lines[0].split(/\s+/).filter(Boolean);
     return [];
+  }
+
+  /** 当前表单内容 → spec(不做必填校验,切 JSON 序列化时也会用) */
+  function buildSpecFromForm(): McpServerSpec {
+    return {
+      kind: formKind,
+      command: formKind === 'stdio' ? formCommand.trim() : null,
+      args: formKind === 'stdio' ? parseArgs(formArgs) : [],
+      env: formKind === 'stdio' ? recFrom(formEnv) : {},
+      url: formKind === 'http' ? formUrl.trim() : null,
+      headers: formKind === 'http' ? recFrom(formHeaders) : {},
+      enabled: formEnabled,
+    };
+  }
+
+  /** JSON 解析出的单个 server 回填表单(编辑模式下名称锁定为 editingName,不回填) */
+  function fillFormFrom({ name, spec }: NamedServer) {
+    if (editingName === null) formName = name;
+    formKind = spec.kind;
+    formCommand = spec.command ?? '';
+    formArgs = spec.args.join('\n');
+    formUrl = spec.url ?? '';
+    formEnabled = spec.enabled;
+    formEnv = pairsFrom(spec.env);
+    formHeaders = pairsFrom(spec.headers);
+  }
+
+  /** 表单是否完全空白(新增时切 JSON 不序列化空表单,留 placeholder 示例) */
+  function formIsBlank(): boolean {
+    return (
+      !formName.trim() && !formCommand.trim() && !formArgs.trim() && !formUrl.trim() &&
+      formEnv.every((p) => !p.key.trim() && !p.value.trim()) &&
+      formHeaders.every((p) => !p.key.trim() && !p.value.trim())
+    );
+  }
+
+  function switchMode(mode: 'form' | 'json') {
+    if (mode === editorMode) return;
+    formError = '';
+    if (mode === 'json') {
+      // 表单 → JSON:把当前表单内容序列化进 textarea;空表单则留空展示 placeholder 示例
+      jsonText = formIsBlank()
+        ? ''
+        : serializeServers([{ name: (editingName ?? formName).trim() || 'my-server', spec: buildSpecFromForm() }]);
+      editorMode = 'json';
+      return;
+    }
+    // JSON → 表单:空内容直接切;恰好 1 个 server 回填;否则报错阻止切换
+    if (!jsonText.trim()) {
+      editorMode = 'form';
+      return;
+    }
+    const res = parseMcpJson(jsonText);
+    if (!res.ok) {
+      formError = res.issues.map(issueText).join('\n');
+      return;
+    }
+    if (res.servers.length > 1) {
+      formError = $_('mcp.form.jsonMultiSwitch');
+      return;
+    }
+    fillFormFrom(res.servers[0]);
+    editorMode = 'form';
+  }
+
+  /** JSON 模式保存:逐个 upsert(同名覆盖),部分失败时提示失败项并保留面板 */
+  async function saveJson() {
+    formError = '';
+    if (!jsonText.trim()) {
+      formError = $_('mcp.form.jsonErrNoServers');
+      return;
+    }
+    const res = parseMcpJson(jsonText);
+    if (!res.ok) {
+      formError = res.issues.map(issueText).join('\n');
+      return;
+    }
+    saving = true;
+    const failed: string[] = [];
+    let lastError = '';
+    try {
+      for (const { name, spec } of res.servers) {
+        try {
+          await config_mcp_upsert(name, spec);
+        } catch (e) {
+          failed.push(name);
+          lastError = String(e);
+        }
+      }
+      if (failed.length === 0) {
+        closeEditor();
+      } else {
+        formError = `${$_('mcp.form.jsonPartialFail', { values: { names: failed.join(', ') } })}\n${lastError}`;
+      }
+      await refresh();
+    } finally {
+      saving = false;
+    }
   }
 
   async function saveServer() {
@@ -182,15 +314,7 @@
       formError = $_('mcp.form.urlRequired');
       return;
     }
-    const spec: McpServerSpec = {
-      kind: formKind,
-      command: formKind === 'stdio' ? formCommand.trim() : null,
-      args: formKind === 'stdio' ? parseArgs(formArgs) : [],
-      env: formKind === 'stdio' ? recFrom(formEnv) : {},
-      url: formKind === 'http' ? formUrl.trim() : null,
-      headers: formKind === 'http' ? recFrom(formHeaders) : {},
-      enabled: formEnabled,
-    };
+    const spec = buildSpecFromForm();
     saving = true;
     try {
       await config_mcp_upsert(name, spec);
@@ -275,6 +399,18 @@
     <h3>{editingName === null ? $_('mcp.addServer') : $_('mcp.editServer')}</h3>
 
     <div class="form-row">
+      <div class="kind-switch" role="tablist">
+        <button class="chip" class:active={editorMode === 'form'} onclick={() => switchMode('form')}>
+          {$_('mcp.form.modeForm')}
+        </button>
+        <button class="chip" class:active={editorMode === 'json'} onclick={() => switchMode('json')}>
+          {$_('mcp.form.modeJson')}
+        </button>
+      </div>
+    </div>
+
+    {#if editorMode === 'form'}
+    <div class="form-row">
       <label for="mcp-name">{$_('mcp.form.name')}</label>
       <input
         id="mcp-name"
@@ -345,6 +481,33 @@
         {$_('mcp.form.enabled')}
       </label>
     </div>
+    {:else}
+      <div class="form-row">
+        <label for="mcp-json">{$_('mcp.form.jsonLabel')}</label>
+        <textarea
+          id="mcp-json"
+          class="json-input"
+          rows="12"
+          bind:value={jsonText}
+          placeholder={MCP_JSON_EXAMPLE}
+          spellcheck="false"
+        ></textarea>
+      </div>
+      {#if jsonParse}
+        {#if jsonParse.ok}
+          <p class="json-summary">
+            {$_('mcp.form.jsonParsedCount', {
+              values: {
+                count: jsonParse.servers.length,
+                names: jsonParse.servers.map((s) => s.name).join(', '),
+              },
+            })}
+          </p>
+        {:else}
+          <pre class="error-text">{jsonParse.issues.map(issueText).join('\n')}</pre>
+        {/if}
+      {/if}
+    {/if}
 
     {#if formError}
       <pre class="error-text">{formError}</pre>
@@ -352,7 +515,11 @@
 
     <div class="panel-actions">
       <button class="btn" onclick={closeEditor}>{$_('mcp.cancel')}</button>
-      <button class="btn primary" onclick={saveServer} disabled={saving}>
+      <button
+        class="btn primary"
+        onclick={() => (editorMode === 'json' ? saveJson() : saveServer())}
+        disabled={saving}
+      >
         {#if saving}<span class="spinner small"></span>{/if}
         {$_('mcp.save')}
       </button>
@@ -610,6 +777,8 @@
     box-sizing: border-box;
   }
   .form-row textarea { font-family: monospace; resize: vertical; }
+  .form-row textarea.json-input { min-height: 200px; line-height: 1.5; }
+  .json-summary { margin: 0; font-size: 0.75rem; color: #4ade80; }
   .form-row input:focus, .form-row textarea:focus { border-color: var(--neon-cyan); }
   .form-row input:disabled { opacity: 0.5; }
 

@@ -88,7 +88,21 @@
       "nameRequired": "Name is required",
       "nameExists": "A server with this name already exists",
       "commandRequired": "Command is required for stdio servers",
-      "urlRequired": "URL is required for http servers"
+      "urlRequired": "URL is required for http servers",
+      "modeForm": "Form",
+      "modeJson": "JSON",
+      "jsonLabel": "JSON snippet",
+      "jsonParsedCount": "Will save {count} server(s): {names}",
+      "jsonMultiSwitch": "Multiple servers parsed — save them directly in JSON mode",
+      "jsonPartialFail": "Failed to save: {names}",
+      "jsonErrInvalid": "Invalid JSON: {detail}",
+      "jsonErrNotObject": "Top level must be a JSON object",
+      "jsonErrBareSpec": "This looks like a single server spec without a name — wrap it in an object keyed by the server name, e.g. \"my-server\": …",
+      "jsonErrNoServers": "No servers found in the JSON",
+      "jsonErrEmptyName": "Server name cannot be empty",
+      "jsonErrNotServer": "\"{name}\" is not a server object (expected an object with \"command\" or \"url\")",
+      "jsonErrMissingCommand": "\"{name}\": stdio server requires \"command\"",
+      "jsonErrMissingUrl": "\"{name}\": http server requires \"url\""
     },
     "sync": {
       "previewTitle": "Sync Preview",
