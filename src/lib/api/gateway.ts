@@ -30,11 +30,3 @@ export async function list_gateway_statuses(): Promise<GatewayStatusAllResult> {
     return { statuses: [], errors: [] };
   }
 }
-
-export async function start_gateway(backend: BackendId): Promise<string> {
-  return await invoke<string>('gateway_start', { backend });
-}
-
-export async function stop_gateway(backend: BackendId): Promise<string> {
-  return await invoke<string>('gateway_stop', { backend });
-}

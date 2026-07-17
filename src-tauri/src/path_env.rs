@@ -4,7 +4,7 @@
 //! nvm/homebrew/~/.local/bin, so binary probes false-negative. `init()` runs
 //! `$SHELL -ilc 'echo <MARKER>$PATH'` once and injects the merged result via
 //! `std::env::set_var("PATH", ..)` — every subsequent `Command::new` in the
-//! process (probes, installs, ACP bridge spawns) inherits it with zero
+//! process (probes, installs) inherits it with zero
 //! call-site changes.
 
 use std::process::{Command, Stdio};

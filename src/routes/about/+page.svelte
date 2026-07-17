@@ -1,11 +1,9 @@
 <script lang="ts">
   import { _ } from 'svelte-i18n';
   import { onMount } from 'svelte';
-  import { list_gateway_statuses } from '$lib/api/gateway';
   import { feedback_submit, feedback_list, type Feedback } from '$lib/api/feedback';
 
   let appVersion = $state('0.1.0');
-  let gatewayVersion = $state('unknown');
   let checking = $state(false);
   let updateAvailable = $state(false);
   let updateMessage = $state('');
@@ -60,22 +58,10 @@
   }
 
   onMount(async () => {
-    try {
-      const result = await list_gateway_statuses();
-      // Prefer a running gateway's version; fall back to the first reported.
-      const running = result.statuses.find((s) => s.status.status === 'running');
-      const first = running ?? result.statuses[0];
-      gatewayVersion = first?.status.version || 'unknown';
-    } catch {
-      gatewayVersion = 'not installed';
-    }
     feedbackHistory = await feedback_list();
   });
 </script>
 
-<svelte:head>
-  <title>{$_('about.title')} - ClawBox</title>
-</svelte:head>
 
 <div class="about-page">
   <div class="about-header">
@@ -91,10 +77,6 @@
         <div class="version-item">
           <span class="label">ClawBox</span>
           <span class="value">v{appVersion}</span>
-        </div>
-        <div class="version-item">
-          <span class="label">OpenClaw Gateway</span>
-          <span class="value">{gatewayVersion}</span>
         </div>
         <div class="version-item">
           <span class="label">Tauri</span>
@@ -205,24 +187,10 @@
         </div>
       {/if}
     </div>
-
-    <div class="info-section glass-card">
-      <h2>{$_('about.credits')}</h2>
-      <p class="credits-text">
-        {$_('about.creditsText')}
-      </p>
-      <div class="tech-badges">
-        <span class="badge">Tauri</span>
-        <span class="badge">Svelte</span>
-        <span class="badge">Rust</span>
-        <span class="badge">TypeScript</span>
-        <span class="badge">TailwindCSS</span>
-      </div>
-    </div>
   </div>
-  
+
   <footer class="about-footer">
-    <p>© 2024 OpenClaw Team. {$_('about.allRightsReserved')}</p>
+    <p>©️ 2026 ClawBox. {$_('about.allRightsReserved')}</p>
   </footer>
 </div>
 
@@ -354,27 +322,7 @@
   .link-arrow {
     opacity: 0.5;
   }
-  
-  .credits-text {
-    color: var(--text-secondary);
-    line-height: 1.6;
-    margin: 0 0 1rem;
-  }
-  
-  .tech-badges {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 0.5rem;
-  }
-  
-  .badge {
-    background: var(--bg-tertiary);
-    padding: 0.25rem 0.75rem;
-    border-radius: 1rem;
-    font-size: 0.75rem;
-    color: var(--text-secondary);
-  }
-  
+
   .about-footer {
     text-align: center;
     margin-top: 2rem;
