@@ -118,6 +118,10 @@ pub struct Config {
     /// 驱动检查更新/覆盖更新;`skills_library_remove` 联动删除。
     #[serde(default)]
     pub skills_sources: HashMap<String, SkillSource>,
+    /// agent_id -> 上次记忆同步成功后的标记(["block"] = 我们在该 agent
+    /// 指令文件里维护着托管区块,见 sync::memory)。
+    #[serde(default)]
+    pub memory_managed: HashMap<String, Vec<String>>,
 }
 
 /// 技能的 Git 安装来源记录。

@@ -281,7 +281,8 @@
         "removing": "将移除"
       },
       "defaultModel": "默认模型",
-      "skills": "技能"
+      "skills": "技能",
+      "memory": "记忆"
     }
   },
   "monitor": {
@@ -358,6 +359,26 @@
       "update": "更新",
       "missingInSource": "源中已移除",
       "selectAll": "全选"
+    },
+    "memorySync": {
+      "hint": "内容将以托管区块注入各 agent 指令文件(CLAUDE.md / AGENTS.md 等),区块外内容不受影响",
+      "loading": "正在加载...",
+      "placeholder": "写下所有 agent 都应遵守的指令与偏好...",
+      "save": "保存",
+      "saved": "已保存",
+      "unsaved": "未保存改动",
+      "syncToAgents": "同步到 Agent",
+      "targetsTitle": "各 agent 指令文件",
+      "refresh": "刷新",
+      "statusMissing": "文件不存在",
+      "statusNoBlock": "未注入",
+      "statusInjected": "已注入",
+      "outsideChars": "托管区块外另有 {count} 字符",
+      "view": "查看",
+      "emptyFile": "(文件为空)",
+      "importToLib": "导入到库",
+      "targetsEmpty": "暂无可注入的 agent",
+      "nativeTitle": "Agent 原生记忆"
     }
   }
 }

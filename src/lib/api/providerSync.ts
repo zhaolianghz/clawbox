@@ -36,23 +36,28 @@ export interface SyncedItem {
   state: 'synced' | 'unsynced' | 'outdated' | 'removing';
 }
 
-/** 每个 agent 的同步总览:服务商 + MCP + 技能三个维度 */
+/** 每个 agent 的同步总览:服务商 + MCP + 技能 + 记忆四个维度 */
 export interface AgentSyncOverview {
   agent_id: string;
   provider_supported: boolean;
   mcp_supported: boolean;
   skills_supported: boolean;
+  memory_supported: boolean;
   provider_config_path: string;
   /** CLI 管理型 agent(hermes/openclaw)为空串 */
   mcp_config_path: string;
   /** 技能软链目标目录 */
   skills_config_path: string;
+  /** 记忆托管区块注入的指令文件路径 */
+  memory_config_path: string;
   providers: SyncedItem[];
   mcp: SyncedItem[];
   skills: SyncedItem[];
+  memory: SyncedItem[];
   provider_error: string | null;
   mcp_error: string | null;
   skills_error: string | null;
+  memory_error: string | null;
 }
 
 /** 全部 agent 的同步总览(命令内部一次读全部 agent 配置文件,调用方做页面级缓存) */

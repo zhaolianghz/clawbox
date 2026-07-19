@@ -409,6 +409,53 @@ pub async fn skills_update(names: Vec<String>) -> Result<Vec<sync::skills::Insta
     skills_update_at(&real_home(), &names)
 }
 
+// ---- 统一指令记忆同步:库读写 / 目标概况 / plan / apply ----------------------
+
+#[tauri::command]
+pub async fn memory_read() -> Result<String, String> {
+    sync::memory::read_library(&real_home())
+}
+
+#[tauri::command]
+pub async fn memory_write(content: String) -> Result<(), String> {
+    sync::memory::write_library(&real_home(), &content).map(|_| ())
+}
+
+#[tauri::command]
+pub async fn memory_targets() -> Result<Vec<sync::memory::MemoryTarget>, String> {
+    sync::memory::targets(&real_home())
+}
+
+#[tauri::command]
+pub async fn memory_target_content(agent_id: String) -> Result<String, String> {
+    sync::memory::target_content(&real_home(), &agent_id)
+}
+
+#[tauri::command]
+pub async fn sync_memory_plan() -> Result<Vec<AgentPlan>, String> {
+    let home = real_home();
+    let config = load_config(&home)?;
+    Ok(sync::memory::plan_all(&home, &config.memory_managed))
+}
+
+#[tauri::command]
+pub async fn sync_memory_apply(agent_ids: Vec<String>) -> Result<Vec<ApplyResult>, String> {
+    let home = real_home();
+    let mut config = load_config(&home)?;
+    let mut results = Vec::with_capacity(agent_ids.len());
+    for id in agent_ids {
+        let managed = config.memory_managed.get(&id).cloned().unwrap_or_default();
+        let result = sync::memory::apply_one(&home, &id, &managed);
+        if result.ok {
+            let deployed = sync::memory::deployed_names(&home, &result.agent_id);
+            config.memory_managed.insert(id, deployed);
+            save_config(&home, &config)?;
+        }
+        results.push(result);
+    }
+    Ok(results)
+}
+
 // ---- agent 同步清单总览(Agent 管理页) --------------------------------------
 
 #[derive(Serialize, Clone, Debug)]
@@ -425,18 +472,23 @@ pub struct AgentSyncOverview {
     pub provider_supported: bool,
     pub mcp_supported: bool,
     pub skills_supported: bool,
+    pub memory_supported: bool,
     /// CLI 型适配器无文件的为空串。
     pub provider_config_path: String,
     pub mcp_config_path: String,
     /// 该 agent 的技能目录。
     pub skills_config_path: String,
+    /// 该 agent 的指令记忆文件。
+    pub memory_config_path: String,
     pub providers: Vec<SyncedItem>,
     pub mcp: Vec<SyncedItem>,
     pub skills: Vec<SyncedItem>,
+    pub memory: Vec<SyncedItem>,
     /// plan 失败(如 CLI 未装)时的错误;此时对应列表留空。
     pub provider_error: Option<String>,
     pub mcp_error: Option<String>,
     pub skills_error: Option<String>,
+    pub memory_error: Option<String>,
 }
 
 /// ChangeItem → 清单条目:unchanged→synced,add→unsynced(从未下发),
@@ -469,12 +521,14 @@ fn merge_overview(
     provider_plans: Vec<AgentPlan>,
     mcp_plans: Vec<AgentPlan>,
     skills_plans: Vec<AgentPlan>,
+    memory_plans: Vec<AgentPlan>,
 ) -> Vec<AgentSyncOverview> {
     let by_id = |plans: Vec<AgentPlan>| -> HashMap<String, AgentPlan> {
         plans.into_iter().map(|p| (p.agent_id.clone(), p)).collect()
     };
     let mut mcp_by_id = by_id(mcp_plans);
     let mut skills_by_id = by_id(skills_plans);
+    let mut memory_by_id = by_id(memory_plans);
     // (supported, config_path, 条目, error);注册表缺席按 unsupported 兜底。
     let split = |plan: Option<AgentPlan>| match plan {
         Some(p) => (p.supported, p.config_path, synced_items(&p.changes), p.error),
@@ -487,20 +541,26 @@ fn merge_overview(
                 split(mcp_by_id.remove(&pp.agent_id));
             let (skills_supported, skills_config_path, skills, skills_error) =
                 split(skills_by_id.remove(&pp.agent_id));
+            let (memory_supported, memory_config_path, memory, memory_error) =
+                split(memory_by_id.remove(&pp.agent_id));
             AgentSyncOverview {
                 agent_id: pp.agent_id,
                 provider_supported: pp.supported,
                 mcp_supported,
                 skills_supported,
+                memory_supported,
                 provider_config_path: pp.config_path,
                 mcp_config_path,
                 skills_config_path,
+                memory_config_path,
                 providers: synced_items(&pp.changes),
                 mcp,
                 skills,
+                memory,
                 provider_error: pp.error,
                 mcp_error,
                 skills_error,
+                memory_error,
             }
         })
         .collect()
@@ -516,7 +576,8 @@ pub fn agent_sync_overview_at(home: &Path, config: &Config) -> Vec<AgentSyncOver
     );
     let mcp_plans = sync::plan_all(home, &config.mcp_servers, &config.mcp_managed);
     let skills_plans = sync::skills::plan_all(home, &config.skills_managed);
-    merge_overview(provider_plans, mcp_plans, skills_plans)
+    let memory_plans = sync::memory::plan_all(home, &config.memory_managed);
+    merge_overview(provider_plans, mcp_plans, skills_plans, memory_plans)
 }
 
 #[tauri::command]
@@ -838,7 +899,13 @@ mod tests {
             plan("hermes", true, vec![], Some("library unreadable")),
             plan("cursor-agent", false, vec![], None),
         ];
-        let all = merge_overview(provider_plans, mcp_plans, skills_plans);
+        let memory_plans = vec![
+            plan("claude-code", true, vec![("memory", "unchanged")], None),
+            plan("opencode", true, vec![("memory", "skip")], None),
+            plan("hermes", true, vec![("memory", "add")], None),
+            plan("cursor-agent", false, vec![], None),
+        ];
+        let all = merge_overview(provider_plans, mcp_plans, skills_plans, memory_plans);
         assert_eq!(all.len(), 4);
 
         // 状态映射:unchanged→synced;skip 不进列表
@@ -869,9 +936,15 @@ mod tests {
         assert!(hermes.mcp_error.is_none());
         assert_eq!(hermes.skills_error.as_deref(), Some("library unreadable"));
         assert!(hermes.skills.is_empty());
+        // memory 维度:unchanged→synced;skip 不进;error 侧列表已空
+        assert_eq!(cc.memory[0].state, "synced");
+        assert!(cc.memory_supported);
+        assert!(oc.memory.is_empty()); // skip 不进列表
+        assert_eq!(hermes.memory[0].state, "unsynced");
         // unsupported:三侧 supported=false、列表空、无错误
         let cursor = overview_of(&all, "cursor-agent");
         assert!(!cursor.provider_supported && !cursor.mcp_supported && !cursor.skills_supported);
+        assert!(!cursor.memory_supported && cursor.memory.is_empty());
         assert!(cursor.providers.is_empty() && cursor.mcp.is_empty() && cursor.skills.is_empty());
         assert!(cursor.provider_error.is_none() && cursor.mcp_error.is_none() && cursor.skills_error.is_none());
     }
@@ -898,6 +971,10 @@ mod tests {
         fs::write(skill_dir.join("SKILL.md"), "---\nname: myskill\n---\n").unwrap();
         sync::skills::apply_agent(home.path(), "opencode", &[]).unwrap();
         config.skills_managed.insert("opencode".to_string(), vec!["myskill".to_string()]);
+        // 记忆库写入并下发到 hermes
+        sync::memory::write_library(home.path(), "team memo\n").unwrap();
+        sync::memory::apply_agent(home.path(), "hermes", &[]).unwrap();
+        config.memory_managed.insert("hermes".to_string(), vec!["block".to_string()]);
 
         let all = agent_sync_overview_at(home.path(), &config);
         assert_eq!(all.len(), 9); // 注册表全覆盖
@@ -916,6 +993,14 @@ mod tests {
         assert_eq!((oc.skills[0].name.as_str(), oc.skills[0].state.as_str()), ("myskill", "synced"));
         assert_eq!((cc.skills[0].name.as_str(), cc.skills[0].state.as_str()), ("myskill", "unsynced"));
         assert!(!codex.skills_supported && codex.skills.is_empty());
+        // memory:hermes 已注入 → synced;codex 支持但未下发 → unsynced;
+        // codebuddy 不支持
+        let hermes = overview_of(&all, "hermes");
+        assert!(hermes.memory_supported);
+        assert!(hermes.memory_config_path.ends_with("MEMORY.md"), "{}", hermes.memory_config_path);
+        assert_eq!((hermes.memory[0].name.as_str(), hermes.memory[0].state.as_str()), ("memory", "synced"));
+        assert_eq!(codex.memory[0].state, "unsynced");
+        assert!(!overview_of(&all, "codebuddy").memory_supported);
         // 混合支持:cursor-agent 服务商侧 unsupported、MCP 侧 supported
         let cursor = overview_of(&all, "cursor-agent");
         assert!(!cursor.provider_supported && cursor.mcp_supported);

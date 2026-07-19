@@ -250,7 +250,7 @@ pub fn scan(home: &Path) -> Result<Vec<AdoptCandidate>, String> {
 }
 
 /// 备份目录时间戳,与 `backup_target` 同格式。
-fn backup_stamp() -> String {
+pub(crate) fn backup_stamp() -> String {
     let now = time::OffsetDateTime::now_utc();
     format!(
         "{:04}{:02}{:02}-{:02}{:02}{:02}",

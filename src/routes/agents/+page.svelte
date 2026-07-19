@@ -268,7 +268,7 @@
               {@const o = syncDetailId !== null ? overview?.[syncDetailId] : undefined}
               {#if !o}
                 <span class="sync-muted">{$_('agents.syncDetail.empty')}</span>
-              {:else if o.providers.length === 0 && o.mcp.length === 0 && o.skills.length === 0 && !o.provider_error && !o.mcp_error && !o.skills_error}
+              {:else if o.providers.length === 0 && o.mcp.length === 0 && o.skills.length === 0 && o.memory.length === 0 && !o.provider_error && !o.mcp_error && !o.skills_error && !o.memory_error}
                 <p class="sync-empty">{$_('agents.syncDetail.empty')}</p>
                 <p class="sync-muted">{$_('agents.syncDetail.emptyHint')}</p>
                 <div class="sync-detail-foot">
@@ -278,6 +278,7 @@
                 {@render syncSection($_('agents.syncDetail.providers'), o.provider_supported, o.providers, o.provider_config_path, o.provider_error, false)}
                 {@render syncSection($_('agents.syncDetail.mcp'), o.mcp_supported, o.mcp, o.mcp_config_path, o.mcp_error, true)}
                 {@render syncSection($_('agents.syncDetail.skills'), o.skills_supported, o.skills, o.skills_config_path, o.skills_error, false)}
+                {@render syncSection($_('agents.syncDetail.memory'), o.memory_supported, o.memory, o.memory_config_path, o.memory_error, false)}
                 <div class="sync-detail-foot">
                   <button class="btn" onclick={() => loadOverview(true)}>{$_('agents.syncDetail.refresh')}</button>
                 </div>

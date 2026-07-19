@@ -281,7 +281,8 @@
         "removing": "Will remove"
       },
       "defaultModel": "Default model",
-      "skills": "Skills"
+      "skills": "Skills",
+      "memory": "Memory"
     }
   },
   "monitor": {
@@ -358,6 +359,26 @@
       "update": "Update",
       "missingInSource": "Removed from source",
       "selectAll": "Select all"
+    },
+    "memorySync": {
+      "hint": "Injected into each agent instruction file as a managed block; content outside the block is untouched",
+      "loading": "Loading...",
+      "placeholder": "Write instructions and preferences every agent should follow...",
+      "save": "Save",
+      "saved": "Saved",
+      "unsaved": "Unsaved changes",
+      "syncToAgents": "Sync to Agents",
+      "targetsTitle": "Agent Instruction Files",
+      "refresh": "Refresh",
+      "statusMissing": "File missing",
+      "statusNoBlock": "Not injected",
+      "statusInjected": "Injected",
+      "outsideChars": "{count} chars outside the managed block",
+      "view": "View",
+      "emptyFile": "(empty file)",
+      "importToLib": "Import to library",
+      "targetsEmpty": "No agents to inject into",
+      "nativeTitle": "Agent Native Memory"
     }
   }
 }

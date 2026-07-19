@@ -65,6 +65,12 @@ pub fn run() {
             commands::sync::skills_repo_install,
             commands::sync::skills_check_updates,
             commands::sync::skills_update,
+            commands::sync::memory_read,
+            commands::sync::memory_write,
+            commands::sync::memory_targets,
+            commands::sync::memory_target_content,
+            commands::sync::sync_memory_plan,
+            commands::sync::sync_memory_apply,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

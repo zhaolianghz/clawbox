@@ -12,6 +12,11 @@
     type AgentPlan, type ApplyResult, type ChangeItem,
   } from '$lib/api/skillsSync';
   import { SKILL_SOURCES } from '$lib/data/skillSources';
+  import {
+    memory_read, memory_write, memory_targets, memory_target_content,
+    sync_memory_plan, sync_memory_apply,
+    type MemoryTarget,
+  } from '$lib/api/memorySync';
   import { agents_list } from '$lib/api/agents';
   import AgentLogo from '$lib/components/AgentLogo.svelte';
   import {
@@ -532,8 +537,211 @@
     } finally { busyKey = null; }
   }
 
+  // ---------- 统一指令记忆(真源 ~/.agents/memory/MEMORY.md,托管区块注入) ----------
+  let memoryContent = $state('');
+  let memoryLoaded = $state(''); // 已加载基线;dirty = 内容 ≠ 基线
+  let memoryLoading = $state(true);
+  let memReadError = $state('');
+  let memorySaving = $state(false);
+  let memorySavedFlag = $state(false); // 保存成功提示(下次加载/再改动前有效)
+
+  const memoryDirty = $derived(memoryContent !== memoryLoaded);
+
+  async function loadMemory() {
+    memoryLoading = true;
+    memReadError = '';
+    memorySavedFlag = false;
+    try {
+      const v = await memory_read();
+      memoryContent = v;
+      memoryLoaded = v;
+    } catch (e) {
+      memReadError = String(e);
+    } finally {
+      memoryLoading = false;
+    }
+  }
+
+  async function saveMemory() {
+    if (memorySaving || !memoryDirty) return;
+    memorySaving = true;
+    memReadError = '';
+    try {
+      await memory_write(memoryContent);
+      memoryLoaded = memoryContent;
+      memorySavedFlag = true;
+    } catch (e) {
+      memReadError = String(e);
+    } finally {
+      memorySaving = false;
+    }
+  }
+
+  // 各 agent 指令文件面板
+  let targets = $state<MemoryTarget[]>([]);
+  let targetsLoading = $state(false);
+  let targetsError = $state('');
+  let viewingTarget = $state<string | null>(null); // 展开查看全文的 agent_id
+  let targetContent = $state<Record<string, string>>({});
+  let targetContentLoading = $state<Record<string, boolean>>({});
+  let targetContentError = $state<Record<string, string>>({});
+
+  async function loadTargets() {
+    if (targetsLoading) return;
+    targetsLoading = true;
+    targetsError = '';
+    targetContent = {};
+    targetContentError = {};
+    try {
+      targets = await memory_targets();
+    } catch (e) {
+      targetsError = String(e);
+    } finally {
+      targetsLoading = false;
+    }
+  }
+
+  async function toggleViewTarget(id: string) {
+    if (viewingTarget === id) {
+      viewingTarget = null;
+      return;
+    }
+    viewingTarget = id;
+    if (targetContent[id] === undefined && !targetContentLoading[id]) {
+      targetContentLoading = { ...targetContentLoading, [id]: true };
+      targetContentError = { ...targetContentError, [id]: '' };
+      try {
+        const text = await memory_target_content(id);
+        targetContent = { ...targetContent, [id]: text };
+      } catch (e) {
+        targetContentError = { ...targetContentError, [id]: String(e) };
+      } finally {
+        targetContentLoading = { ...targetContentLoading, [id]: false };
+      }
+    }
+  }
+
+  /** 把该 agent 指令文件全文追加到编辑器 buffer 末尾(仅前端;用户整理后自行保存) */
+  function importToLibrary(id: string) {
+    const text = (targetContent[id] ?? '').trim();
+    if (!text) return;
+    memoryContent = memoryContent.trim()
+      ? memoryContent.replace(/\s*$/, '\n\n') + text + '\n'
+      : text + '\n';
+  }
+
+  // 记忆同步面板(与技能面板同款,独立一套 mem 前缀状态)
+  let memSyncStage = $state<SyncStage>('closed');
+  let memPlans = $state<AgentPlan[]>([]);
+  let memSyncError = $state('');
+  let memExpanded = $state<Record<string, boolean>>({});
+  let memChecked = $state<Record<string, boolean>>({});
+  let memBatchApplying = $state(false);
+  let memRowApplying = $state<Record<string, boolean>>({});
+  let memRowError = $state<Record<string, string>>({});
+  let memRowSynced = $state<Record<string, boolean>>({});
+  let memRowBackup = $state<Record<string, string>>({});
+
+  function memRowStatus(p: AgentPlan): RowStatus {
+    if (!p.supported) return 'unsupported';
+    if (p.error) return 'error';
+    if (memRowSynced[p.agent_id]) return 'synced';
+    if (realChanges(p).length > 0) return 'pending';
+    return 'synced';
+  }
+
+  function memSelectable(p: AgentPlan): boolean {
+    return p.supported && !p.error && !memRowSynced[p.agent_id] && realChanges(p).length > 0;
+  }
+
+  const memCheckedCount = $derived(memPlans.filter((p) => memSelectable(p) && memChecked[p.agent_id]).length);
+  const memSelectablePlans = $derived(memPlans.filter((p) => memSelectable(p)));
+  const memAllPicked = $derived(
+    memSelectablePlans.length > 0 && memSelectablePlans.every((p) => memChecked[p.agent_id])
+  );
+
+  function memToggleAll() {
+    const next = { ...memChecked };
+    for (const p of memSelectablePlans) next[p.agent_id] = !memAllPicked;
+    memChecked = next;
+  }
+
+  async function memStartSync() {
+    memSyncStage = 'planning';
+    memSyncError = '';
+    memPlans = [];
+    memExpanded = {};
+    memChecked = {};
+    memBatchApplying = false;
+    memRowApplying = {};
+    memRowError = {};
+    memRowSynced = {};
+    memRowBackup = {};
+    try {
+      memPlans = await sync_memory_plan();
+      memChecked = Object.fromEntries(memPlans.filter(memSelectable).map((p) => [p.agent_id, true]));
+      memSyncStage = 'preview';
+    } catch (e) {
+      memSyncError = String(e);
+      memSyncStage = 'preview';
+    }
+  }
+
+  function memRecordResult(r: ApplyResult) {
+    if (r.ok) {
+      memRowSynced = { ...memRowSynced, [r.agent_id]: true };
+      memRowError = { ...memRowError, [r.agent_id]: '' };
+      if (r.backup_path) memRowBackup = { ...memRowBackup, [r.agent_id]: r.backup_path };
+    } else {
+      memRowError = { ...memRowError, [r.agent_id]: r.error ?? 'apply failed' };
+    }
+  }
+
+  async function memApplyOne(id: string) {
+    if (memRowApplying[id] || memBatchApplying) return;
+    memRowApplying = { ...memRowApplying, [id]: true };
+    memRowError = { ...memRowError, [id]: '' };
+    try {
+      const results = await sync_memory_apply([id]);
+      if (results[0]) memRecordResult(results[0]);
+      if (results[0]?.ok) void loadTargets(); // 注入状态变化,刷新目标面板
+    } catch (e) {
+      memRowError = { ...memRowError, [id]: String(e) };
+    } finally {
+      memRowApplying = { ...memRowApplying, [id]: false };
+    }
+  }
+
+  async function memApplyChecked() {
+    const ids = memPlans.filter((p) => memSelectable(p) && memChecked[p.agent_id]).map((p) => p.agent_id);
+    if (ids.length === 0 || memBatchApplying) return;
+    memBatchApplying = true;
+    memSyncError = '';
+    memRowApplying = { ...memRowApplying, ...Object.fromEntries(ids.map((id) => [id, true])) };
+    try {
+      const results = await sync_memory_apply(ids);
+      for (const r of results) memRecordResult(r);
+      if (results.some((r) => r.ok)) void loadTargets();
+    } catch (e) {
+      memSyncError = String(e);
+    } finally {
+      memBatchApplying = false;
+      memRowApplying = { ...memRowApplying, ...Object.fromEntries(ids.map((id) => [id, false])) };
+    }
+  }
+
+  function memToggleExpand(id: string) {
+    memExpanded = { ...memExpanded, [id]: !memExpanded[id] };
+  }
+
+  function memCloseSync() {
+    memSyncStage = 'closed';
+  }
+
   onMount(async () => {
     void loadLibrary();
+    void loadMemory();
+    void loadTargets();
     try {
       const all = await agents_list();
       agentLabels = Object.fromEntries(all.map((a) => [a.id, a.label]));
@@ -962,57 +1170,290 @@
         </div>
       </div>
     {:else if activeTab === 'memory'}
-      <div class="backend-panels">
-        {#each backends as backend (backend.id)}
-          <section class="backend-section">
-            <header class="backend-header">
-              <span class="backend-chip" data-backend={backend.id}>{backend.displayName}</span>
-              {#if !backend.installed}
-                <span class="empty">{$_('capabilities.notInstalled')}</span>
-              {/if}
-            </header>
-
-            {#if backend.installed}
-              {@const status = memoryByBackend[backend.id]}
-              {#if status}
-                <div class="item-row">
-                  <div class="item-info">
-                    <div class="item-name">{status.provider || '(unknown)'}</div>
-                    <div class="item-meta">
-                      <span class="desc">built-in:</span>
-                      {#if status.builtinActive}
-                        <code class="version">active</code>
-                      {:else}
-                        <span class="empty">inactive</span>
-                      {/if}
-                    </div>
-                  </div>
-                  <div class="item-actions">
-                    {#if backend.id === 'openclaw'}
-                      <button class="action-btn primary" onclick={() => doMemoryIndex(backend.id)}
-                        disabled={busyKey === `mem-index:${backend.id}`}
-                        title="Index">📥</button>
-                    {/if}
-                    {#if backend.id === 'hermes'}
-                      <button class="action-btn" onclick={() => doMemoryReset(backend.id)}
-                        disabled={busyKey === `mem-reset:${backend.id}`}
-                        title="Reset">♻️</button>
-                    {/if}
-                  </div>
-                </div>
-              {:else}
-                <p class="empty">{$_('capabilities.noItems')}</p>
-              {/if}
+      <div class="skills-sync">
+        <!-- 统一记忆编辑器 -->
+        <div class="skills-toolbar">
+          <span class="skills-hint">{$_('capabilities.memorySync.hint')}</span>
+          <button class="action-btn wide primary" onclick={memStartSync} disabled={memSyncStage !== 'closed'}>
+            {$_('capabilities.memorySync.syncToAgents')}
+          </button>
+        </div>
+        {#if memReadError}
+          <p class="error-line">{memReadError}</p>
+        {/if}
+        {#if memoryLoading}
+          <div class="sync-loading"><span class="spinner small"></span> {$_('capabilities.memorySync.loading')}</div>
+        {:else}
+          <textarea
+            class="memory-editor"
+            bind:value={memoryContent}
+            spellcheck="false"
+            placeholder={$_('capabilities.memorySync.placeholder')}
+          ></textarea>
+          <div class="memory-actions">
+            {#if memoryDirty}
+              <span class="dirty-note">● {$_('capabilities.memorySync.unsaved')}</span>
+            {:else if memorySavedFlag}
+              <span class="adopt-ok">✓ {$_('capabilities.memorySync.saved')}</span>
             {/if}
-          </section>
-        {/each}
-        {#if memoryErrors.length > 0}
-          <div class="errors">
-            {#each memoryErrors as err (err.backend + ':' + err.message)}
-              <p class="error-line">{err.backend}: {err.message}</p>
-            {/each}
+            <span class="spacer"></span>
+            <button class="action-btn wide primary" onclick={saveMemory} disabled={memorySaving || !memoryDirty}>
+              {#if memorySaving}<span class="spinner small"></span>{/if}
+              {$_('capabilities.memorySync.save')}
+            </button>
           </div>
         {/if}
+
+        <!-- 记忆同步面板(与技能面板同款:全选/单行同步/批量,结果就地写回) -->
+        {#if memSyncStage !== 'closed'}
+          <div class="sync-panel">
+            {#if memSyncStage === 'planning'}
+              <div class="sync-loading"><span class="spinner small"></span> {$_('providers.sync.planning')}</div>
+            {:else}
+              {#if memSyncError}
+                <p class="error-line">{memSyncError}</p>
+              {/if}
+              {#if memPlans.length > 0}
+                <div class="plan-list">
+                  <label class="select-all-plans">
+                    <input
+                      type="checkbox"
+                      class="row-check"
+                      disabled={memSelectablePlans.length === 0 || memBatchApplying}
+                      checked={memAllPicked}
+                      onchange={memToggleAll}
+                    />
+                    <span>{$_('providers.sync.selectAll')}</span>
+                    <span class="selectable-count">{memCheckedCount}/{memSelectablePlans.length}</span>
+                  </label>
+                  {#each memPlans as p (p.agent_id)}
+                    {@const status = memRowStatus(p)}
+                    {@const changes = realChanges(p)}
+                    {@const skips = skipItems(p)}
+                    {@const expandable = p.changes.length > 0}
+                    {@const canPick = memSelectable(p)}
+                    <div class="plan-item" class:muted={status === 'unsupported'}>
+                      <div class="plan-row">
+                        <input
+                          type="checkbox"
+                          class="row-check"
+                          disabled={!canPick || memBatchApplying}
+                          checked={canPick && !!memChecked[p.agent_id]}
+                          onchange={(e) => (memChecked = { ...memChecked, [p.agent_id]: e.currentTarget.checked })}
+                          aria-label={agentLabel(p.agent_id)}
+                        />
+                        <button
+                          type="button"
+                          class="plan-head"
+                          class:expandable
+                          disabled={!expandable}
+                          onclick={() => memToggleExpand(p.agent_id)}
+                        >
+                          <AgentLogo id={p.agent_id} label={agentLabel(p.agent_id)} />
+                          <div class="plan-info">
+                            <div class="plan-title-line">
+                              <span class="agent-name">{agentLabel(p.agent_id)}</span>
+                              {#if status === 'synced'}
+                                <span class="tag green">{$_('providers.sync.statusSynced')}</span>
+                              {:else if status === 'pending'}
+                                <span class="tag yellow">{$_('providers.sync.statusPending')}</span>
+                                <span class="change-summary">
+                                  {$_('providers.sync.changeCount', { values: { count: changes.length } })}
+                                </span>
+                              {:else if status === 'unsupported'}
+                                <span class="tag gray">{$_('providers.sync.unsupported')}</span>
+                              {:else}
+                                <span class="tag red">{$_('providers.sync.error')}</span>
+                              {/if}
+                            </div>
+                            {#if p.supported && p.config_path}
+                              <code class="config-path" title={p.config_path}>{p.config_path}</code>
+                            {/if}
+                          </div>
+                          {#if expandable}
+                            <span class="chevron" class:open={!!memExpanded[p.agent_id]}>▾</span>
+                          {/if}
+                        </button>
+                        {#if status === 'pending'}
+                          <button
+                            class="action-btn wide primary"
+                            onclick={() => memApplyOne(p.agent_id)}
+                            disabled={!!memRowApplying[p.agent_id] || memBatchApplying}
+                          >
+                            {#if memRowApplying[p.agent_id]}<span class="spinner small"></span>{/if}
+                            {$_('providers.sync.syncOne')}
+                          </button>
+                        {/if}
+                      </div>
+                      {#if memRowSynced[p.agent_id] && memRowBackup[p.agent_id]}
+                        <code class="config-path" title={memRowBackup[p.agent_id]}>
+                          {$_('providers.sync.backup')}: {memRowBackup[p.agent_id]}
+                        </code>
+                      {/if}
+                      {#if p.error}
+                        <p class="error-line">{p.error}</p>
+                      {/if}
+                      {#if memRowError[p.agent_id]}
+                        <p class="error-line">{memRowError[p.agent_id]}</p>
+                      {/if}
+                      {#if expandable && memExpanded[p.agent_id]}
+                        <ul class="change-list">
+                          {#each changes as c (c.name + c.action)}
+                            <li class="change action-{c.action}">
+                              <span class="change-action">{$_(`providers.sync.action.${c.action}`)}</span>
+                              <span class="change-name">{c.name}</span>
+                              {#if c.detail}<span class="change-detail">{c.detail}</span>{/if}
+                            </li>
+                          {/each}
+                          {#each skips as c (c.name)}
+                            <li class="change action-skip">
+                              <span class="change-action">{$_('providers.sync.action.skip')}</span>
+                              <span class="change-name">{c.name}</span>
+                              {#if c.detail}<span class="change-detail">{c.detail}</span>{/if}
+                            </li>
+                          {/each}
+                        </ul>
+                      {/if}
+                    </div>
+                  {/each}
+                </div>
+              {/if}
+              <div class="panel-actions">
+                <button class="action-btn wide" onclick={memCloseSync} disabled={memBatchApplying}>{$_('providers.close')}</button>
+                <button class="action-btn wide primary" onclick={memApplyChecked} disabled={memCheckedCount === 0 || memBatchApplying}>
+                  {#if memBatchApplying}<span class="spinner small"></span>{/if}
+                  {$_('providers.sync.confirm', { values: { count: memCheckedCount } })}
+                </button>
+              </div>
+            {/if}
+          </div>
+        {/if}
+
+        <!-- 各 agent 指令文件面板 -->
+        <div class="scan-panel">
+          <div class="scan-head">
+            <span class="scan-title">{$_('capabilities.memorySync.targetsTitle')}</span>
+            <button class="action-btn wide" onclick={loadTargets} disabled={targetsLoading}>
+              {#if targetsLoading}<span class="spinner small"></span>{/if}
+              {$_('capabilities.memorySync.refresh')}
+            </button>
+          </div>
+          {#if targetsError}
+            <p class="error-line">{targetsError}</p>
+          {/if}
+          {#if targetsLoading && targets.length === 0}
+            <div class="sync-loading"><span class="spinner small"></span> {$_('capabilities.memorySync.loading')}</div>
+          {:else if targets.length === 0 && !targetsError}
+            <p class="empty">{$_('capabilities.memorySync.targetsEmpty')}</p>
+          {:else}
+            {#each targets as t (t.agent_id)}
+              <div class="plan-item">
+                <div class="plan-row">
+                  <button type="button" class="plan-head expandable" onclick={() => toggleViewTarget(t.agent_id)}>
+                    <AgentLogo id={t.agent_id} label={agentLabel(t.agent_id)} />
+                    <div class="plan-info">
+                      <div class="plan-title-line">
+                        <span class="agent-name">{agentLabel(t.agent_id)}</span>
+                        {#if !t.exists}
+                          <span class="tag gray">{$_('capabilities.memorySync.statusMissing')}</span>
+                        {:else if !t.has_block}
+                          <span class="tag yellow">{$_('capabilities.memorySync.statusNoBlock')}</span>
+                        {:else}
+                          <span
+                            class="tag green"
+                            title={t.outside_chars > 0
+                              ? $_('capabilities.memorySync.outsideChars', { values: { count: t.outside_chars } })
+                              : undefined}
+                          >{$_('capabilities.memorySync.statusInjected')}</span>
+                        {/if}
+                      </div>
+                      <code class="config-path" title={t.path}>{t.path}</code>
+                    </div>
+                    <span class="chevron" class:open={viewingTarget === t.agent_id}>▾</span>
+                  </button>
+                  <button
+                    class="action-btn wide"
+                    class:on={viewingTarget === t.agent_id}
+                    onclick={() => toggleViewTarget(t.agent_id)}
+                  >{$_('capabilities.memorySync.view')}</button>
+                </div>
+                {#if viewingTarget === t.agent_id}
+                  {#if targetContentLoading[t.agent_id]}
+                    <div class="sync-loading"><span class="spinner small"></span> {$_('capabilities.memorySync.loading')}</div>
+                  {:else if targetContentError[t.agent_id]}
+                    <p class="error-line">{targetContentError[t.agent_id]}</p>
+                  {:else}
+                    <pre class="target-content">{targetContent[t.agent_id]?.trim() ? targetContent[t.agent_id] : $_('capabilities.memorySync.emptyFile')}</pre>
+                    <div class="scan-foot">
+                      <button
+                        class="action-btn wide"
+                        onclick={() => importToLibrary(t.agent_id)}
+                        disabled={!(targetContent[t.agent_id] ?? '').trim()}
+                      >{$_('capabilities.memorySync.importToLib')}</button>
+                    </div>
+                  {/if}
+                {/if}
+              </div>
+            {/each}
+          {/if}
+        </div>
+
+        <!-- Agent 原生记忆(旧 per-backend 状态,降权:默认收起) -->
+        <details class="native-memory">
+          <summary>{$_('capabilities.memorySync.nativeTitle')}</summary>
+          <div class="backend-panels">
+            {#each backends as backend (backend.id)}
+              <section class="backend-section">
+                <header class="backend-header">
+                  <span class="backend-chip" data-backend={backend.id}>{backend.displayName}</span>
+                  {#if !backend.installed}
+                    <span class="empty">{$_('capabilities.notInstalled')}</span>
+                  {/if}
+                </header>
+
+                {#if backend.installed}
+                  {@const status = memoryByBackend[backend.id]}
+                  {#if status}
+                    <div class="item-row">
+                      <div class="item-info">
+                        <div class="item-name">{status.provider || '(unknown)'}</div>
+                        <div class="item-meta">
+                          <span class="desc">built-in:</span>
+                          {#if status.builtinActive}
+                            <code class="version">active</code>
+                          {:else}
+                            <span class="empty">inactive</span>
+                          {/if}
+                        </div>
+                      </div>
+                      <div class="item-actions">
+                        {#if backend.id === 'openclaw'}
+                          <button class="action-btn primary" onclick={() => doMemoryIndex(backend.id)}
+                            disabled={busyKey === `mem-index:${backend.id}`}
+                            title="Index">📥</button>
+                        {/if}
+                        {#if backend.id === 'hermes'}
+                          <button class="action-btn" onclick={() => doMemoryReset(backend.id)}
+                            disabled={busyKey === `mem-reset:${backend.id}`}
+                            title="Reset">♻️</button>
+                        {/if}
+                      </div>
+                    </div>
+                  {:else}
+                    <p class="empty">{$_('capabilities.noItems')}</p>
+                  {/if}
+                {/if}
+              </section>
+            {/each}
+            {#if memoryErrors.length > 0}
+              <div class="errors">
+                {#each memoryErrors as err (err.backend + ':' + err.message)}
+                  <p class="error-line">{err.backend}: {err.message}</p>
+                {/each}
+              </div>
+            {/if}
+          </div>
+        </details>
       </div>
     {:else if activeTab === 'plugins'}
       <div class="backend-panels">
@@ -1505,4 +1946,28 @@
     background: rgba(251,146,60,0.15); color: #fb923c; margin-left: 0.4rem;
   }
   .uptodate-note { margin: 0; font-size: 0.72rem; color: #4ade80; }
+
+  /* 统一指令记忆 */
+  .memory-editor {
+    width: 100%; min-height: 220px; box-sizing: border-box; resize: vertical;
+    background: var(--bg-primary); border: 1px solid rgba(255,255,255,0.1); border-radius: 0.5rem;
+    color: var(--text-primary); font-family: monospace; font-size: 0.8rem; line-height: 1.55;
+    padding: 0.7rem 0.85rem; outline: none;
+  }
+  .memory-editor:focus { border-color: var(--neon-cyan); }
+  .memory-actions { display: flex; align-items: center; gap: 0.5rem; }
+  .memory-actions .spacer { flex: 1; }
+  .dirty-note { font-size: 0.72rem; color: #fbbf24; }
+  .target-content {
+    margin: 0; max-height: 260px; overflow: auto;
+    background: var(--bg-primary); border: 1px solid rgba(255,255,255,0.08); border-radius: 0.4rem;
+    padding: 0.6rem 0.75rem; font-size: 0.72rem; line-height: 1.5; white-space: pre-wrap;
+    color: var(--text-secondary);
+  }
+  .native-memory { border: 1px solid rgba(255,255,255,0.08); border-radius: 0.5rem; padding: 0.6rem 0.75rem; }
+  .native-memory summary {
+    cursor: pointer; font-size: 0.8rem; color: var(--text-secondary); font-weight: 600;
+    user-select: none;
+  }
+  .native-memory[open] summary { margin-bottom: 0.6rem; }
 </style>

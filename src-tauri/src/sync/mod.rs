@@ -14,6 +14,7 @@ pub mod cli;
 pub mod codex;
 pub mod json_file;
 pub mod providers;
+pub mod memory;
 pub mod skills;
 
 use crate::commands::config::McpServerSpec;
