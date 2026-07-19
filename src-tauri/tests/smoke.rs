@@ -5,7 +5,21 @@
 
 use clawbox_lib::backends;
 
+/// 每个测试(和所有会 spawn 子进程的 helper)的第一步。
+///
+/// `path_env::init()` 内部执行 `std::env::set_var("PATH", ..)`;POSIX 下
+/// setenv 与并发的 environ 读取(`Command::spawn` 会遍历 environ)是数据
+/// 竞争 —— 这正是本文件历史"并行执行 flake"的根因:libtest 多线程并行
+/// 时,调 init 的测试与正在 spawn 的测试交错,偶发崩溃/误败。修复方式:
+/// 所有测试入口先经过 init 的 OnceLock —— set_var 执行期间,其它线程全部
+/// 阻塞在 `get_or_init` 上,不存在越过屏障的并发 spawn;init 完成后
+/// set_var 不再发生,后续 spawn 安全。
+fn ensure_path() {
+    clawbox_lib::path_env::init();
+}
+
 fn openclaw_installed() -> bool {
+    ensure_path();
     std::process::Command::new("openclaw")
         .arg("--version")
         .output()
@@ -14,6 +28,7 @@ fn openclaw_installed() -> bool {
 }
 
 fn hermes_installed() -> bool {
+    ensure_path();
     std::process::Command::new("hermes")
         .arg("--version")
         .output()
@@ -124,6 +139,7 @@ fn plugins_list_runs_against_live_backends() {
 
 #[test]
 fn tools_list_only_hermes() {
+    ensure_path();
     let entries = clawbox_lib::backends::entries();
     let hermes_entry = entries.iter().find(|e| e.backend.id() == "hermes").unwrap();
     let openclaw_entry = entries.iter().find(|e| e.backend.id() == "openclaw").unwrap();
@@ -154,7 +170,7 @@ fn hooks_list_runs_against_live_backends() {
 
 #[test]
 fn agent_registry_detection_is_consistent_with_direct_probes() {
-    clawbox_lib::path_env::init();
+    ensure_path();
     let statuses = clawbox_lib::agents::list_agent_status();
     assert_eq!(statuses.len(), 10);
 
@@ -178,7 +194,7 @@ fn agent_registry_detection_is_consistent_with_direct_probes() {
 fn node_is_detected_when_present() {
     // node is a hard prerequisite of this repo's own toolchain; if the dev
     // machine has it, the registry must see it (PATH fix regression guard).
-    clawbox_lib::path_env::init();
+    ensure_path();
     let has_node = std::process::Command::new("node")
         .arg("--version")
         .output()
@@ -199,6 +215,7 @@ fn npm_package_names_exist_on_registry() {
     // Guards against typo'd package names in the agent registry: `npm view`
     // resolves each against the live npm registry. Needs network + npm;
     // skipped when npm is absent (matches this file's skip convention).
+    ensure_path();
     let npm_ok = std::process::Command::new("npm")
         .arg("--version")
         .output()
@@ -214,12 +231,16 @@ fn npm_package_names_exist_on_registry() {
                 .args(["view", package, "version"])
                 .output()
                 .expect("npm view runs");
-            assert!(
-                out.status.success(),
-                "npm package for {} not found: {}",
-                def.id,
-                package
-            );
+            if !out.status.success() {
+                let stderr = String::from_utf8_lossy(&out.stderr);
+                // 网络抖动(离线/超时/DNS)不是包名 typo:走本文件 skip 惯例,
+                // 只有确定的 E404 才判失败。
+                if !stderr.contains("E404") {
+                    eprintln!("skip: npm view {} failed for non-404 reason (network?): {}", package, stderr.trim());
+                    continue;
+                }
+                panic!("npm package for {} not found (E404): {}", def.id, package);
+            }
         }
     }
 }
@@ -230,7 +251,7 @@ fn gated_npm_install_is_idempotent() {
     // Reinstall an already-installed npm agent (idempotent upgrade path) to
     // exercise run_install end-to-end. Ignored by default: it hits the
     // network and rewrites the global npm bin links.
-    clawbox_lib::path_env::init();
+    ensure_path();
     let def = clawbox_lib::agents::find_agent("openclaw").unwrap();
     if !def.is_installed() {
         eprintln!("skip: openclaw not installed; not installing fresh");
