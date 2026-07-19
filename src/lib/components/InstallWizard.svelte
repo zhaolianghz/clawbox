@@ -13,8 +13,9 @@
 
   let agreedToTerms = $state(false);
   let isChecking = $state(true);
-  let checkData: SystemCheck = { nodejs: false, openclaw: false, network: 'unknown' };
-  let progressData: InstallProgress = { step: 'checking', progress: 0, log: [] };
+  // $state:两者都被模板渲染(安装步骤/进度/日志),重赋值必须触发更新。
+  let checkData = $state<SystemCheck>({ nodejs: false, openclaw: false, network: 'unknown' });
+  let progressData = $state<InstallProgress>({ step: 'checking', progress: 0, log: [] });
 
   async function checkSystem() {
     isChecking = true;

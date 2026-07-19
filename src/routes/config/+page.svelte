@@ -337,6 +337,7 @@
       }
       if (failed.length === 0) {
         closeEditor();
+        quickSync = syncStage === 'closed'; // 保存成功 → 去同步快捷入口
       } else {
         formError = `${$_('mcp.form.jsonPartialFail', { values: { names: failed.join(', ') } })}\n${lastError}`;
       }
@@ -371,6 +372,7 @@
       await config_mcp_upsert(name, spec);
       closeEditor();
       await refresh();
+      quickSync = syncStage === 'closed'; // 保存成功 → 去同步快捷入口
     } catch (e) {
       formError = String(e);
     } finally {
@@ -381,6 +383,7 @@
   // ---------- 同步到 Agent(标签式:行状态 + 单行同步 + 批量,结果就地写回) ----------
   type SyncStage = 'closed' | 'planning' | 'preview';
   let syncStage = $state<SyncStage>('closed');
+  let quickSync = $state(false); // 「配置有变更待同步」快捷入口条
   let plans = $state<AgentPlan[]>([]);
   let syncError = $state(''); // plan / 批量 invoke 整体失败
   let expanded = $state<Record<string, boolean>>({}); // 行内明细展开/收起
@@ -694,6 +697,17 @@
     <pre class="error-text">{listError}</pre>
   {/if}
 
+  <!-- 去同步快捷入口(新增/编辑保存成功后就地出现;面板打开时不显示) -->
+  {#if quickSync && syncStage === 'closed'}
+    <div class="quick-sync-bar">
+      <span class="qs-hint">{$_('quickSync.hint')}</span>
+      <button class="qs-action" onclick={() => { quickSync = false; startSync(); }}>
+        {$_('quickSync.action')}
+      </button>
+      <button class="qs-close" onclick={() => (quickSync = false)} aria-label={$_('quickSync.dismiss')}>✕</button>
+    </div>
+  {/if}
+
   <!-- 同步内联面板(按钮下方整行展开;逐行状态 + 单行同步 + 批量,结果就地写回) -->
   {#if syncStage !== 'closed'}
     <div class="sync-panel glass-card">
@@ -939,6 +953,23 @@
   @keyframes spin { to { transform: rotate(360deg); } }
 
   .error-text { font-size: 0.75rem; color: #f87171; white-space: pre-wrap; margin: 0; }
+
+  /* 去同步快捷入口条(全站统一样式) */
+  .quick-sync-bar {
+    display: flex; align-items: center; gap: 0.6rem;
+    padding: 0.45rem 0.8rem; border-radius: 0.5rem;
+    background: rgba(0,245,255,0.08); border: 1px solid rgba(0,245,255,0.3);
+  }
+  .qs-hint { flex: 1; font-size: 0.78rem; color: var(--neon-cyan); }
+  .qs-action {
+    padding: 0.25rem 0.7rem; border-radius: 0.4rem; font-size: 0.75rem; cursor: pointer;
+    background: rgba(0,245,255,0.14); border: 1px solid var(--neon-cyan); color: var(--neon-cyan);
+  }
+  .qs-close {
+    background: transparent; border: none; cursor: pointer; color: var(--text-muted);
+    font-size: 0.75rem; padding: 0.2rem 0.3rem; line-height: 1;
+  }
+  .qs-close:hover { color: var(--text-primary); }
 
   /* 内联面板(编辑器 / 同步预览):页面内推开内容,无遮罩;编辑器在网格内占满整行 */
   .editor-panel, .sync-panel {

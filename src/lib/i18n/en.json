@@ -360,5 +360,10 @@
       "targetsEmpty": "No agents to inject into",
       "nativeTitle": "Agent Native Memory"
     }
+  },
+  "quickSync": {
+    "hint": "Changes pending sync",
+    "action": "Sync to Agents",
+    "dismiss": "Dismiss"
   }
 }

@@ -360,5 +360,10 @@
       "targetsEmpty": "暂无可注入的 agent",
       "nativeTitle": "Agent 原生记忆"
     }
+  },
+  "quickSync": {
+    "hint": "配置有变更待同步",
+    "action": "同步到 Agent",
+    "dismiss": "关闭"
   }
 }

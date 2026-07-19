@@ -16,13 +16,15 @@
   }
   let { standalone = false, onexit }: Props = $props();
 
-  const sections: { id: SectionId; labelKey: string }[] = [
+  // $derived:standalone 是挂载后不变的 prop,用 derived 跟随 props 语义(消除
+  // state_referenced_locally 警告,行为不变)。
+  const sections = $derived<{ id: SectionId; labelKey: string }[]>([
     { id: 'providers', labelKey: 'nav.providers' },
     { id: 'config', labelKey: 'nav.config' },
     { id: 'agents', labelKey: 'nav.agents' },
     { id: 'capabilities', labelKey: 'nav.capabilities' },
     ...(standalone ? [{ id: 'about' as SectionId, labelKey: 'nav.about' }] : []),
-  ];
+  ]);
 
   let activeSection = $state<SectionId>('providers');
   // keep-alive:子页首次访问后常驻,切回秒开,避免每次重跑 CLI 探测

@@ -203,6 +203,7 @@
       const outcomes = await skills_repo_install(discovery.repo, picked.map((s) => s.subdir));
       installOutcomes = Object.fromEntries(outcomes.map((o) => [o.name, o]));
       await loadLibrary(); // 安装成功的技能进库
+      if (outcomes.some((o) => o.ok)) quickSync = syncStage === 'closed'; // 去同步快捷入口
     } catch (e) {
       discoverError = String(e);
     } finally {
@@ -331,6 +332,7 @@
       const outcomes = await skills_adopt(picked.map((c) => ({ agent_id: c.agent_id, name: c.name })));
       adoptOutcomes = Object.fromEntries(outcomes.map((o) => [candKey(o), o]));
       await loadLibrary(); // 收编成功的技能进库
+      if (outcomes.some((o) => o.ok)) quickSync = syncStage === 'closed'; // 去同步快捷入口
     } catch (e) {
       scanError = String(e);
     } finally {
@@ -341,6 +343,7 @@
   // ---------- 同步到 Agent(与服务商页同款:行状态 + 单行同步 + 批量,结果就地写回) ----------
   type SyncStage = 'closed' | 'planning' | 'preview';
   let syncStage = $state<SyncStage>('closed');
+  let quickSync = $state(false); // 「配置有变更待同步」快捷入口条(技能面板)
   let plans = $state<AgentPlan[]>([]);
   let syncError = $state('');
   let expanded = $state<Record<string, boolean>>({});
@@ -802,6 +805,17 @@
         {/if}
         {#if updates !== null && allUpToDate && !updatesError}
           <p class="uptodate-note">{$_('capabilities.skillsSync.allUpToDate')}</p>
+        {/if}
+
+        <!-- 去同步快捷入口(安装/收编成功后就地出现;面板打开时不显示) -->
+        {#if quickSync && syncStage === 'closed'}
+          <div class="quick-sync-bar">
+            <span class="qs-hint">{$_('quickSync.hint')}</span>
+            <button class="qs-action" onclick={() => { quickSync = false; startSync(); }}>
+              {$_('quickSync.action')}
+            </button>
+            <button class="qs-close" onclick={() => (quickSync = false)} aria-label={$_('quickSync.dismiss')}>✕</button>
+          </div>
         {/if}
 
         <!-- 从 Git 仓库安装(内联展开:精选源卡片 + repo 输入 + 发现列表 + 安全提示) -->
@@ -1946,6 +1960,23 @@
     background: rgba(251,146,60,0.15); color: #fb923c; margin-left: 0.4rem;
   }
   .uptodate-note { margin: 0; font-size: 0.72rem; color: #4ade80; }
+
+  /* 去同步快捷入口条(全站统一样式) */
+  .quick-sync-bar {
+    display: flex; align-items: center; gap: 0.6rem;
+    padding: 0.45rem 0.8rem; border-radius: 0.5rem;
+    background: rgba(0,245,255,0.08); border: 1px solid rgba(0,245,255,0.3);
+  }
+  .qs-hint { flex: 1; font-size: 0.78rem; color: var(--neon-cyan); }
+  .qs-action {
+    padding: 0.25rem 0.7rem; border-radius: 0.4rem; font-size: 0.75rem; cursor: pointer;
+    background: rgba(0,245,255,0.14); border: 1px solid var(--neon-cyan); color: var(--neon-cyan);
+  }
+  .qs-close {
+    background: transparent; border: none; cursor: pointer; color: var(--text-muted);
+    font-size: 0.75rem; padding: 0.2rem 0.3rem; line-height: 1;
+  }
+  .qs-close:hover { color: var(--text-primary); }
 
   /* 统一指令记忆 */
   .memory-editor {
