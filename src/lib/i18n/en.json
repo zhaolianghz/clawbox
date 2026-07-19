@@ -73,7 +73,6 @@
     "confirmDelete": "Confirm Delete",
     "cancel": "Cancel",
     "save": "Save",
-    "close": "Close",
     "form": {
       "name": "Name",
       "kind": "Type",
@@ -103,27 +102,6 @@
       "jsonErrNotServer": "\"{name}\" is not a server object (expected an object with \"command\" or \"url\")",
       "jsonErrMissingCommand": "\"{name}\": stdio server requires \"command\"",
       "jsonErrMissingUrl": "\"{name}\": http server requires \"url\""
-    },
-    "sync": {
-      "previewTitle": "Sync Preview",
-      "planning": "Computing changes...",
-      "unsupported": "Not supported yet",
-      "error": "Error",
-      "noChanges": "No changes",
-      "unchangedCount": "{count} unchanged",
-      "action": {
-        "add": "Add",
-        "update": "Update",
-        "remove": "Remove",
-        "skip": "Skip"
-      },
-      "confirm": "Confirm Sync ({count})",
-      "applying": "Syncing...",
-      "resultTitle": "Sync Results",
-      "appliedCount": "{count} applied",
-      "failed": "Failed",
-      "backup": "Backup",
-      "selectAll": "Select all"
     }
   },
   "providers": {

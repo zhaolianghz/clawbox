@@ -73,7 +73,6 @@
     "confirmDelete": "确认删除",
     "cancel": "取消",
     "save": "保存",
-    "close": "关闭",
     "form": {
       "name": "名称",
       "kind": "类型",
@@ -103,27 +102,6 @@
       "jsonErrNotServer": "\"{name}\" 不是服务器对象（需要包含 \"command\" 或 \"url\" 的对象）",
       "jsonErrMissingCommand": "\"{name}\"：stdio 类型必须有 \"command\"",
       "jsonErrMissingUrl": "\"{name}\"：http 类型必须有 \"url\""
-    },
-    "sync": {
-      "previewTitle": "同步预览",
-      "planning": "正在计算变更...",
-      "unsupported": "暂不支持",
-      "error": "错误",
-      "noChanges": "无变更",
-      "unchangedCount": "{count} 项未变",
-      "action": {
-        "add": "新增",
-        "update": "更新",
-        "remove": "移除",
-        "skip": "跳过"
-      },
-      "confirm": "确认同步（{count}）",
-      "applying": "同步中...",
-      "resultTitle": "同步结果",
-      "appliedCount": "已应用 {count} 项",
-      "failed": "失败",
-      "backup": "备份",
-      "selectAll": "全选"
     }
   },
   "providers": {
