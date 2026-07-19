@@ -11,7 +11,6 @@
     "check": "svelte-check --tsconfig ./tsconfig.json"
   },
   "dependencies": {
-    "@tauri-apps/api": "^2.2.0",
     "@tauri-apps/plugin-dialog": "^2.7.1",
     "@tauri-apps/plugin-shell": "^2.2.0",
     "svelte-i18n": "^4.0.1"
@@ -21,6 +20,7 @@
     "@skeletonlabs/skeleton-svelte": "^1.0.0",
     "@sveltejs/vite-plugin-svelte": "^5.1.1",
     "@tailwindcss/vite": "^4.0.0",
+    "@tauri-apps/api": "2.10.1",
     "@tauri-apps/cli": "^2.2.0",
     "autoprefixer": "^10.4.20",
     "postcss": "^8.5.1",
