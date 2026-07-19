@@ -11,6 +11,7 @@
     type NamedServer, type ParseIssue,
   } from '$lib/api/mcpJson';
   import { agents_list } from '$lib/api/agents';
+  import { MCP_CATALOG, type McpCatalogEntry } from '$lib/data/mcpCatalog';
   import AgentLogo from '$lib/components/AgentLogo.svelte';
 
   // ---------- 服务器列表 ----------
@@ -167,6 +168,7 @@
   function closeEditor() {
     editorOpen = false;
     editingName = null;
+    catalogHint = [];
   }
 
   function openAdd() {
@@ -187,7 +189,32 @@
     formError = '';
     editorMode = 'form';
     jsonText = '';
+    catalogHint = [];
     editorOpen = true;
+  }
+
+  // ---------- 精选目录:点卡片 = 切表单模式并预填,用户可改后保存 ----------
+  let catalogHint = $state<string[]>([]); // 当前预填条目需要用户自填的键名(提示行)
+
+  function pickCatalog(c: McpCatalogEntry) {
+    editorMode = 'form';
+    formError = '';
+    formName = c.id;
+    formKind = c.kind;
+    formCommand = c.command ?? '';
+    formArgs = (c.args ?? []).join('\n');
+    formUrl = c.url ?? '';
+    formEnabled = true;
+    // envHint:stdio 预填 env 键名,http 预填 header 键名;值留空由用户填
+    if (c.kind === 'stdio') {
+      formEnv = (c.envHint ?? []).map((key) => ({ key, value: '' }));
+      formHeaders = [];
+    } else {
+      formHeaders = (c.envHint ?? []).map((key) => ({ key, value: '' }));
+      formEnv = [];
+    }
+    jsonText = '';
+    catalogHint = c.envHint ?? [];
   }
 
   function openEdit(name: string) {
@@ -489,6 +516,32 @@
 {#snippet editorPanel()}
   <div class="editor-panel glass-card">
     <h3>{editingName === null ? $_('mcp.addServer') : $_('mcp.editServer')}</h3>
+
+    <!-- 精选目录:仅添加模式;点卡片一键预填,已配置同名的置灰 -->
+    {#if editingName === null}
+      <div class="featured-row">
+        {#each MCP_CATALOG as c (c.id)}
+          {@const added = !!servers[c.id]}
+          <button
+            type="button"
+            class="source-card"
+            class:sel={!added && formName === c.id}
+            disabled={added}
+            title={c.docsUrl}
+            onclick={() => pickCatalog(c)}
+          >
+            <span class="source-name">
+              {c.name}
+              {#if added}<span class="added-badge">{$_('mcp.form.catalogAdded')}</span>{/if}
+            </span>
+            <span class="source-desc">{c.description}</span>
+          </button>
+        {/each}
+      </div>
+      {#if catalogHint.length > 0}
+        <p class="catalog-hint">{$_('mcp.form.catalogEnvHint', { values: { keys: catalogHint.join(', ') } })}</p>
+      {/if}
+    {/if}
 
     <div class="form-row">
       <div class="kind-switch" role="tablist">
@@ -909,6 +962,26 @@
   .json-summary { margin: 0; font-size: 0.75rem; color: #4ade80; }
   .form-row input:focus, .form-row textarea:focus { border-color: var(--neon-cyan); }
   .form-row input:disabled { opacity: 0.5; }
+
+  /* 精选目录卡片行(同技能安装区精选源样式) */
+  .featured-row { display: flex; gap: 0.5rem; flex-wrap: wrap; }
+  .source-card {
+    flex: 1; min-width: 170px; max-width: 300px; text-align: left; cursor: pointer;
+    display: flex; flex-direction: column; gap: 0.2rem;
+    background: var(--bg-tertiary); border: 1px solid rgba(255,255,255,0.1);
+    border-radius: 0.5rem; padding: 0.55rem 0.7rem; color: var(--text-primary);
+  }
+  .source-card:hover { border-color: rgba(0,245,255,0.4); }
+  .source-card.sel { border-color: var(--neon-cyan); background: rgba(0,245,255,0.06); }
+  .source-card:disabled { opacity: 0.5; cursor: default; }
+  .source-card:disabled:hover { border-color: rgba(255,255,255,0.1); }
+  .source-name { font-weight: 600; font-size: 0.8rem; display: flex; align-items: center; gap: 0.4rem; }
+  .source-desc { font-size: 0.7rem; color: var(--text-muted); }
+  .added-badge {
+    font-size: 0.62rem; padding: 0.05rem 0.45rem; border-radius: 999px; white-space: nowrap;
+    background: rgba(74,222,128,0.15); color: #4ade80; font-weight: 400;
+  }
+  .catalog-hint { margin: 0; font-size: 0.75rem; color: #fbbf24; }
 
   .kind-switch { display: flex; gap: 0.5rem; }
   .chip {

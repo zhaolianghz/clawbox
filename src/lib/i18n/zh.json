@@ -101,7 +101,9 @@
       "jsonErrEmptyName": "服务器名称不能为空",
       "jsonErrNotServer": "\"{name}\" 不是服务器对象（需要包含 \"command\" 或 \"url\" 的对象）",
       "jsonErrMissingCommand": "\"{name}\"：stdio 类型必须有 \"command\"",
-      "jsonErrMissingUrl": "\"{name}\"：http 类型必须有 \"url\""
+      "jsonErrMissingUrl": "\"{name}\"：http 类型必须有 \"url\"",
+      "catalogAdded": "已添加",
+      "catalogEnvHint": "保存前请填写:{keys}"
     }
   },
   "providers": {

@@ -101,7 +101,9 @@
       "jsonErrEmptyName": "Server name cannot be empty",
       "jsonErrNotServer": "\"{name}\" is not a server object (expected an object with \"command\" or \"url\")",
       "jsonErrMissingCommand": "\"{name}\": stdio server requires \"command\"",
-      "jsonErrMissingUrl": "\"{name}\": http server requires \"url\""
+      "jsonErrMissingUrl": "\"{name}\": http server requires \"url\"",
+      "catalogAdded": "Added",
+      "catalogEnvHint": "Fill in before saving: {keys}"
     }
   },
   "providers": {
