@@ -122,14 +122,14 @@
       "resultTitle": "同步结果",
       "appliedCount": "已应用 {count} 项",
       "failed": "失败",
-      "backup": "备份"
+      "backup": "备份",
+      "selectAll": "全选"
     }
   },
   "providers": {
     "search": "搜索服务商...",
     "all": "全部",
     "website": "官网",
-    "add": "添加",
     "enabled": "已启用",
     "disabled": "已禁用",
     "remove": "移除",
@@ -139,20 +139,50 @@
     "editTitle": "编辑服务商",
     "save": "保存",
     "cancel": "取消",
+    "close": "关闭",
+    "setDefault": "设为默认",
+    "unsetDefault": "取消默认",
+    "defaultBadge": "默认",
+    "syncToAgents": "同步到 Agent",
+    "syncedTo": "已同步到 {agents}",
+    "sync": {
+      "previewTitle": "同步到 Agent",
+      "planning": "正在计算变更...",
+      "unsupported": "暂不支持",
+      "unsupportedReason": {
+        "cursor-agent": "Agent 功能锁定官方后端,不开放自定义端点",
+        "qodercli": "仅支持官方白名单供应商,需账号登录配置"
+      },
+      "error": "错误",
+      "statusSynced": "已同步",
+      "statusPending": "未同步",
+      "statusSkipped": "跳过",
+      "changeCount": "{count} 项变更",
+      "syncOne": "同步",
+      "unchangedCount": "{count} 项未变",
+      "noActiveHint": "未设置默认服务商,部分 agent 将跳过",
+      "action": {
+        "add": "新增",
+        "update": "更新",
+        "remove": "移除",
+        "skip": "跳过"
+      },
+      "confirm": "应用勾选（{count}）",
+      "backup": "备份",
+      "selectAll": "全选"
+    },
     "form": {
       "name": "名称",
-      "baseUrl": "Base URL",
+      "anthropicEndpoint": "Anthropic 端点",
+      "openaiEndpoint": "OpenAI 端点",
       "apiKey": "API Key",
       "defaultModel": "默认模型",
       "enabled": "启用",
       "showKey": "显示密钥",
       "hideKey": "隐藏密钥",
       "nameRequired": "请输入名称",
-      "baseUrlRequired": "请输入 Base URL",
-      "endpointOpenai": "OpenAI 兼容",
-      "endpointAnthropic": "Anthropic 兼容",
-      "testConnection": "测试连接",
-      "testing": "测试中...",
+      "endpointRequired": "至少填写一个端点",
+      "test": "测试",
       "testOk": "延迟 {ms}ms · {count} 个模型",
       "models": "模型列表",
       "addModel": "添加",
@@ -161,7 +191,9 @@
       "fetchModels": "拉取模型列表",
       "noModelsFetched": "连接成功,但未返回模型"
     },
-    "modelCount": "{count} 个模型"
+    "modelCount": "{count} 个模型",
+    "pendingTo": "待同步到 {agents}",
+    "confirmRemove": "确认移除"
   },
   "skills": {
     "title": "技能商店",
@@ -230,7 +262,27 @@
     "selectFlow": "从侧边栏选择一个工作流查看详情",
     "checkUpdates": "检查更新",
     "upToDate": "已是最新",
-    "reinstallHint": "已是最新版,点击可强制重装"
+    "reinstallHint": "已是最新版,点击可强制重装",
+    "syncDetail": {
+      "button": "同步详情",
+      "loading": "正在读取同步状态...",
+      "refresh": "刷新",
+      "providers": "服务商",
+      "mcp": "MCP",
+      "unsupported": "暂不支持",
+      "viaCli": "经 CLI 管理",
+      "none": "无已同步条目",
+      "empty": "尚未同步任何配置",
+      "emptyHint": "到「服务商」或「配置」页发起同步",
+      "state": {
+        "synced": "已同步",
+        "unsynced": "未同步",
+        "outdated": "有更新",
+        "removing": "将移除"
+      },
+      "defaultModel": "默认模型",
+      "skills": "技能"
+    }
   },
   "monitor": {
     "title": "监控",
@@ -271,10 +323,41 @@
     "noItems": "无项目",
     "comingSoon": "即将推出",
     "skills": {
-      "install": "安装",
-      "uninstall": "卸载",
       "enable": "启用",
       "disable": "禁用"
+    },
+    "skillsSync": {
+      "libraryHint": "技能库位于 ~/.agents/skills,通过软链统一下发到各 agent",
+      "import": "导入技能",
+      "scan": "扫描收编",
+      "scanTitle": "存量技能扫描",
+      "rescan": "重新扫描",
+      "scanning": "正在扫描各 agent 的存量技能...",
+      "scanEmpty": "未发现可收编的存量技能",
+      "inLibrary": "库中已有(仅换链)",
+      "adoptSelected": "收编勾选（{count}）",
+      "adoptOk": "已收编",
+      "syncToAgents": "同步到 Agent",
+      "loading": "正在加载技能库...",
+      "empty": "技能库为空 —— 导入一个技能,或扫描收编各 agent 的存量技能",
+      "delete": "删除",
+      "confirmDelete": "确认删除",
+      "cancel": "取消",
+      "install": "安装技能",
+      "repoPlaceholder": "owner/repo 或完整 Git URL",
+      "discover": "获取技能列表",
+      "discovering": "正在克隆仓库并解析技能...",
+      "noSkillsInRepo": "该仓库中未发现技能(SKILL.md)",
+      "alreadyInstalled": "库中已有",
+      "installSelected": "安装勾选（{count}）",
+      "installedOk": "已安装",
+      "securityNote": "技能内容会进入 agent 的提示词,请只安装可信来源",
+      "checkUpdates": "检查更新",
+      "allUpToDate": "所有来源安装的技能均为最新",
+      "hasUpdate": "有更新",
+      "update": "更新",
+      "missingInSource": "源中已移除",
+      "selectAll": "全选"
     }
   }
 }

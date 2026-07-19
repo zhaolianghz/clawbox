@@ -1,11 +1,16 @@
 import { invoke } from '@tauri-apps/api/core';
 
 // 与后端 ProviderSpec(serde camelCase)逐字段对齐,零转换。
+// 双端点契约:旧 baseUrl/flavor 已废弃 —— 后端 load 时自动迁移进槽位,
+// 序列化不再输出,前端类型里不保留。
 export interface ModelProvider {
   id: string;
   name: string;
   apiKey: string;
-  baseUrl: string;
+  /** Anthropic 兼容端点;未配置为空串。与 openaiBaseUrl 至少一个非空 */
+  anthropicBaseUrl: string;
+  /** OpenAI 兼容端点;未配置为空串 */
+  openaiBaseUrl: string;
   defaultModel: string;
   /** 已配置的模型 id 列表(旧配置无此字段,后端 serde default 补空数组) */
   models: string[];

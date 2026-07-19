@@ -29,13 +29,25 @@ pub struct McpServerSpec {
 
 /// Model provider entry. camelCase on the wire so the frontend `ModelProvider`
 /// type maps field-for-field with zero conversion.
+///
+/// 双端点模型:一家服务商可同时有 Anthropic/OpenAI 兼容端点(如 MiniMax),
+/// 各 agent 适配器按自己的协议取槽(见 `crate::sync::providers`)。旧单端点
+/// 字段 baseUrl/flavor 仅保留读兼容,`load_config` 归一化后恒为空、不落盘。
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct ProviderSpec {
     pub id: String,
     pub name: String,
     pub api_key: String,
+    /// 旧单端点字段(读兼容;归一化后恒空,序列化省略)。
+    #[serde(default, skip_serializing_if = "String::is_empty")]
     pub base_url: String,
+    /// Anthropic 兼容端点;空 = 未配置。
+    #[serde(default)]
+    pub anthropic_base_url: String,
+    /// OpenAI 兼容端点;空 = 未配置。
+    #[serde(default)]
+    pub openai_base_url: String,
     #[serde(default)]
     pub default_model: String,
     /// Configured model ids for this provider. Absent in pre-models configs.
@@ -43,6 +55,35 @@ pub struct ProviderSpec {
     pub models: Vec<String>,
     #[serde(default = "default_true")]
     pub enabled: bool,
+    /// 旧协议风格字段 "openai" | "anthropic"(读兼容,仅迁移时定槽;归一化
+    /// 后恒 None,序列化省略)。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub flavor: Option<String>,
+}
+
+/// 旧单端点(baseUrl+flavor)→ 双端点槽位迁移。两槽皆空且旧 baseUrl 非空时
+/// 按 flavor 定槽(缺失则启发式:id=="anthropic" 或 URL 含 "anthropic" →
+/// anthropic,否则 openai);旧字段随后一律清空(skip_serializing_if 保证
+/// 下次落盘不再出现)。幂等:新格式条目原样通过。
+fn normalize_provider_endpoints(p: &mut ProviderSpec) {
+    let legacy = p.base_url.trim().to_string();
+    if p.anthropic_base_url.trim().is_empty()
+        && p.openai_base_url.trim().is_empty()
+        && !legacy.is_empty()
+    {
+        let is_anthropic = match p.flavor.as_deref() {
+            Some("anthropic") => true,
+            Some("openai") => false,
+            _ => p.id == "anthropic" || legacy.to_lowercase().contains("anthropic"),
+        };
+        if is_anthropic {
+            p.anthropic_base_url = legacy;
+        } else {
+            p.openai_base_url = legacy;
+        }
+    }
+    p.base_url = String::new();
+    p.flavor = None;
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, Default)]
@@ -61,6 +102,35 @@ pub struct Config {
     /// Configured model providers. Managed via config_providers_get/set.
     #[serde(default)]
     pub providers: Vec<ProviderSpec>,
+    /// 激活(默认)服务商 id。claude-code / codex 等单激活语义的 agent
+    /// 只下发这一家。None = 未选择。
+    #[serde(default)]
+    pub active_provider_id: Option<String>,
+    /// agent_id -> 上次服务商同步成功后我们写入的键名(各 agent 语义不同,
+    /// 见 sync::providers 各适配器)。驱动 remove 检测:只删我们写过的。
+    #[serde(default)]
+    pub providers_managed: HashMap<String, Vec<String>>,
+    /// agent_id -> 上次技能同步成功后我们建链的技能名(见 sync::skills)。
+    /// remove 只删我们建的、仍指向库内的软链。
+    #[serde(default)]
+    pub skills_managed: HashMap<String, Vec<String>>,
+    /// 库内技能名 -> Git 安装来源(仓库安装的才有;手动导入/收编的没有)。
+    /// 驱动检查更新/覆盖更新;`skills_library_remove` 联动删除。
+    #[serde(default)]
+    pub skills_sources: HashMap<String, SkillSource>,
+}
+
+/// 技能的 Git 安装来源记录。
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+pub struct SkillSource {
+    /// 归一化后的仓库 URL(owner/repo 简写归一为 GitHub https;全 URL 原样)。
+    pub repo: String,
+    /// 仓内相对路径;根目录技能为 ""。
+    pub subdir: String,
+    /// 安装/更新时的 HEAD commit。
+    pub commit: String,
+    /// ISO8601(UTC)。
+    pub installed_at: String,
 }
 
 /// ClawBox config path resolved against an explicit home dir so tests can
@@ -86,8 +156,12 @@ pub fn load_config(home: &Path) -> Result<Config, String> {
     }
     let content = fs::read_to_string(&path)
         .map_err(|e| format!("Failed to read config file {}: {}", path.display(), e))?;
-    serde_json::from_str(&content)
-        .map_err(|e| format!("Config file {} is corrupt: {}", path.display(), e))
+    let mut config: Config = serde_json::from_str(&content)
+        .map_err(|e| format!("Config file {} is corrupt: {}", path.display(), e))?;
+    for p in &mut config.providers {
+        normalize_provider_endpoints(p);
+    }
+    Ok(config)
 }
 
 pub fn save_config(home: &Path, config: &Config) -> Result<(), String> {
@@ -155,12 +229,40 @@ pub async fn config_providers_get() -> Result<Vec<ProviderSpec>, String> {
 }
 
 /// Whole-table overwrite: the frontend always sends the full provider list.
+/// 若激活服务商已不在新列表中,自动清除 active_provider_id,避免悬空引用。
 #[tauri::command]
 pub async fn config_providers_set(providers: Vec<ProviderSpec>) -> Result<(), String> {
     let home = real_home();
     let mut config = load_config(&home)?;
     config.providers = providers;
+    if let Some(id) = &config.active_provider_id {
+        if !config.providers.iter().any(|p| &p.id == id) {
+            config.active_provider_id = None;
+        }
+    }
     save_config(&home, &config)
+}
+
+#[tauri::command]
+pub async fn config_active_provider_get() -> Result<Option<String>, String> {
+    Ok(load_config(&real_home())?.active_provider_id)
+}
+
+/// Home-parameterized core so tests can point it at a tempdir.
+pub fn active_provider_set_at(home: &Path, id: Option<String>) -> Result<(), String> {
+    let mut config = load_config(home)?;
+    if let Some(id) = &id {
+        if !config.providers.iter().any(|p| &p.id == id) {
+            return Err(format!("unknown provider id: {}", id));
+        }
+    }
+    config.active_provider_id = id;
+    save_config(home, &config)
+}
+
+#[tauri::command]
+pub async fn config_active_provider_set(id: Option<String>) -> Result<(), String> {
+    active_provider_set_at(&real_home(), id)
 }
 
 #[cfg(test)]
@@ -173,10 +275,13 @@ mod tests {
             id: id.to_string(),
             name: name.to_string(),
             api_key: "sk-test".to_string(),
-            base_url: "https://api.example.com/v1".to_string(),
+            base_url: String::new(),
+            anthropic_base_url: "https://api.example.com/anthropic".to_string(),
+            openai_base_url: "https://api.example.com/v1".to_string(),
             default_model: "model-x".to_string(),
             models: vec!["model-x".to_string(), "model-y".to_string()],
             enabled: true,
+            flavor: None,
         }
     }
 
@@ -192,12 +297,23 @@ mod tests {
     }
 
     #[test]
-    fn providers_serialize_camel_case() {
+    fn providers_serialize_camel_case_and_omit_legacy_fields() {
         let json = serde_json::to_value(spec("a", "Alpha")).unwrap();
         assert!(json.get("apiKey").is_some());
-        assert!(json.get("baseUrl").is_some());
+        assert!(json.get("anthropicBaseUrl").is_some());
+        assert!(json.get("openaiBaseUrl").is_some());
         assert!(json.get("defaultModel").is_some());
         assert!(json.get("api_key").is_none());
+        // 归一化后的条目不再落盘旧字段
+        assert!(json.get("baseUrl").is_none());
+        assert!(json.get("flavor").is_none());
+        // 旧字段非空时仍可序列化(读兼容对称性;正常路径不会出现)
+        let mut legacy = spec("a", "Alpha");
+        legacy.base_url = "https://x".into();
+        legacy.flavor = Some("openai".into());
+        let json = serde_json::to_value(legacy).unwrap();
+        assert!(json.get("baseUrl").is_some());
+        assert!(json.get("flavor").is_some());
     }
 
     #[test]
@@ -214,15 +330,125 @@ mod tests {
 
         let loaded = load_config(home.path()).unwrap();
         assert!(loaded.providers.is_empty());
+        assert!(loaded.active_provider_id.is_none());
+        assert!(loaded.providers_managed.is_empty());
 
         // Defaulted optional fields also deserialize from sparse entries.
+        // 裸反序列化不做迁移:旧 baseUrl 原样保留(归一化只在 load_config)。
         let sparse: ProviderSpec = serde_json::from_str(
             r#"{"id":"x","name":"X","apiKey":"k","baseUrl":"https://x"}"#,
         )
         .unwrap();
+        assert_eq!(sparse.base_url, "https://x");
+        assert_eq!(sparse.anthropic_base_url, "");
+        assert_eq!(sparse.openai_base_url, "");
         assert_eq!(sparse.default_model, "");
         assert!(sparse.models.is_empty());
         assert!(sparse.enabled);
+        assert!(sparse.flavor.is_none());
+    }
+
+    // ---- 旧单端点 → 双端点迁移 ----
+
+    #[test]
+    fn legacy_single_endpoint_providers_migrate_on_load() {
+        let home = TempHome::new();
+        let path = clawbox_config_path(home.path());
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        // 旧格式:baseUrl+flavor(或缺 flavor 走启发式)
+        fs::write(
+            &path,
+            r#"{
+              "models": {"keep": {"x": 1}}, "channels": {}, "agents": {}, "skills": {},
+              "providers": [
+                {"id": "p1", "name": "Explicit Anth", "apiKey": "k1", "baseUrl": "https://gw.example.com/x", "flavor": "anthropic"},
+                {"id": "p2", "name": "Explicit OA", "apiKey": "k2", "baseUrl": "https://api.deepseek.com/anthropic", "flavor": "openai"},
+                {"id": "p3", "name": "Heuristic Anth", "apiKey": "k3", "baseUrl": "https://api.minimaxi.com/Anthropic"},
+                {"id": "anthropic", "name": "By Id", "apiKey": "k4", "baseUrl": "https://gw.example.com/y"},
+                {"id": "p5", "name": "Heuristic OA", "apiKey": "k5", "baseUrl": "https://api.oa.example.com/v1"}
+              ],
+              "active_provider_id": "p1"
+            }"#,
+        )
+        .unwrap();
+
+        let loaded = load_config(home.path()).unwrap();
+        let by_id = |id: &str| loaded.providers.iter().find(|p| p.id == id).unwrap();
+        // 显式 flavor 优先(即使 URL 含 "anthropic" 也听 flavor 的)
+        assert_eq!(by_id("p1").anthropic_base_url, "https://gw.example.com/x");
+        assert_eq!(by_id("p1").openai_base_url, "");
+        assert_eq!(by_id("p2").openai_base_url, "https://api.deepseek.com/anthropic");
+        assert_eq!(by_id("p2").anthropic_base_url, "");
+        // 启发式:URL 含 anthropic(大小写不敏感)/ id=="anthropic" → anthropic 槽
+        assert_eq!(by_id("p3").anthropic_base_url, "https://api.minimaxi.com/Anthropic");
+        assert_eq!(by_id("anthropic").anthropic_base_url, "https://gw.example.com/y");
+        assert_eq!(by_id("p5").openai_base_url, "https://api.oa.example.com/v1");
+        // 旧字段清空
+        for p in &loaded.providers {
+            assert_eq!(p.base_url, "", "{}", p.id);
+            assert!(p.flavor.is_none(), "{}", p.id);
+        }
+        assert_eq!(loaded.active_provider_id.as_deref(), Some("p1"));
+
+        // 回写:旧字段从文件里消失,其它节不丢
+        save_config(home.path(), &loaded).unwrap();
+        let raw: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+        for p in raw["providers"].as_array().unwrap() {
+            assert!(p.get("baseUrl").is_none(), "{}", p);
+            assert!(p.get("flavor").is_none(), "{}", p);
+            assert!(p.get("anthropicBaseUrl").is_some() || p.get("openaiBaseUrl").is_some());
+        }
+        assert_eq!(raw["models"]["keep"]["x"], serde_json::json!(1));
+        // 再次载入幂等
+        let reloaded = load_config(home.path()).unwrap();
+        assert_eq!(reloaded.providers, loaded.providers);
+    }
+
+    #[test]
+    fn new_format_slots_win_over_stray_legacy_fields() {
+        let home = TempHome::new();
+        let path = clawbox_config_path(home.path());
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        // 槽位已填时,残留的旧 baseUrl 不迁移、只被清掉
+        fs::write(
+            &path,
+            r#"{
+              "models": {}, "channels": {}, "agents": {}, "skills": {},
+              "providers": [
+                {"id": "p1", "name": "New", "apiKey": "k", "baseUrl": "https://stale.example.com",
+                 "flavor": "anthropic", "openaiBaseUrl": "https://api.oa.example.com/v1"}
+              ]
+            }"#,
+        )
+        .unwrap();
+        let loaded = load_config(home.path()).unwrap();
+        assert_eq!(loaded.providers[0].openai_base_url, "https://api.oa.example.com/v1");
+        assert_eq!(loaded.providers[0].anthropic_base_url, "");
+        assert_eq!(loaded.providers[0].base_url, "");
+        assert!(loaded.providers[0].flavor.is_none());
+    }
+
+    #[test]
+    fn active_provider_set_validates_and_roundtrips() {
+        let home = TempHome::new();
+        let mut config = load_config(home.path()).unwrap();
+        config.providers = vec![spec("a", "Alpha")];
+        save_config(home.path(), &config).unwrap();
+
+        // Unknown id rejected.
+        let err = active_provider_set_at(home.path(), Some("nope".into())).unwrap_err();
+        assert!(err.contains("unknown provider id"));
+
+        active_provider_set_at(home.path(), Some("a".into())).unwrap();
+        assert_eq!(
+            load_config(home.path()).unwrap().active_provider_id,
+            Some("a".to_string())
+        );
+
+        // Clearing works.
+        active_provider_set_at(home.path(), None).unwrap();
+        assert!(load_config(home.path()).unwrap().active_provider_id.is_none());
     }
 
     #[test]

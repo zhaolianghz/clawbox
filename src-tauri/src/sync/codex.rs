@@ -55,7 +55,7 @@ fn render(spec: &McpServerSpec) -> Result<(Table, serde_json::Value), String> {
 }
 
 /// Convert a toml_edit item to serde_json for semantic comparison.
-fn item_to_json(item: &Item) -> serde_json::Value {
+pub(crate) fn item_to_json(item: &Item) -> serde_json::Value {
     match item {
         Item::None => serde_json::Value::Null,
         Item::Value(v) => toml_value_to_json(v),

@@ -345,6 +345,16 @@
   }
 
   const checkedCount = $derived(plans.filter((p) => selectable(p) && checked[p.agent_id]).length);
+  const selectablePlans = $derived(plans.filter((p) => selectable(p)));
+  const allPlansPicked = $derived(
+    selectablePlans.length > 0 && selectablePlans.every((p) => checked[p.agent_id])
+  );
+
+  function toggleAllPlans() {
+    const next = { ...checked };
+    for (const p of selectablePlans) next[p.agent_id] = !allPlansPicked;
+    checked = next;
+  }
 
   async function startSync() {
     syncStage = 'planning';
@@ -560,6 +570,16 @@
           <pre class="error-text">{syncError}</pre>
         {:else}
           <div class="plan-list">
+            <label class="check-label select-all-plans">
+              <input
+                type="checkbox"
+                disabled={selectablePlans.length === 0}
+                checked={allPlansPicked}
+                onchange={toggleAllPlans}
+              />
+              <span>{$_('mcp.sync.selectAll')}</span>
+              <span class="selectable-count">{checkedCount}/{selectablePlans.length}</span>
+            </label>
             {#each plans as p (p.agent_id)}
               {@const changes = realChanges(p)}
               {@const canPick = selectable(p)}
@@ -804,6 +824,11 @@
 
   /* 同步面板 */
   .plan-list { display: flex; flex-direction: column; gap: 0.7rem; overflow-y: auto; }
+  .select-all-plans {
+    padding-bottom: 0.45rem; border-bottom: 1px solid rgba(255,255,255,0.08);
+    color: var(--neon-cyan); font-weight: 600;
+  }
+  .selectable-count { color: var(--text-muted); font-weight: 400; font-size: 0.75rem; }
   .plan-item {
     border: 1px solid rgba(255,255,255,0.08); border-radius: 0.5rem;
     padding: 0.7rem 0.9rem; display: flex; flex-direction: column; gap: 0.4rem;

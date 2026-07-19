@@ -2,9 +2,10 @@
 //! lives in `crate::sync` / `crate::commands::config` so it stays testable
 //! against a tempdir home.
 
-use crate::commands::config::{load_config, real_home, save_config, McpServerSpec};
-use crate::sync::{self, AgentPlan, ApplyResult};
-use std::collections::BTreeMap;
+use crate::commands::config::{load_config, real_home, save_config, Config, McpServerSpec, ProviderSpec};
+use crate::sync::{self, providers, AgentPlan, ApplyResult};
+use serde::Serialize;
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::Path;
 
 #[tauri::command]
@@ -81,6 +82,450 @@ pub async fn sync_mcp_apply(agent_ids: Vec<String>) -> Result<Vec<ApplyResult>, 
     Ok(results)
 }
 
+// ---- 服务商(模型)配置下发,模式与 MCP 版一致 ------------------------------
+
+#[tauri::command]
+pub async fn sync_providers_plan() -> Result<Vec<AgentPlan>, String> {
+    let home = real_home();
+    let config = load_config(&home)?;
+    Ok(providers::plan_all(
+        &home,
+        &config.providers,
+        config.active_provider_id.as_deref(),
+        &config.providers_managed,
+    ))
+}
+
+/// Apply provider config to the selected agents one by one. Per-agent
+/// failures land in the ApplyResult; a success updates that agent's
+/// `providers_managed` entry to exactly the set deployed this run.
+#[tauri::command]
+pub async fn sync_providers_apply(agent_ids: Vec<String>) -> Result<Vec<ApplyResult>, String> {
+    let home = real_home();
+    let mut config = load_config(&home)?;
+    let mut results = Vec::with_capacity(agent_ids.len());
+
+    for id in agent_ids {
+        let Some(adapter) = providers::find_adapter(&id) else {
+            results.push(ApplyResult {
+                agent_id: id,
+                ok: false,
+                backup_path: None,
+                applied: 0,
+                error: Some("unknown agent".to_string()),
+            });
+            continue;
+        };
+        let managed = config.providers_managed.get(&id).cloned().unwrap_or_default();
+        let result = providers::apply_one(
+            &home,
+            adapter,
+            &config.providers,
+            config.active_provider_id.as_deref(),
+            &managed,
+        );
+        if result.ok {
+            let deployed =
+                adapter.deployed_names(&config.providers, config.active_provider_id.as_deref());
+            config.providers_managed.insert(id, deployed);
+            save_config(&home, &config)?;
+        }
+        results.push(result);
+    }
+    Ok(results)
+}
+
+// ---- 服务商同步状态(前端卡片标签) ------------------------------------------
+
+#[derive(Serialize, Clone, Debug)]
+pub struct ProviderSyncStatus {
+    pub provider_id: String,
+    /// 已同步且内容一致的 agent(该 provider 当前 spec 已反映在 agent 配置中,无待变更)
+    pub synced_agents: Vec<String>,
+    /// 有待下发变更(add/update/remove)涉及该 provider 的 agent
+    pub pending_agents: Vec<String>,
+}
+
+/// 单激活语义的适配器:plan 只围绕激活服务商展开,变更一律归到它名下。
+const SINGLE_ACTIVE_AGENTS: [&str; 4] = ["claude-code", "codex", "codebuddy", "hermes"];
+/// 多服务商适配器里"默认模型键"的变更项名(openclaw 的 agents.defaults.model、
+/// kimi 的顶层 default_model)—— 不是 provider 条目,add/update 时按适配器
+/// 语义归到激活服务商名下。
+const DEFAULT_MODEL_ITEMS: [&str; 2] = ["agents.defaults.model", "default_model"];
+
+/// `sync_providers_status` 的 home 参数化核心。跑 providers::plan_all 并按
+/// provider 归并每个 agent 的状态。
+///
+/// ChangeItem.name 各家语义(与 sync::providers 各适配器一一对应):
+/// - claude-code / codex / codebuddy / hermes(单激活):Deploy 项 name =
+///   激活服务商显示名,remove 项("ANTHROPIC_*" / "CODEBUDDY_*" /
+///   "clawbox")只出现在 skip 分支 —— 不做名字匹配,整个 agent 的变更按
+///   激活服务商归并;skip/error/unsupported 两边都不进。
+/// - opencode / openclaw / kimi(多服务商):条目 name = 现存服务商的显示名
+///   (kimi 由 clawbox-<id> 条目名映射回来;managed 差集里已消失的条目回落
+///   为原名,匹配不到 → 忽略);默认模型键条目(DEFAULT_MODEL_ITEMS)
+///   add/update 归激活服务商,remove(指向已消失条目)忽略。
+pub fn providers_status_at(
+    home: &Path,
+    specs: &[ProviderSpec],
+    active_id: Option<&str>,
+    managed: &HashMap<String, Vec<String>>,
+) -> Vec<ProviderSyncStatus> {
+    let plans = providers::plan_all(home, specs, active_id, managed);
+    let enabled: Vec<&ProviderSpec> = specs.iter().filter(|p| p.enabled).collect();
+    // 显示名 → id。重名时归并到配置里先出现的一家(rev + 覆盖 = 先者胜)。
+    let id_by_name: HashMap<&str, &str> = enabled
+        .iter()
+        .rev()
+        .map(|p| (p.name.as_str(), p.id.as_str()))
+        .collect();
+    let active = enabled.iter().find(|p| Some(p.id.as_str()) == active_id).copied();
+
+    let mut synced: HashMap<&str, BTreeSet<String>> = HashMap::new();
+    let mut pending: HashMap<&str, BTreeSet<String>> = HashMap::new();
+
+    for plan in &plans {
+        if !plan.supported || plan.error.is_some() || plan.changes.is_empty() {
+            continue;
+        }
+        if SINGLE_ACTIVE_AGENTS.contains(&plan.agent_id.as_str()) {
+            let Some(active) = active else { continue };
+            if plan.changes.iter().any(|c| c.action == "skip") {
+                continue; // skip(含 flavor 不符):该 agent 两边都不进
+            }
+            let bucket = if plan.changes.iter().all(|c| c.action == "unchanged") {
+                &mut synced
+            } else {
+                &mut pending
+            };
+            bucket.entry(active.id.as_str()).or_default().insert(plan.agent_id.clone());
+        } else {
+            for c in &plan.changes {
+                let matched = id_by_name.get(c.name.as_str()).copied();
+                match c.action.as_str() {
+                    "unchanged" => {
+                        if let Some(id) = matched {
+                            synced.entry(id).or_default().insert(plan.agent_id.clone());
+                        }
+                    }
+                    "add" | "update" => {
+                        if let Some(id) = matched {
+                            pending.entry(id).or_default().insert(plan.agent_id.clone());
+                        } else if DEFAULT_MODEL_ITEMS.contains(&c.name.as_str()) {
+                            if let Some(active) = active {
+                                pending
+                                    .entry(active.id.as_str())
+                                    .or_default()
+                                    .insert(plan.agent_id.clone());
+                            }
+                        }
+                    }
+                    // remove 仍指向现存 enabled 服务商(如 base_url 被清空
+                    // 而转 skip)→ 待变更;已消失的 id 匹配不到 → 忽略。
+                    "remove" => {
+                        if let Some(id) = matched {
+                            pending.entry(id).or_default().insert(plan.agent_id.clone());
+                        }
+                    }
+                    _ => {} // skip:两边都不进
+                }
+            }
+        }
+    }
+
+    enabled
+        .iter()
+        .map(|p| {
+            let pend = pending.remove(p.id.as_str()).unwrap_or_default();
+            let mut sync = synced.remove(p.id.as_str()).unwrap_or_default();
+            // 同一 agent 既有 unchanged 又有待变更条目(如 openclaw 服务商
+            // 条目一致但默认模型待更新)时,pending 优先。
+            for a in &pend {
+                sync.remove(a);
+            }
+            ProviderSyncStatus {
+                provider_id: p.id.clone(),
+                synced_agents: sync.into_iter().collect(),
+                pending_agents: pend.into_iter().collect(),
+            }
+        })
+        .collect()
+}
+
+#[tauri::command]
+pub async fn sync_providers_status() -> Result<Vec<ProviderSyncStatus>, String> {
+    let home = real_home();
+    let config = load_config(&home)?;
+    Ok(providers_status_at(
+        &home,
+        &config.providers,
+        config.active_provider_id.as_deref(),
+        &config.providers_managed,
+    ))
+}
+
+// ---- 技能(skills)统一同步:库管理 / 收编 / plan / apply --------------------
+
+/// 库列表 + 来源 join 的 home 参数化核心。
+pub fn skills_library_list_at(home: &Path) -> Result<Vec<sync::skills::SkillEntry>, String> {
+    let sources = load_config(home)?.skills_sources;
+    let mut list = sync::skills::list_library(home)?;
+    for entry in &mut list {
+        entry.source = sources.get(&entry.name).cloned();
+    }
+    Ok(list)
+}
+
+#[tauri::command]
+pub async fn skills_library_list() -> Result<Vec<sync::skills::SkillEntry>, String> {
+    skills_library_list_at(&real_home())
+}
+
+#[tauri::command]
+pub async fn skills_import(src_dir: String) -> Result<sync::skills::SkillEntry, String> {
+    sync::skills::import(&real_home(), Path::new(&src_dir))
+}
+
+/// 删库目录并联动删除来源记录的 home 参数化核心。
+pub fn skills_library_remove_at(home: &Path, name: &str) -> Result<(), String> {
+    sync::skills::remove_from_library(home, name)?;
+    let mut config = load_config(home)?;
+    if config.skills_sources.remove(name).is_some() {
+        save_config(home, &config)?;
+    }
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn skills_library_remove(name: String) -> Result<(), String> {
+    skills_library_remove_at(&real_home(), &name)
+}
+
+#[tauri::command]
+pub async fn skills_scan() -> Result<Vec<sync::skills::AdoptCandidate>, String> {
+    sync::skills::scan(&real_home())
+}
+
+/// 收编成功的条目并入 skills_managed:收编产物就是我们的链,库中删除后的
+/// remove 清理依赖这里记账。
+#[tauri::command]
+pub async fn skills_adopt(
+    items: Vec<sync::skills::AdoptRequest>,
+) -> Result<Vec<sync::skills::AdoptOutcome>, String> {
+    let home = real_home();
+    let outcomes = sync::skills::adopt(&home, &items);
+    let mut config = load_config(&home)?;
+    let mut changed = false;
+    for o in outcomes.iter().filter(|o| o.ok) {
+        let entry = config.skills_managed.entry(o.agent_id.clone()).or_default();
+        if !entry.contains(&o.name) {
+            entry.push(o.name.clone());
+            changed = true;
+        }
+    }
+    if changed {
+        save_config(&home, &config)?;
+    }
+    Ok(outcomes)
+}
+
+#[tauri::command]
+pub async fn sync_skills_plan() -> Result<Vec<AgentPlan>, String> {
+    let home = real_home();
+    let config = load_config(&home)?;
+    Ok(sync::skills::plan_all(&home, &config.skills_managed))
+}
+
+#[tauri::command]
+pub async fn sync_skills_apply(agent_ids: Vec<String>) -> Result<Vec<ApplyResult>, String> {
+    let home = real_home();
+    let mut config = load_config(&home)?;
+    let mut results = Vec::with_capacity(agent_ids.len());
+    for id in agent_ids {
+        let managed = config.skills_managed.get(&id).cloned().unwrap_or_default();
+        let result = sync::skills::apply_one(&home, &id, &managed);
+        if result.ok {
+            let deployed = sync::skills::deployed_names(&home, &result.agent_id);
+            config.skills_managed.insert(id, deployed);
+            save_config(&home, &config)?;
+        }
+        results.push(result);
+    }
+    Ok(results)
+}
+
+// ---- 技能 Git 仓库安装:discover / install / check-updates / update ----------
+
+#[tauri::command]
+pub async fn skills_repo_discover(repo: String) -> Result<sync::skills::RepoDiscovery, String> {
+    sync::skills::repo_discover(&real_home(), &repo)
+}
+
+/// 安装成功的技能写入 skills_sources 的 home 参数化核心。
+pub fn skills_repo_install_at(
+    home: &Path,
+    repo: &str,
+    subdirs: &[String],
+) -> Result<Vec<sync::skills::InstallOutcome>, String> {
+    let (outcomes, sources) = sync::skills::repo_install(home, repo, subdirs)?;
+    if !sources.is_empty() {
+        let mut config = load_config(home)?;
+        config.skills_sources.extend(sources);
+        save_config(home, &config)?;
+    }
+    Ok(outcomes)
+}
+
+#[tauri::command]
+pub async fn skills_repo_install(
+    repo: String,
+    subdirs: Vec<String>,
+) -> Result<Vec<sync::skills::InstallOutcome>, String> {
+    skills_repo_install_at(&real_home(), &repo, &subdirs)
+}
+
+#[tauri::command]
+pub async fn skills_check_updates() -> Result<Vec<sync::skills::SkillUpdateInfo>, String> {
+    let config = load_config(&real_home())?;
+    sync::skills::check_updates(&config.skills_sources)
+}
+
+/// 覆盖更新的 home 参数化核心:更新成功的技能刷新 source 记录。
+pub fn skills_update_at(
+    home: &Path,
+    names: &[String],
+) -> Result<Vec<sync::skills::InstallOutcome>, String> {
+    let mut config = load_config(home)?;
+    let (outcomes, updated) = sync::skills::update(home, names, &config.skills_sources);
+    if !updated.is_empty() {
+        config.skills_sources.extend(updated);
+        save_config(home, &config)?;
+    }
+    Ok(outcomes)
+}
+
+#[tauri::command]
+pub async fn skills_update(names: Vec<String>) -> Result<Vec<sync::skills::InstallOutcome>, String> {
+    skills_update_at(&real_home(), &names)
+}
+
+// ---- agent 同步清单总览(Agent 管理页) --------------------------------------
+
+#[derive(Serialize, Clone, Debug)]
+pub struct SyncedItem {
+    pub name: String,
+    /// "synced"(已下发且一致) | "unsynced"(从未下发) | "outdated"
+    /// (下发过但配置已变,待重新同步) | "removing"(不再管理,下次同步将移除)
+    pub state: String,
+}
+
+#[derive(Serialize, Clone, Debug)]
+pub struct AgentSyncOverview {
+    pub agent_id: String,
+    pub provider_supported: bool,
+    pub mcp_supported: bool,
+    pub skills_supported: bool,
+    /// CLI 型适配器无文件的为空串。
+    pub provider_config_path: String,
+    pub mcp_config_path: String,
+    /// 该 agent 的技能目录。
+    pub skills_config_path: String,
+    pub providers: Vec<SyncedItem>,
+    pub mcp: Vec<SyncedItem>,
+    pub skills: Vec<SyncedItem>,
+    /// plan 失败(如 CLI 未装)时的错误;此时对应列表留空。
+    pub provider_error: Option<String>,
+    pub mcp_error: Option<String>,
+    pub skills_error: Option<String>,
+}
+
+/// ChangeItem → 清单条目:unchanged→synced,add→unsynced(从未下发),
+/// update→outdated(下发过但已变),remove→removing。skip 不进列表 ——
+/// 那是"不会下发",不是"下发了什么"。列表因此 = ClawBox 管理视角
+/// (managed ∪ plan 非 skip 项),不含 agent 原生配置里用户自己的条目。
+fn synced_items(changes: &[sync::ChangeItem]) -> Vec<SyncedItem> {
+    changes
+        .iter()
+        .filter_map(|c| {
+            let state = match c.action.as_str() {
+                "unchanged" => "synced",
+                "add" => "unsynced",
+                "update" => "outdated",
+                "remove" => "removing",
+                _ => return None, // skip
+            };
+            Some(SyncedItem {
+                name: c.name.clone(),
+                state: state.into(),
+            })
+        })
+        .collect()
+}
+
+/// 服务商 / MCP / 技能三份 plan 逐 agent 归并(纯函数,可测)。骨架取服务
+/// 商 plan 的注册表顺序;三个注册表 id 集合一致(注册表测试保证)。
+/// plan_all 在 Err 时 changes 已为空,列表自然留空、错误进 *_error。
+fn merge_overview(
+    provider_plans: Vec<AgentPlan>,
+    mcp_plans: Vec<AgentPlan>,
+    skills_plans: Vec<AgentPlan>,
+) -> Vec<AgentSyncOverview> {
+    let by_id = |plans: Vec<AgentPlan>| -> HashMap<String, AgentPlan> {
+        plans.into_iter().map(|p| (p.agent_id.clone(), p)).collect()
+    };
+    let mut mcp_by_id = by_id(mcp_plans);
+    let mut skills_by_id = by_id(skills_plans);
+    // (supported, config_path, 条目, error);注册表缺席按 unsupported 兜底。
+    let split = |plan: Option<AgentPlan>| match plan {
+        Some(p) => (p.supported, p.config_path, synced_items(&p.changes), p.error),
+        None => (false, String::new(), vec![], None),
+    };
+    provider_plans
+        .into_iter()
+        .map(|pp| {
+            let (mcp_supported, mcp_config_path, mcp, mcp_error) =
+                split(mcp_by_id.remove(&pp.agent_id));
+            let (skills_supported, skills_config_path, skills, skills_error) =
+                split(skills_by_id.remove(&pp.agent_id));
+            AgentSyncOverview {
+                agent_id: pp.agent_id,
+                provider_supported: pp.supported,
+                mcp_supported,
+                skills_supported,
+                provider_config_path: pp.config_path,
+                mcp_config_path,
+                skills_config_path,
+                providers: synced_items(&pp.changes),
+                mcp,
+                skills,
+                provider_error: pp.error,
+                mcp_error,
+                skills_error,
+            }
+        })
+        .collect()
+}
+
+/// `agent_sync_overview` 的 home 参数化核心。
+pub fn agent_sync_overview_at(home: &Path, config: &Config) -> Vec<AgentSyncOverview> {
+    let provider_plans = providers::plan_all(
+        home,
+        &config.providers,
+        config.active_provider_id.as_deref(),
+        &config.providers_managed,
+    );
+    let mcp_plans = sync::plan_all(home, &config.mcp_servers, &config.mcp_managed);
+    let skills_plans = sync::skills::plan_all(home, &config.skills_managed);
+    merge_overview(provider_plans, mcp_plans, skills_plans)
+}
+
+#[tauri::command]
+pub async fn agent_sync_overview() -> Result<Vec<AgentSyncOverview>, String> {
+    let home = real_home();
+    let config = load_config(&home)?;
+    Ok(agent_sync_overview_at(&home, &config))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -121,5 +566,394 @@ mod tests {
         mcp_upsert_at(home.path(), "srv".to_string(), stdio_spec()).unwrap();
         let loaded = load_config(home.path()).unwrap();
         assert!(loaded.mcp_servers.contains_key("srv"));
+    }
+
+    // ---- sync_providers_status 归并 ----
+    // 铁律不变:全程 TempHome;hermes 只走 plan / 手写落盘文件,绝不触发其
+    // apply 的 CLI 段。
+
+    /// 双端点 fixture:anthropic_url / openai_url 任一为空 = 该槽未配置。
+    fn pspec(id: &str, name: &str, anthropic_url: &str, openai_url: &str) -> ProviderSpec {
+        ProviderSpec {
+            id: id.to_string(),
+            name: name.to_string(),
+            api_key: "sk-secret-123".to_string(),
+            base_url: String::new(),
+            anthropic_base_url: anthropic_url.to_string(),
+            openai_base_url: openai_url.to_string(),
+            default_model: "model-a".to_string(),
+            models: vec!["model-a".to_string()],
+            enabled: true,
+            flavor: None,
+        }
+    }
+
+    fn status_of<'a>(all: &'a [ProviderSyncStatus], id: &str) -> &'a ProviderSyncStatus {
+        all.iter()
+            .find(|s| s.provider_id == id)
+            .unwrap_or_else(|| panic!("no status for {}", id))
+    }
+
+    fn apply_provider_adapter(home: &Path, agent: &str, specs: &[ProviderSpec], active: Option<&str>) {
+        providers::find_adapter(agent)
+            .unwrap()
+            .apply(home, specs, active, &[])
+            .unwrap();
+    }
+
+    #[test]
+    fn status_multi_provider_synced_then_pending() {
+        let home = TempHome::new();
+        let mut specs = vec![pspec("p-oa", "OA Relay", "", "https://api.oa.example.com/v1")];
+        let managed = HashMap::new();
+
+        // 未写入任何 agent → 多服务商适配器全是 add → pending
+        let st = providers_status_at(home.path(), &specs, None, &managed);
+        assert_eq!(status_of(&st, "p-oa").pending_agents, vec!["kimi", "openclaw", "opencode"]);
+        assert!(status_of(&st, "p-oa").synced_agents.is_empty());
+
+        // 写入三家多服务商适配器后内容一致 → synced
+        apply_provider_adapter(home.path(), "opencode", &specs, None);
+        apply_provider_adapter(home.path(), "openclaw", &specs, None);
+        apply_provider_adapter(home.path(), "kimi", &specs, None);
+        let st = providers_status_at(home.path(), &specs, None, &managed);
+        assert_eq!(status_of(&st, "p-oa").synced_agents, vec!["kimi", "openclaw", "opencode"]);
+        assert!(status_of(&st, "p-oa").pending_agents.is_empty());
+
+        // spec 改动(端点)→ 回到 pending
+        specs[0].openai_base_url = "https://api2.oa.example.com/v1".to_string();
+        let st = providers_status_at(home.path(), &specs, None, &managed);
+        assert_eq!(status_of(&st, "p-oa").pending_agents, vec!["kimi", "openclaw", "opencode"]);
+        assert!(status_of(&st, "p-oa").synced_agents.is_empty());
+    }
+
+    #[test]
+    fn status_single_active_synced_pending_and_inactive_untouched() {
+        let home = TempHome::new();
+        let specs = vec![
+            pspec("p-anth", "Anthro Relay", "https://relay.example.com/anthropic", ""),
+            pspec("p-oa", "OA Relay", "", "https://api.oa.example.com/v1"),
+        ];
+        let managed = HashMap::new();
+
+        // 激活只有 Anthropic 端点的服务商:claude-code/hermes 参与
+        // (add→pending),codex/codebuddy 无 OpenAI 槽 → skip → 两边都不进
+        let st = providers_status_at(home.path(), &specs, Some("p-anth"), &managed);
+        let anth = status_of(&st, "p-anth");
+        assert_eq!(anth.pending_agents, vec!["claude-code", "hermes", "kimi", "openclaw", "opencode"]);
+        assert!(anth.synced_agents.is_empty());
+        // 非激活服务商不因单激活适配器进任何数组,只有多服务商适配器的条目
+        let oa = status_of(&st, "p-oa");
+        assert_eq!(oa.pending_agents, vec!["kimi", "openclaw", "opencode"]);
+        assert!(oa.synced_agents.is_empty());
+        for s in &st {
+            for skipped in ["codex", "codebuddy"] {
+                assert!(!s.synced_agents.iter().any(|a| a == skipped), "{:?}", s);
+                assert!(!s.pending_agents.iter().any(|a| a == skipped), "{:?}", s);
+            }
+        }
+
+        // claude-code 落盘 → 移入 synced;hermes 手写落盘文件(不触 CLI)后
+        // 同样移入 synced
+        apply_provider_adapter(home.path(), "claude-code", &specs, Some("p-anth"));
+        crate::sync::test_util::write_file(
+            home.path(),
+            &std::path::PathBuf::from(".hermes").join("config.yaml"),
+            "model:\n  default: model-a\n  provider: p-anth\n  base_url: https://relay.example.com/anthropic\n",
+        );
+        crate::sync::test_util::write_file(
+            home.path(),
+            &std::path::PathBuf::from(".hermes").join(".env"),
+            "CUSTOM_PROVIDER_P_ANTH_KEY=sk-secret-123\n",
+        );
+        let st = providers_status_at(home.path(), &specs, Some("p-anth"), &managed);
+        let anth = status_of(&st, "p-anth");
+        assert_eq!(anth.synced_agents, vec!["claude-code", "hermes"]);
+        assert_eq!(anth.pending_agents, vec!["kimi", "openclaw", "opencode"]);
+
+        // 切激活到 OpenAI 端点服务商:codex/codebuddy 作为单激活组参与
+        let st = providers_status_at(home.path(), &specs, Some("p-oa"), &managed);
+        let oa = status_of(&st, "p-oa");
+        assert!(oa.pending_agents.iter().any(|a| a == "codex"), "{:?}", oa);
+        assert!(oa.pending_agents.iter().any(|a| a == "codebuddy"), "{:?}", oa);
+    }
+
+    #[test]
+    fn status_no_active_means_no_single_adapter_entries() {
+        let home = TempHome::new();
+        let specs = vec![pspec("p-anth", "Anthro Relay", "https://relay.example.com/anthropic", "")];
+        let st = providers_status_at(home.path(), &specs, None, &HashMap::new());
+        let anth = status_of(&st, "p-anth");
+        assert_eq!(anth.pending_agents, vec!["kimi", "openclaw", "opencode"]);
+        for agent in ["claude-code", "codex", "codebuddy", "hermes"] {
+            assert!(!anth.synced_agents.iter().any(|a| a == agent));
+            assert!(!anth.pending_agents.iter().any(|a| a == agent));
+        }
+    }
+
+    #[test]
+    fn status_openclaw_default_model_change_is_pending_and_wins_over_synced() {
+        let home = TempHome::new();
+        let mut specs = vec![pspec("p-oa", "OA Relay", "", "https://api.oa.example.com/v1")];
+        apply_provider_adapter(home.path(), "opencode", &specs, Some("p-oa"));
+        apply_provider_adapter(home.path(), "openclaw", &specs, Some("p-oa"));
+
+        // 只改 defaultModel:openclaw 的服务商条目仍 unchanged,但
+        // agents.defaults.model 待更新 → openclaw 归 pending(去重后不得
+        // 同时出现在 synced);opencode 原生值不含 defaultModel → 仍 synced
+        specs[0].default_model = "model-b".to_string();
+        let st = providers_status_at(home.path(), &specs, Some("p-oa"), &HashMap::new());
+        let oa = status_of(&st, "p-oa");
+        assert!(oa.pending_agents.iter().any(|a| a == "openclaw"), "{:?}", oa);
+        assert!(!oa.synced_agents.iter().any(|a| a == "openclaw"), "{:?}", oa);
+        assert!(oa.synced_agents.iter().any(|a| a == "opencode"), "{:?}", oa);
+    }
+
+    #[test]
+    fn status_blank_or_disabled_provider_edges() {
+        let home = TempHome::new();
+        // 两个端点槽皆空:处处 skip → 两个数组都空("未同步")
+        let mut blank = pspec("p-blank", "Blank", "  ", "");
+        let mut disabled = pspec("p-off", "Off", "", "https://off.example.com");
+        disabled.enabled = false;
+        let specs = vec![blank.clone(), disabled];
+        let st = providers_status_at(home.path(), &specs, None, &HashMap::new());
+        let b = status_of(&st, "p-blank");
+        assert!(b.synced_agents.is_empty() && b.pending_agents.is_empty(), "{:?}", b);
+        // disabled 不出现在输出
+        assert!(!st.iter().any(|s| s.provider_id == "p-off"));
+
+        // 曾下发、现端点清空:remove 仍指向现存 enabled 服务商 → pending
+        blank.openai_base_url = "https://api.oa.example.com/v1".to_string();
+        let good = vec![blank.clone()];
+        apply_provider_adapter(home.path(), "opencode", &good, None);
+        blank.openai_base_url = "  ".to_string();
+        let managed: HashMap<String, Vec<String>> =
+            [("opencode".to_string(), vec!["p-blank".to_string()])].into();
+        let st = providers_status_at(home.path(), &[blank], None, &managed);
+        assert_eq!(status_of(&st, "p-blank").pending_agents, vec!["opencode"]);
+    }
+
+    // ---- 技能安装:list join source / remove 联动清理 ----
+
+    #[test]
+    fn skills_source_joins_into_list_and_remove_cleans_up() {
+        let home = TempHome::new();
+        // 本地仓造一个技能并安装(记录 source)
+        let repo = home.path().join("srcrepo");
+        fs::create_dir_all(repo.join("sk")).unwrap();
+        fs::write(repo.join("sk").join("SKILL.md"), "---\ndescription: d\n---\n").unwrap();
+        for args in [
+            vec!["init"],
+            vec!["add", "-A"],
+            vec!["commit", "-m", "init"],
+        ] {
+            let out = std::process::Command::new("git")
+                .args(&args)
+                .current_dir(&repo)
+                .env("GIT_TERMINAL_PROMPT", "0")
+                .env("GIT_AUTHOR_NAME", "t")
+                .env("GIT_AUTHOR_EMAIL", "t@example.com")
+                .env("GIT_COMMITTER_NAME", "t")
+                .env("GIT_COMMITTER_EMAIL", "t@example.com")
+                .output()
+                .unwrap();
+            assert!(out.status.success(), "git {:?}", args);
+        }
+        let url = format!("file://{}", repo.display());
+        let outcomes = skills_repo_install_at(home.path(), &url, &["sk".to_string()]).unwrap();
+        assert!(outcomes[0].ok, "{}", outcomes[0].detail);
+        // config 落了 source;list join 出来
+        let config = load_config(home.path()).unwrap();
+        assert_eq!(config.skills_sources["sk"].repo, url);
+        let list = skills_library_list_at(home.path()).unwrap();
+        let sk = list.iter().find(|s| s.name == "sk").unwrap();
+        let src = sk.source.as_ref().expect("source joined");
+        assert_eq!(src.repo, url);
+        assert_eq!(src.subdir, "sk");
+        assert_eq!(src.commit.len(), 40);
+        // 手动导入的技能没有 source
+        fs::create_dir_all(sync::skills::library_dir(home.path()).join("manual")).unwrap();
+        fs::write(
+            sync::skills::library_dir(home.path()).join("manual").join("SKILL.md"),
+            "---\n---\n",
+        )
+        .unwrap();
+        let list = skills_library_list_at(home.path()).unwrap();
+        assert!(list.iter().find(|s| s.name == "manual").unwrap().source.is_none());
+
+        // remove 联动删 source 记录
+        skills_library_remove_at(home.path(), "sk").unwrap();
+        assert!(!sync::skills::library_dir(home.path()).join("sk").exists());
+        assert!(load_config(home.path()).unwrap().skills_sources.get("sk").is_none());
+    }
+
+    // ---- agent_sync_overview 归并 ----
+
+    fn plan(id: &str, supported: bool, changes: Vec<(&str, &str)>, error: Option<&str>) -> AgentPlan {
+        AgentPlan {
+            agent_id: id.to_string(),
+            supported,
+            config_path: if supported { format!("/home/x/{}.json", id) } else { String::new() },
+            changes: changes
+                .into_iter()
+                .map(|(name, action)| sync::ChangeItem {
+                    name: name.to_string(),
+                    action: action.to_string(),
+                    detail: String::new(),
+                })
+                .collect(),
+            error: error.map(|e| e.to_string()),
+        }
+    }
+
+    fn overview_of<'a>(all: &'a [AgentSyncOverview], id: &str) -> &'a AgentSyncOverview {
+        all.iter()
+            .find(|o| o.agent_id == id)
+            .unwrap_or_else(|| panic!("no overview for {}", id))
+    }
+
+    #[test]
+    fn overview_merge_maps_actions_filters_skip_and_carries_errors() {
+        let provider_plans = vec![
+            plan(
+                "claude-code",
+                true,
+                vec![("OA Relay", "unchanged"), ("skipped", "skip")],
+                None,
+            ),
+            plan("opencode", true, vec![("A", "add"), ("B", "update"), ("C", "remove")], None),
+            plan("hermes", true, vec![], Some("hermes CLI exploded")),
+            plan("cursor-agent", false, vec![], None),
+        ];
+        let mcp_plans = vec![
+            plan("claude-code", true, vec![("srv", "update")], None),
+            plan("opencode", true, vec![("srv", "skip")], None),
+            plan("hermes", true, vec![("srv", "unchanged")], None),
+            plan("cursor-agent", false, vec![], None),
+        ];
+        let skills_plans = vec![
+            plan("claude-code", true, vec![("sk", "add"), ("old", "remove")], None),
+            plan("opencode", true, vec![("sk", "unchanged")], None),
+            plan("hermes", true, vec![], Some("library unreadable")),
+            plan("cursor-agent", false, vec![], None),
+        ];
+        let all = merge_overview(provider_plans, mcp_plans, skills_plans);
+        assert_eq!(all.len(), 4);
+
+        // 状态映射:unchanged→synced;skip 不进列表
+        let cc = overview_of(&all, "claude-code");
+        assert_eq!(cc.providers.len(), 1);
+        assert_eq!((cc.providers[0].name.as_str(), cc.providers[0].state.as_str()), ("OA Relay", "synced"));
+        assert_eq!(cc.mcp[0].state, "outdated");
+        assert!(cc.provider_config_path.ends_with("claude-code.json"));
+        // add→unsynced,update→outdated,remove→removing
+        let oc = overview_of(&all, "opencode");
+        let states: Vec<(&str, &str)> =
+            oc.providers.iter().map(|i| (i.name.as_str(), i.state.as_str())).collect();
+        assert_eq!(states, vec![("A", "unsynced"), ("B", "outdated"), ("C", "removing")]);
+        assert!(oc.mcp.is_empty()); // 全 skip → 空列表
+        // skills 列表与状态映射
+        let cc_states: Vec<(&str, &str)> =
+            cc.skills.iter().map(|i| (i.name.as_str(), i.state.as_str())).collect();
+        assert_eq!(cc_states, vec![("sk", "unsynced"), ("old", "removing")]);
+        assert!(cc.skills_supported);
+        let oc_skills: Vec<&str> = oc.skills.iter().map(|i| i.state.as_str()).collect();
+        assert_eq!(oc_skills, vec!["synced"]);
+        // 单侧 plan 错误:provider_error 填充、providers 空,mcp 侧照常;
+        // skills 侧错误进 skills_error
+        let hermes = overview_of(&all, "hermes");
+        assert_eq!(hermes.provider_error.as_deref(), Some("hermes CLI exploded"));
+        assert!(hermes.providers.is_empty());
+        assert_eq!(hermes.mcp[0].state, "synced");
+        assert!(hermes.mcp_error.is_none());
+        assert_eq!(hermes.skills_error.as_deref(), Some("library unreadable"));
+        assert!(hermes.skills.is_empty());
+        // unsupported:三侧 supported=false、列表空、无错误
+        let cursor = overview_of(&all, "cursor-agent");
+        assert!(!cursor.provider_supported && !cursor.mcp_supported && !cursor.skills_supported);
+        assert!(cursor.providers.is_empty() && cursor.mcp.is_empty() && cursor.skills.is_empty());
+        assert!(cursor.provider_error.is_none() && cursor.mcp_error.is_none() && cursor.skills_error.is_none());
+    }
+
+    #[test]
+    fn overview_end_to_end_covers_registry_with_real_plans() {
+        let home = TempHome::new();
+        let mut config = Config::default();
+        config.providers = vec![pspec("p-oa", "OA Relay", "", "https://api.oa.example.com/v1")];
+        config.active_provider_id = Some("p-oa".to_string());
+        config.mcp_servers.insert("srv".to_string(), stdio_spec());
+
+        // 下发 codex 的服务商配置和 claude-code 的 MCP 配置
+        apply_provider_adapter(home.path(), "codex", &config.providers, Some("p-oa"));
+        sync::find_adapter("claude-code")
+            .unwrap()
+            .apply_mcp(home.path(), &config.mcp_servers, &[])
+            .unwrap();
+        config.providers_managed.insert("codex".to_string(), vec!["clawbox".to_string()]);
+        config.mcp_managed.insert("claude-code".to_string(), vec!["srv".to_string()]);
+        // 库放一个技能,下发到 opencode
+        let skill_dir = sync::skills::library_dir(home.path()).join("myskill");
+        fs::create_dir_all(&skill_dir).unwrap();
+        fs::write(skill_dir.join("SKILL.md"), "---\nname: myskill\n---\n").unwrap();
+        sync::skills::apply_agent(home.path(), "opencode", &[]).unwrap();
+        config.skills_managed.insert("opencode".to_string(), vec!["myskill".to_string()]);
+
+        let all = agent_sync_overview_at(home.path(), &config);
+        assert_eq!(all.len(), 9); // 注册表全覆盖
+        let codex = overview_of(&all, "codex");
+        assert_eq!((codex.providers[0].name.as_str(), codex.providers[0].state.as_str()), ("OA Relay", "synced"));
+        assert!(codex.provider_config_path.ends_with("config.toml"));
+        let cc = overview_of(&all, "claude-code");
+        assert_eq!((cc.mcp[0].name.as_str(), cc.mcp[0].state.as_str()), ("srv", "synced"));
+        // claude-code 无 Anthropic 端点 → provider 侧 skip,列表为空(不出现)
+        assert!(cc.providers.is_empty());
+        // skills:opencode 已建链 → synced;claude-code 未下发 → unsynced;
+        // codex 不支持技能
+        let oc = overview_of(&all, "opencode");
+        assert!(oc.skills_supported);
+        assert!(oc.skills_config_path.ends_with("skills"), "{}", oc.skills_config_path);
+        assert_eq!((oc.skills[0].name.as_str(), oc.skills[0].state.as_str()), ("myskill", "synced"));
+        assert_eq!((cc.skills[0].name.as_str(), cc.skills[0].state.as_str()), ("myskill", "unsynced"));
+        assert!(!codex.skills_supported && codex.skills.is_empty());
+        // 混合支持:cursor-agent 服务商侧 unsupported、MCP 侧 supported
+        let cursor = overview_of(&all, "cursor-agent");
+        assert!(!cursor.provider_supported && cursor.mcp_supported);
+        assert!(cursor.providers.is_empty());
+        // 全 unsupported 占位:qodercli 列表空、无错误
+        let qoder = overview_of(&all, "qodercli");
+        assert!(!qoder.provider_supported && !qoder.mcp_supported && !qoder.skills_supported);
+        assert!(qoder.providers.is_empty() && qoder.mcp.is_empty() && qoder.skills.is_empty());
+        assert!(qoder.provider_error.is_none() && qoder.mcp_error.is_none());
+
+        // spec 改动 → outdated(曾下发过);MCP desired 清空但 managed 记着 →
+        // removing;库删技能但 managed 记着 → skills removing
+        config.providers[0].openai_base_url = "https://api2.oa.example.com/v1".to_string();
+        config.mcp_servers.clear();
+        sync::skills::remove_from_library(home.path(), "myskill").unwrap();
+        let all = agent_sync_overview_at(home.path(), &config);
+        let codex = overview_of(&all, "codex");
+        assert_eq!(codex.providers[0].state, "outdated");
+        let cc = overview_of(&all, "claude-code");
+        assert_eq!((cc.mcp[0].name.as_str(), cc.mcp[0].state.as_str()), ("srv", "removing"));
+        let oc = overview_of(&all, "opencode");
+        assert_eq!((oc.skills[0].name.as_str(), oc.skills[0].state.as_str()), ("myskill", "removing"));
+
+        // 服务商侧 plan 失败 → provider_error,同 agent 的 mcp 侧不受影响。
+        // claude-code 两侧文件独立:provider 读 .claude/settings.json,
+        // MCP 读 .claude.json —— 只写坏前者。
+        fs::create_dir_all(home.path().join(".claude")).unwrap();
+        fs::write(home.path().join(".claude").join("settings.json"), "{ broken").unwrap();
+        config.active_provider_id = None; // 让 claude-code 走 plan 的文件读取路径
+        let all = agent_sync_overview_at(home.path(), &config);
+        let cc = overview_of(&all, "claude-code");
+        assert!(
+            cc.provider_error.as_deref().unwrap_or_default().contains("parse"),
+            "{:?}",
+            cc.provider_error
+        );
+        assert!(cc.providers.is_empty());
+        assert!(cc.mcp_error.is_none());
+        assert_eq!((cc.mcp[0].name.as_str(), cc.mcp[0].state.as_str()), ("srv", "removing"));
     }
 }

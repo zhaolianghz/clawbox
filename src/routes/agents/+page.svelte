@@ -3,6 +3,7 @@
   import { _ } from 'svelte-i18n';
   import { agents_list, agent_install, type AgentStatus } from '../../lib/api/agents';
   import { checkLatestVersions, extractSemver, type LatestInfo } from '../../lib/api/latest';
+  import { agent_sync_overview, type AgentSyncOverview, type SyncedItem } from '../../lib/api/providerSync';
   import AgentLogo from '../../lib/components/AgentLogo.svelte';
 
   let agents = $state<AgentStatus[]>([]);
@@ -86,6 +87,76 @@
     if (!info || info.latest === null || extractSemver(a.version) === null) return 'unknown';
     return info.hasUpdate ? 'update' : 'latest';
   }
+
+  // ---------- 同步详情内联展开(全局无弹窗;面板整行插在所点卡片所在行的行尾之后) ----------
+  let syncDetailId = $state<string | null>(null); // 当前展开的卡片;再点收起
+  let overview = $state<Record<string, AgentSyncOverview> | null>(null); // null = 未加载(页面级缓存)
+  let overviewLoading = $state(false);
+  let overviewError = $state('');
+
+  // 网格实际列数:读浏览器解析后的 grid-template-columns(兼容媒体查询变列),
+  // ResizeObserver 跟踪变化——面板插入位置(行尾)依赖它。
+  let gridEl = $state<HTMLElement | null>(null);
+  let gridCols = $state(1);
+  $effect(() => {
+    if (!gridEl) return;
+    const update = () => {
+      gridCols = getComputedStyle(gridEl!).gridTemplateColumns.split(' ').filter(Boolean).length || 1;
+    };
+    update();
+    const ro = new ResizeObserver(update);
+    ro.observe(gridEl);
+    return () => ro.disconnect();
+  });
+
+  /** 展开卡片所在行的行尾索引;面板渲染在该索引的卡片之后(整行插入,不挤动同行卡片) */
+  const syncRowEnd = $derived.by(() => {
+    if (syncDetailId === null) return -1;
+    const idx = agents.findIndex((a) => a.id === syncDetailId);
+    if (idx < 0) return -1;
+    return Math.min(Math.floor(idx / gridCols) * gridCols + gridCols - 1, agents.length - 1);
+  });
+
+  /** 首次展开时拉一次全量总览并缓存;force 供展开区「刷新」按钮重拉 */
+  async function loadOverview(force = false) {
+    if (overviewLoading) return;
+    if (overview !== null && !force) return;
+    overviewLoading = true;
+    overviewError = '';
+    try {
+      const list = await agent_sync_overview();
+      overview = Object.fromEntries(list.map((o) => [o.agent_id, o]));
+    } catch (e) {
+      // 后端未就绪(命令不存在)或读文件失败:展开区显示红字,不炸页面
+      overviewError = String(e);
+    } finally {
+      overviewLoading = false;
+    }
+  }
+
+  function toggleSyncDetail(id: string) {
+    if (syncDetailId === id) {
+      syncDetailId = null;
+      return;
+    }
+    syncDetailId = id;
+    void loadOverview();
+  }
+
+  /** 数据未加载时先渲染按钮(点击即触发加载);加载后仅 supported 的 agent 保留 */
+  function showSyncDetailBtn(id: string): boolean {
+    if (overview === null) return true;
+    const o = overview[id];
+    return !!o && (o.provider_supported || o.mcp_supported);
+  }
+
+  /** 条目显示名:后端个别条目是配置键名(openclaw/kimi 的默认模型键),转成人话 */
+  function itemLabel(name: string): string {
+    if (name === 'agents.defaults.model' || name === 'default_model') {
+      return $_('agents.syncDetail.defaultModel');
+    }
+    return name;
+  }
 </script>
 
 <div class="agents-page">
@@ -104,8 +175,8 @@
   {#if isLoading && agents.length === 0}
     <div class="loading glass-card"><span class="spinner"></span> {$_('agents.loading')}</div>
   {:else}
-    <div class="agent-grid">
-      {#each agents as a (a.id)}
+    <div class="agent-grid" bind:this={gridEl}>
+      {#each agents as a, i (a.id)}
         <div class="glass-card agent-card">
           <div class="card-head">
             <AgentLogo id={a.id} label={a.label} />
@@ -164,6 +235,13 @@
                 </button>
               {/if}
             {/if}
+            {#if showSyncDetailBtn(a.id)}
+              <button
+                class="btn"
+                class:active={syncDetailId === a.id}
+                onclick={() => toggleSyncDetail(a.id)}
+              >{$_('agents.syncDetail.button')}</button>
+            {/if}
             {#if a.docs_url}
               <a class="docs-link" href={a.docs_url} target="_blank" rel="noreferrer">{$_('agents.docs')}</a>
             {/if}
@@ -172,16 +250,89 @@
             <pre class="install-error">{errors[a.id]}</pre>
           {/if}
         </div>
+
+        <!-- 同步详情:插在展开卡片所在行的行尾之后,整行占满,同行卡片位置不动 -->
+        {#if i === syncRowEnd}
+          <div class="glass-card sync-detail">
+            <div class="sync-detail-title">
+              {agents.find((x) => x.id === syncDetailId)?.label} · {$_('agents.syncDetail.button')}
+            </div>
+            {#if overviewLoading}
+              <div class="sync-loading"><span class="spinner small"></span> {$_('agents.syncDetail.loading')}</div>
+            {:else if overviewError}
+              <pre class="install-error">{overviewError}</pre>
+              <div class="sync-detail-foot">
+                <button class="btn" onclick={() => loadOverview(true)}>{$_('agents.syncDetail.refresh')}</button>
+              </div>
+            {:else}
+              {@const o = syncDetailId !== null ? overview?.[syncDetailId] : undefined}
+              {#if !o}
+                <span class="sync-muted">{$_('agents.syncDetail.empty')}</span>
+              {:else if o.providers.length === 0 && o.mcp.length === 0 && o.skills.length === 0 && !o.provider_error && !o.mcp_error && !o.skills_error}
+                <p class="sync-empty">{$_('agents.syncDetail.empty')}</p>
+                <p class="sync-muted">{$_('agents.syncDetail.emptyHint')}</p>
+                <div class="sync-detail-foot">
+                  <button class="btn" onclick={() => loadOverview(true)}>{$_('agents.syncDetail.refresh')}</button>
+                </div>
+              {:else}
+                {@render syncSection($_('agents.syncDetail.providers'), o.provider_supported, o.providers, o.provider_config_path, o.provider_error, false)}
+                {@render syncSection($_('agents.syncDetail.mcp'), o.mcp_supported, o.mcp, o.mcp_config_path, o.mcp_error, true)}
+                {@render syncSection($_('agents.syncDetail.skills'), o.skills_supported, o.skills, o.skills_config_path, o.skills_error, false)}
+                <div class="sync-detail-foot">
+                  <button class="btn" onclick={() => loadOverview(true)}>{$_('agents.syncDetail.refresh')}</button>
+                </div>
+              {/if}
+            {/if}
+          </div>
+        {/if}
       {/each}
     </div>
   {/if}
 </div>
 
+<!-- 同步详情的一个小节(服务商 / MCP 同构;MCP 的 CLI 型 path 为空串 → 「经 CLI 管理」) -->
+{#snippet syncSection(
+  title: string,
+  supported: boolean,
+  items: SyncedItem[],
+  configPath: string,
+  err: string | null,
+  cliWhenNoPath: boolean
+)}
+  <div class="sync-section">
+    <span class="sync-section-title">{title}</span>
+    {#if !supported}
+      <span class="sync-muted">{$_('agents.syncDetail.unsupported')}</span>
+    {:else}
+      {#if err}
+        <pre class="install-error">{err}</pre>
+      {/if}
+      {#if items.length > 0}
+        <div class="sync-chips">
+          {#each items as item (item.name)}
+            <span class="sync-chip state-{item.state}">
+              {itemLabel(item.name)}
+              <span class="chip-state">{$_(`agents.syncDetail.state.${item.state}`)}</span>
+            </span>
+          {/each}
+        </div>
+      {:else if !err}
+        <span class="sync-muted">{$_('agents.syncDetail.none')}</span>
+      {/if}
+      {#if configPath}
+        <code class="sync-path" title={configPath}>{configPath}</code>
+      {:else if cliWhenNoPath}
+        <span class="sync-muted">{$_('agents.syncDetail.viaCli')}</span>
+      {/if}
+    {/if}
+  </div>
+{/snippet}
+
 <style>
   .agents-page { padding: 1.5rem; display: flex; flex-direction: column; gap: 1rem; }
   .page-header { display: flex; align-items: baseline; gap: 1rem; }
-  .page-header h1 { margin: 0; }
-  .subtitle { opacity: 0.6; flex: 1; }
+  .page-header h1 { margin: 0; font-size: 1.25rem; }
+  .subtitle { opacity: 0.6; flex: 1; font-size: 0.85rem; }
   .agent-grid {
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -194,7 +345,7 @@
   .card-head { display: flex; align-items: center; gap: 0.8rem; }
   .head-info { display: flex; flex-direction: column; gap: 0.2rem; min-width: 0; }
   .title-line { display: flex; align-items: center; gap: 0.5rem; }
-  .agent-label { font-weight: 600; }
+  .agent-label { font-weight: 600; font-size: 0.9rem; }
   .kind-badge { font-size: 0.7rem; padding: 0.1rem 0.5rem; border-radius: 999px; background: rgba(94, 234, 212, 0.15); color: #5eead4; white-space: nowrap; }
   .version { font-family: monospace; font-size: 0.75rem; opacity: 0.7; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; transition: color 0.3s; }
   .version.upgraded { color: #4ade80; opacity: 1; }
@@ -207,11 +358,48 @@
   .detect-only { font-size: 0.8rem; opacity: 0.5; }
   .docs-link { font-size: 0.8rem; color: #5eead4; margin-left: auto; }
   .install-error { font-size: 0.75rem; color: #f87171; white-space: pre-wrap; margin: 0; }
-  .btn { padding: 0.3rem 0.9rem; border-radius: 6px; border: 1px solid rgba(255,255,255,0.15); background: transparent; color: inherit; cursor: pointer; }
+  .btn { padding: 0.3rem 0.9rem; border-radius: 6px; border: 1px solid rgba(255,255,255,0.15); background: transparent; color: inherit; cursor: pointer; font-size: 0.75rem; }
+  /* 页头按钮:无样式定义时会继承根字号显得过大,与 .btn 同基准 */
+  .refresh-btn {
+    padding: 0.3rem 0.9rem; border-radius: 6px; border: 1px solid rgba(255,255,255,0.15);
+    background: transparent; color: inherit; cursor: pointer; font-size: 0.75rem;
+    display: inline-flex; align-items: center; gap: 0.4rem;
+  }
+  .refresh-btn:disabled { opacity: 0.5; cursor: default; }
   .btn.primary { background: rgba(94, 234, 212, 0.15); border-color: #5eead4; color: #5eead4; }
   .btn.danger { background: rgba(248, 113, 113, 0.15); border-color: #f87171; color: #f87171; }
   .btn.subtle { opacity: 0.55; }
+  .btn.active { border-color: #5eead4; color: #5eead4; }
   .btn:disabled { opacity: 0.5; cursor: default; }
+
+  /* 同步详情:独占一整行的展开面板,插在展开卡片所在行之后 */
+  .sync-detail {
+    grid-column: 1 / -1;
+    padding: 0.9rem 1.1rem; display: flex; flex-direction: column; gap: 0.6rem;
+  }
+  .sync-detail-title { font-size: 0.85rem; font-weight: 600; }
+  .sync-loading { display: flex; align-items: center; gap: 0.5rem; font-size: 0.8rem; opacity: 0.7; }
+  .sync-section { display: flex; flex-direction: column; gap: 0.35rem; }
+  .sync-section-title { font-size: 0.78rem; font-weight: 600; color: #5eead4; }
+  .sync-chips { display: flex; flex-wrap: wrap; gap: 0.35rem; }
+  .sync-chip {
+    display: inline-flex; align-items: center; gap: 0.35rem;
+    font-size: 0.72rem; font-family: monospace; padding: 0.15rem 0.55rem;
+    border-radius: 999px; border: 1px solid rgba(255,255,255,0.12);
+  }
+  .chip-state { font-size: 0.62rem; font-family: inherit; }
+  .sync-chip.state-synced { border-color: rgba(74,222,128,0.4); }
+  .sync-chip.state-synced .chip-state { color: #4ade80; }
+  .sync-chip.state-unsynced { border-color: rgba(251,191,36,0.4); }
+  .sync-chip.state-unsynced .chip-state { color: #fbbf24; }
+  .sync-chip.state-outdated { border-color: rgba(251,146,60,0.45); }
+  .sync-chip.state-outdated .chip-state { color: #fb923c; }
+  .sync-chip.state-removing { border-color: rgba(248,113,113,0.35); opacity: 0.75; }
+  .sync-chip.state-removing .chip-state { color: #f87171; }
+  .sync-path { font-size: 0.68rem; opacity: 0.55; display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .sync-muted { font-size: 0.75rem; opacity: 0.5; margin: 0; }
+  .sync-empty { margin: 0; font-size: 0.8rem; opacity: 0.75; }
+  .sync-detail-foot { display: flex; justify-content: flex-end; }
   .loading { padding: 2rem; display: flex; justify-content: center; gap: 0.5rem; }
   .spinner { width: 16px; height: 16px; border: 2px solid rgba(94,234,212,0.3); border-top-color: #5eead4; border-radius: 50%; animation: spin 0.8s linear infinite; display: inline-block; }
   .spinner.small { width: 12px; height: 12px; }

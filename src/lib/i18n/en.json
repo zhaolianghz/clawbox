@@ -122,14 +122,14 @@
       "resultTitle": "Sync Results",
       "appliedCount": "{count} applied",
       "failed": "Failed",
-      "backup": "Backup"
+      "backup": "Backup",
+      "selectAll": "Select all"
     }
   },
   "providers": {
     "search": "Search providers...",
     "all": "All",
     "website": "Website",
-    "add": "Add",
     "enabled": "Enabled",
     "disabled": "Disabled",
     "remove": "Remove",
@@ -139,20 +139,50 @@
     "editTitle": "Edit Provider",
     "save": "Save",
     "cancel": "Cancel",
+    "close": "Close",
+    "setDefault": "Set as default",
+    "unsetDefault": "Unset default",
+    "defaultBadge": "Default",
+    "syncToAgents": "Sync to Agents",
+    "syncedTo": "Synced to {agents}",
+    "sync": {
+      "previewTitle": "Sync to Agents",
+      "planning": "Computing changes...",
+      "unsupported": "Not supported yet",
+      "unsupportedReason": {
+        "cursor-agent": "Agent is locked to Cursor's backend; custom endpoints are not allowed",
+        "qodercli": "Only whitelisted providers via account login; arbitrary endpoints not supported"
+      },
+      "error": "Error",
+      "statusSynced": "Synced",
+      "statusPending": "Not synced",
+      "statusSkipped": "Skipped",
+      "changeCount": "{count} changes",
+      "syncOne": "Sync",
+      "unchangedCount": "{count} unchanged",
+      "noActiveHint": "No default provider set — some agents will be skipped",
+      "action": {
+        "add": "Add",
+        "update": "Update",
+        "remove": "Remove",
+        "skip": "Skip"
+      },
+      "confirm": "Apply Selected ({count})",
+      "backup": "Backup",
+      "selectAll": "Select all"
+    },
     "form": {
       "name": "Name",
-      "baseUrl": "Base URL",
+      "anthropicEndpoint": "Anthropic Endpoint",
+      "openaiEndpoint": "OpenAI Endpoint",
       "apiKey": "API Key",
       "defaultModel": "Default Model",
       "enabled": "Enabled",
       "showKey": "Show key",
       "hideKey": "Hide key",
       "nameRequired": "Name is required",
-      "baseUrlRequired": "Base URL is required",
-      "endpointOpenai": "OpenAI compatible",
-      "endpointAnthropic": "Anthropic compatible",
-      "testConnection": "Test Connection",
-      "testing": "Testing...",
+      "endpointRequired": "Fill in at least one endpoint",
+      "test": "Test",
       "testOk": "Latency {ms}ms · {count} models",
       "models": "Models",
       "addModel": "Add",
@@ -161,7 +191,9 @@
       "fetchModels": "Fetch Models",
       "noModelsFetched": "Connected, but no models returned"
     },
-    "modelCount": "{count} models"
+    "modelCount": "{count} models",
+    "pendingTo": "Pending sync to {agents}",
+    "confirmRemove": "Confirm Remove"
   },
   "skills": {
     "title": "Skills Store",
@@ -230,7 +262,27 @@
     "selectFlow": "Select a flow from the sidebar to view details",
     "checkUpdates": "Check Updates",
     "upToDate": "Up to date",
-    "reinstallHint": "Already latest — click to reinstall"
+    "reinstallHint": "Already latest — click to reinstall",
+    "syncDetail": {
+      "button": "Sync Details",
+      "loading": "Loading sync state...",
+      "refresh": "Refresh",
+      "providers": "Providers",
+      "mcp": "MCP",
+      "unsupported": "Not supported yet",
+      "viaCli": "Managed via CLI",
+      "none": "Nothing synced",
+      "empty": "Nothing synced to this agent yet",
+      "emptyHint": "Sync from the Providers or Config page",
+      "state": {
+        "synced": "Synced",
+        "unsynced": "Not synced",
+        "outdated": "Update pending",
+        "removing": "Will remove"
+      },
+      "defaultModel": "Default model",
+      "skills": "Skills"
+    }
   },
   "monitor": {
     "title": "Monitor",
@@ -271,10 +323,41 @@
     "noItems": "No items",
     "comingSoon": "Coming soon",
     "skills": {
-      "install": "Install",
-      "uninstall": "Uninstall",
       "enable": "Enable",
       "disable": "Disable"
+    },
+    "skillsSync": {
+      "libraryHint": "Library lives in ~/.agents/skills and is symlinked into each agent",
+      "import": "Import Skill",
+      "scan": "Scan & Adopt",
+      "scanTitle": "Existing Skills Scan",
+      "rescan": "Rescan",
+      "scanning": "Scanning existing skills across agents...",
+      "scanEmpty": "No existing skills found to adopt",
+      "inLibrary": "Already in library (relink only)",
+      "adoptSelected": "Adopt Selected ({count})",
+      "adoptOk": "Adopted",
+      "syncToAgents": "Sync to Agents",
+      "loading": "Loading skill library...",
+      "empty": "Library is empty — import a skill or adopt existing ones from agents",
+      "delete": "Delete",
+      "confirmDelete": "Confirm Delete",
+      "cancel": "Cancel",
+      "install": "Install Skills",
+      "repoPlaceholder": "owner/repo or full Git URL",
+      "discover": "Fetch Skills",
+      "discovering": "Cloning repo and discovering skills...",
+      "noSkillsInRepo": "No skills (SKILL.md) found in this repo",
+      "alreadyInstalled": "Already in library",
+      "installSelected": "Install Selected ({count})",
+      "installedOk": "Installed",
+      "securityNote": "Skill content is injected into agent prompts — install from trusted sources only",
+      "checkUpdates": "Check Updates",
+      "allUpToDate": "All installed skills are up to date",
+      "hasUpdate": "Update available",
+      "update": "Update",
+      "missingInSource": "Removed from source",
+      "selectAll": "Select all"
     }
   }
 }
