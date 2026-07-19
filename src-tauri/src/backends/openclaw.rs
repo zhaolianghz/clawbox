@@ -118,7 +118,8 @@ impl super::capabilities::McpCapability for OpenClawBackend {
         openclaw_run(&["mcp", "set", name, config_json])
     }
     fn mcp_remove(&self, name: &str) -> Result<String, String> {
-        openclaw_run(&["mcp", "unset", name])
+        // openclaw 没有 `mcp unset` 子命令;删除走 config unset 点路径
+        openclaw_run(&["config", "unset", &format!("mcp.servers.{}", name)])
     }
 }
 

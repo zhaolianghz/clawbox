@@ -70,7 +70,14 @@ impl super::capabilities::McpCapability for HermesBackend {
         Ok(parse_hermes_mcp_text(&String::from_utf8_lossy(&output.stdout)))
     }
     fn mcp_add(&self, name: &str, config_json: &str) -> Result<String, String> {
-        run_hermes(&["mcp", "add", name, "--config", config_json])
+        let args = hermes_mcp_add_args(name, config_json)?;
+        // hermes `mcp add` 不是 upsert:同名条目已存在时先移除再添加保证幂等
+        // (update 语义由 CliMcpAdapter 的 re-add 承载)。移除失败(不存在)忽略。
+        let _ = run_hermes(&["mcp", "remove", name]);
+        let refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
+        // add 完成工具发现后会交互确认「Enable all N tools? [Y/n/select]」,
+        // 无 TTY 时读到 EOF 直接 Cancelled——必须喂 Y 走全启用。
+        run_hermes_with_stdin(&refs, "Y\n")
     }
     fn mcp_remove(&self, name: &str) -> Result<String, String> {
         run_hermes(&["mcp", "remove", name])
@@ -290,6 +297,73 @@ fn run_hermes(args: &[&str]) -> Result<String, String> {
     Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
 }
 
+/// 同 run_hermes,但向子进程 stdin 写入应答(供 `mcp add` 的交互确认用)。
+fn run_hermes_with_stdin(args: &[&str], stdin_input: &str) -> Result<String, String> {
+    use std::io::Write;
+    use std::process::Stdio;
+    let mut child = Command::new("hermes")
+        .args(args)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|e| format!("Failed to run hermes: {}", e))?;
+    if let Some(mut si) = child.stdin.take() {
+        let _ = si.write_all(stdin_input.as_bytes());
+    }
+    let output = child
+        .wait_with_output()
+        .map_err(|e| format!("Failed to run hermes: {}", e))?;
+    if !output.status.success() {
+        return Err(format!("hermes {} failed: {}",
+            args.join(" "),
+            String::from_utf8_lossy(&output.stderr).trim()));
+    }
+    Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+}
+
+/// hermes `mcp add` 是 flags 语法(没有 --config <json>):
+///   stdio: mcp add <name> --command CMD [--env K=V ...] [--args A1 A2 ...]
+///   http:  mcp add <name> --url URL
+/// `--args` 是 argparse REMAINDER,必须是最后一个选项;CLI 无自定义 header 通道。
+fn hermes_mcp_add_args(name: &str, config_json: &str) -> Result<Vec<String>, String> {
+    let cfg: serde_json::Value = serde_json::from_str(config_json)
+        .map_err(|e| format!("invalid config json: {}", e))?;
+    let mut out: Vec<String> = vec!["mcp".into(), "add".into(), name.into()];
+    if let Some(url) = cfg.get("url").and_then(|v| v.as_str()) {
+        let has_headers = cfg
+            .get("headers")
+            .and_then(|h| h.as_object())
+            .is_some_and(|h| !h.is_empty());
+        if has_headers {
+            return Err("hermes CLI does not support custom HTTP headers".into());
+        }
+        out.push("--url".into());
+        out.push(url.into());
+        return Ok(out);
+    }
+    let cmd = cfg
+        .get("command")
+        .and_then(|v| v.as_str())
+        .filter(|c| !c.is_empty())
+        .ok_or_else(|| "stdio server has no command".to_string())?;
+    out.push("--command".into());
+    out.push(cmd.into());
+    if let Some(env) = cfg.get("env").and_then(|v| v.as_object()).filter(|e| !e.is_empty()) {
+        out.push("--env".into());
+        for (k, v) in env {
+            out.push(format!("{}={}", k, v.as_str().unwrap_or_default()));
+        }
+    }
+    if let Some(args) = cfg.get("args").and_then(|v| v.as_array()).filter(|a| !a.is_empty()) {
+        out.push("--args".into());
+        for a in args {
+            out.push(a.as_str().unwrap_or_default().to_string());
+        }
+    }
+    Ok(out)
+}
+
 fn extract_pid(text: &str) -> Option<i32> {
     for line in text.lines() {
         let t = line.trim();
@@ -395,6 +469,34 @@ fn parse_hermes_mcp_text(text: &str) -> Vec<super::capabilities::McpServer> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn mcp_add_args_stdio_puts_args_last() {
+        // --args 是 REMAINDER,必须收尾;--env 在其前
+        let cfg = r#"{"command":"npx","args":["-y","@modelcontextprotocol/server-everything"],"env":{"K":"V"}}"#;
+        let args = hermes_mcp_add_args("clawbox-test", cfg).unwrap();
+        assert_eq!(
+            args,
+            vec![
+                "mcp", "add", "clawbox-test", "--command", "npx", "--env", "K=V", "--args", "-y",
+                "@modelcontextprotocol/server-everything",
+            ]
+        );
+        // 无 env / 无 args 时不产出对应 flag
+        let args = hermes_mcp_add_args("s", r#"{"command":"uvx","args":[],"env":{}}"#).unwrap();
+        assert_eq!(args, vec!["mcp", "add", "s", "--command", "uvx"]);
+    }
+
+    #[test]
+    fn mcp_add_args_http_and_error_cases() {
+        let args = hermes_mcp_add_args("web", r#"{"type":"http","url":"https://x/mcp","headers":{}}"#).unwrap();
+        assert_eq!(args, vec!["mcp", "add", "web", "--url", "https://x/mcp"]);
+        // hermes CLI 无自定义 header 通道 → 明确报错而不是静默丢弃
+        let err = hermes_mcp_add_args("web", r#"{"url":"https://x/mcp","headers":{"A":"b"}}"#).unwrap_err();
+        assert!(err.contains("header"), "{}", err);
+        assert!(hermes_mcp_add_args("s", r#"{"args":[]}"#).is_err());
+        assert!(hermes_mcp_add_args("s", "{ nope").is_err());
+    }
 
     #[test]
     fn extract_pid_parses_plist_line() {
