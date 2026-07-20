@@ -358,7 +358,9 @@
       "emptyFile": "(empty file)",
       "importToLib": "Import to library",
       "targetsEmpty": "No agents to inject into",
-      "nativeTitle": "Agent Native Memory"
+      "nativeTitle": "Agent Native Memory",
+      "emptyLibrary": "Memory library is empty",
+      "emptyLibraryHint": "Write and save content in the editor above, then sync"
     },
     "native": {
       "builtin": "Built-in",

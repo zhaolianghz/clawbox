@@ -358,7 +358,9 @@
       "emptyFile": "(文件为空)",
       "importToLib": "导入到库",
       "targetsEmpty": "暂无可注入的 agent",
-      "nativeTitle": "Agent 原生记忆"
+      "nativeTitle": "Agent 原生记忆",
+      "emptyLibrary": "记忆库为空",
+      "emptyLibraryHint": "请先在上方编辑器输入内容并点击「保存」,再同步到 agent"
     },
     "native": {
       "builtin": "内置",

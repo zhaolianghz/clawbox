@@ -581,6 +581,14 @@
     memSelectablePlans.length > 0 && memSelectablePlans.every((p) => memChecked[p.agent_id])
   );
 
+  // 库为空时后端对每个 supported agent 返回 skip("Memory library is empty")——
+  // 全部 supported 行都是 skip-only(记忆的 skip 只有"库空"这一全局原因),此判定
+  // ≡ 库为空。此时逐行列「跳过」是噪音且与下方指令文件面板重复,改用空状态。
+  const memSupportedPlans = $derived(memPlans.filter((p) => p.supported && !p.error));
+  const memAllSkipOnly = $derived(
+    memSupportedPlans.length > 0 && memSupportedPlans.every((p) => memRowStatus(p) === 'skipped')
+  );
+
   function memToggleAll() {
     const next = { ...memChecked };
     for (const p of memSelectablePlans) next[p.agent_id] = !memAllPicked;
@@ -1152,7 +1160,13 @@
               {#if memSyncError}
                 <p class="error-line">{memSyncError}</p>
               {/if}
-              {#if memPlans.length > 0}
+              {#if memAllSkipOnly}
+                <!-- 库为空:不逐行列「跳过」(噪音 + 与下方指令文件面板重复),用空状态引导 -->
+                <div class="sync-empty-block">
+                  <p class="sync-empty-title">{$_('capabilities.memorySync.emptyLibrary')}</p>
+                  <p class="sync-empty-hint">{$_('capabilities.memorySync.emptyLibraryHint')}</p>
+                </div>
+              {:else if memPlans.length > 0}
                 <div class="plan-list">
                   <label class="select-all-plans">
                     <input
@@ -1264,10 +1278,12 @@
               {/if}
               <div class="panel-actions">
                 <button class="action-btn wide" onclick={memCloseSync} disabled={memBatchApplying}>{$_('providers.close')}</button>
-                <button class="action-btn wide primary" onclick={memApplyChecked} disabled={memCheckedCount === 0 || memBatchApplying}>
-                  {#if memBatchApplying}<span class="spinner small"></span>{/if}
-                  {$_('providers.sync.confirm', { values: { count: memCheckedCount } })}
-                </button>
+                {#if !memAllSkipOnly}
+                  <button class="action-btn wide primary" onclick={memApplyChecked} disabled={memCheckedCount === 0 || memBatchApplying}>
+                    {#if memBatchApplying}<span class="spinner small"></span>{/if}
+                    {$_('providers.sync.confirm', { values: { count: memCheckedCount } })}
+                  </button>
+                {/if}
               </div>
             {/if}
           </div>
@@ -1609,6 +1625,11 @@
   .update-badge.no-ml { margin-left: 0; }
 
   .sync-loading { display: flex; align-items: center; gap: 0.5rem; font-size: 0.8rem; color: var(--text-secondary); padding: 0.5rem 0; }
+
+  /* 库为空时的同步面板空状态 */
+  .sync-empty-block { text-align: center; padding: 1.5rem 1rem; display: flex; flex-direction: column; gap: 0.4rem; }
+  .sync-empty-title { margin: 0; font-size: 0.85rem; font-weight: 600; color: var(--text-primary); }
+  .sync-empty-hint { margin: 0; font-size: 0.75rem; color: var(--text-muted); }
 
   /* 同步面板(结构/配色与服务商页同款) */
   .sync-panel {
