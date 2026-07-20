@@ -21,6 +21,16 @@ ClawBox 是一款桌面应用（macOS · Windows · Linux），为你的所有 A
 
 不再需要在五个不同目录里手动编辑配置文件，在 ClawBox 里配置一次，同步到所有 agent。
 
+## 界面截图
+
+![服务商](docs/screenshots/providers.png)
+
+| MCP | 技能 |
+|---|---|
+| ![MCP](docs/screenshots/mcp.png) | ![技能](docs/screenshots/skills.png) |
+| **记忆** | **Agent 管理** |
+| ![记忆](docs/screenshots/memory.png) | ![Agent 管理](docs/screenshots/agents.png) |
+
 ## 功能
 
 | 模块 | 功能说明 |

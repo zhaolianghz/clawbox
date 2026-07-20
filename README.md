@@ -21,6 +21,16 @@ ClawBox is a desktop app (macOS · Windows · Linux) that gives you a single con
 
 Instead of editing config files in five different directories, you configure once in ClawBox and push to every agent simultaneously.
 
+## Screenshots
+
+![Providers](docs/screenshots/providers.png)
+
+| MCP | Skills |
+|---|---|
+| ![MCP](docs/screenshots/mcp.png) | ![Skills](docs/screenshots/skills.png) |
+| **Memory** | **Agent Management** |
+| ![Memory](docs/screenshots/memory.png) | ![Agents](docs/screenshots/agents.png) |
+
 ## Features
 
 | Module | What it does |
