@@ -81,6 +81,7 @@ npm run tauri dev
 - [Tauri v2](https://tauri.app)（Rust 后端 + WebView 前端）
 - [Svelte 5](https://svelte.dev)（runes 模式）
 - [svelte-i18n](https://github.com/kaisermann/svelte-i18n)（English / 中文）
+- 服务商/agent 图标来自 [lobe-icons](https://github.com/lobehub/lobe-icons)（MIT）
 
 ## 贡献
 

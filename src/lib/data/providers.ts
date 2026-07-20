@@ -1,6 +1,7 @@
 // 服务商目录
 // 数据来源:Cherry Studio 内置服务商(apiHost 取自其打包配置) + cc-switch 的 Anthropic 兼容端点;
 // 部分条目参考 OmniRoute(MIT)——端点取自其 provider registry 源码(baseUrl 字段),非凭记忆。
+// 图标来自 lobe-icons(@lobehub/icons-static-svg,MIT),见 providerIcons.ts。
 // 每条记录包含品牌色与图标标识,ProviderLogo 据此渲染 logo,无图标者回退为品牌色首字母。
 // name/description/分类 label 为内嵌双语(Localized);国际厂商名两语相同用单串。
 
