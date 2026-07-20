@@ -20,80 +20,36 @@
   import { agents_list } from '$lib/api/agents';
   import AgentLogo from '$lib/components/AgentLogo.svelte';
   import {
-    list_tools_all, set_tool_enabled,
-    type Tool,
-  } from '$lib/api/capabilities/tools';
-  import {
     list_memory_all, memory_index, memory_reset,
     type MemoryStatus,
   } from '$lib/api/capabilities/memory';
-  import {
-    list_plugins_all, install_plugin, remove_plugin, set_plugin_enabled,
-    type Plugin,
-  } from '$lib/api/capabilities/plugins';
-  import {
-    list_hooks_all, set_hook_enabled,
-    type Hook,
-  } from '$lib/api/capabilities/hooks';
   import type { BackendError } from '$lib/api/capabilities/_shared';
 
-  type TabId = 'skills' | 'memory' | 'plugins' | 'tools' | 'hooks';
+  type TabId = 'skills' | 'memory';
 
   const tabs: { id: TabId; key: string }[] = [
     { id: 'skills', key: 'capabilities.tab.skills' },
     { id: 'memory', key: 'capabilities.tab.memory' },
-    { id: 'plugins', key: 'capabilities.tab.plugins' },
-    { id: 'tools', key: 'capabilities.tab.tools' },
-    { id: 'hooks', key: 'capabilities.tab.hooks' },
   ];
 
   let activeTab = $state<TabId>('skills');
+  // backends / memoryByBackend:仅供记忆 tab 底部「Agent 原生记忆」折叠区使用
   let backends = $state<BackendInfo[]>([]);
-  let toolsByBackend = $state<Record<BackendId, Tool[]>>({ openclaw: [], hermes: [] });
   let memoryByBackend = $state<Record<BackendId, MemoryStatus | null>>({ openclaw: null, hermes: null });
-  let pluginsByBackend = $state<Record<BackendId, Plugin[]>>({ openclaw: [], hermes: [] });
-  let hooksByBackend = $state<Record<BackendId, Hook[]>>({ openclaw: [], hermes: [] });
-
-  let toolErrors = $state<BackendError[]>([]);
   let memoryErrors = $state<BackendError[]>([]);
-  let pluginsErrors = $state<BackendError[]>([]);
-  let hooksErrors = $state<BackendError[]>([]);
 
   let isLoading = $state(true);
   let busyKey = $state<string | null>(null);
 
-  let newPluginSource = $state('');
-
   async function load() {
     isLoading = true;
-    const [bl, tools, mem, plugins, hooks] = await Promise.all([
-      list_backends(),
-      list_tools_all(),
-      list_memory_all(),
-      list_plugins_all(),
-      list_hooks_all(),
-    ]);
+    const [bl, mem] = await Promise.all([list_backends(), list_memory_all()]);
     backends = bl;
-    toolErrors = tools.errors;
     memoryErrors = mem.errors;
-    pluginsErrors = plugins.errors;
-    hooksErrors = hooks.errors;
-
-    const tm: Record<BackendId, Tool[]> = { openclaw: [], hermes: [] };
-    for (const t of tools.items) tm[t.backend].push(t.item);
-    toolsByBackend = tm;
 
     const memMap: Record<BackendId, MemoryStatus | null> = { openclaw: null, hermes: null };
     for (const t of mem.items) memMap[t.backend] = t.item;
     memoryByBackend = memMap;
-
-    const pm: Record<BackendId, Plugin[]> = { openclaw: [], hermes: [] };
-    for (const t of plugins.items) pm[t.backend].push(t.item);
-    pluginsByBackend = pm;
-
-    const hm: Record<BackendId, Hook[]> = { openclaw: [], hermes: [] };
-    for (const t of hooks.items) hm[t.backend].push(t.item);
-    hooksByBackend = hm;
 
     isLoading = false;
   }
@@ -480,15 +436,6 @@
     return p.changes.filter((c) => c.action === 'unchanged').length;
   }
 
-  async function toggleTool(t: Tool, backend: BackendId) {
-    const key = `tool:${backend}:${t.id}`;
-    busyKey = key;
-    try {
-      await set_tool_enabled(backend, t.id, !t.enabled);
-      await load();
-    } finally { busyKey = null; }
-  }
-
   async function doMemoryIndex(backend: BackendId) {
     const key = `mem-index:${backend}`;
     busyKey = key;
@@ -499,45 +446,6 @@
     const key = `mem-reset:${backend}`;
     busyKey = key;
     try { await memory_reset(backend); } finally { busyKey = null; }
-  }
-
-  async function togglePlugin(p: Plugin, backend: BackendId) {
-    const key = `plugin:${backend}:${p.id}`;
-    busyKey = key;
-    try {
-      await set_plugin_enabled(backend, p.id, !p.enabled);
-      await load();
-    } finally { busyKey = null; }
-  }
-
-  async function doRemovePlugin(p: Plugin, backend: BackendId) {
-    const key = `plugin-remove:${backend}:${p.id}`;
-    busyKey = key;
-    try {
-      await remove_plugin(backend, p.id);
-      await load();
-    } finally { busyKey = null; }
-  }
-
-  async function doInstallPlugin(backend: BackendId) {
-    const source = newPluginSource.trim();
-    if (!source) return;
-    const key = `plugin-install:${backend}`;
-    busyKey = key;
-    try {
-      await install_plugin(backend, source);
-      newPluginSource = '';
-      await load();
-    } finally { busyKey = null; }
-  }
-
-  async function toggleHook(h: Hook, backend: BackendId) {
-    const key = `hook:${backend}:${h.id}`;
-    busyKey = key;
-    try {
-      await set_hook_enabled(backend, h.id, !h.enabled);
-      await load();
-    } finally { busyKey = null; }
   }
 
   // ---------- 统一指令记忆(真源 ~/.agents/memory/MEMORY.md,托管区块注入) ----------
@@ -1469,156 +1377,6 @@
           </div>
         </details>
       </div>
-    {:else if activeTab === 'plugins'}
-      <div class="backend-panels">
-        {#each backends as backend (backend.id)}
-          <section class="backend-section">
-            <header class="backend-header">
-              <span class="backend-chip" data-backend={backend.id}>{backend.displayName}</span>
-              {#if backend.installed}
-                <span class="backend-count">{pluginsByBackend[backend.id]?.length ?? 0}</span>
-              {:else}
-                <span class="empty">{$_('capabilities.notInstalled')}</span>
-              {/if}
-            </header>
-
-            {#if backend.installed && (pluginsByBackend[backend.id]?.length ?? 0) > 0}
-              {#each pluginsByBackend[backend.id] as p (p.id)}
-                {@const key = `plugin:${backend.id}:${p.id}`}
-                <div class="item-row" class:disabled={!p.enabled}>
-                  <div class="item-info">
-                    <div class="item-name">{p.name}</div>
-                    <div class="item-meta">
-                      <code class="version">v{p.version}</code>
-                    </div>
-                  </div>
-                  <div class="item-actions">
-                    <button class="action-btn" onclick={() => togglePlugin(p, backend.id)} disabled={busyKey === key}
-                      title={p.enabled ? $_('capabilities.skills.disable') : $_('capabilities.skills.enable')}>
-                      {p.enabled ? '⏸️' : '▶️'}
-                    </button>
-                    <button class="action-btn" onclick={() => doRemovePlugin(p, backend.id)} disabled={busyKey === `plugin-remove:${backend.id}:${p.id}`}
-                      title="Remove">🗑️</button>
-                  </div>
-                </div>
-              {/each}
-            {:else if backend.installed}
-              <p class="empty">{$_('capabilities.noItems')}</p>
-            {/if}
-
-            {#if backend.installed}
-              <div class="inline-form">
-                <input
-                  class="text-input"
-                  type="text"
-                  placeholder="source URL or local path"
-                  bind:value={newPluginSource}
-                />
-                <button class="action-btn primary" onclick={() => doInstallPlugin(backend.id)}
-                  disabled={busyKey === `plugin-install:${backend.id}` || !newPluginSource.trim()}>
-                  Install
-                </button>
-              </div>
-            {/if}
-          </section>
-        {/each}
-        {#if pluginsErrors.length > 0}
-          <div class="errors">
-            {#each pluginsErrors as err (err.backend + ':' + err.message)}
-              <p class="error-line">{err.backend}: {err.message}</p>
-            {/each}
-          </div>
-        {/if}
-      </div>
-    {:else if activeTab === 'tools'}
-      <div class="backend-panels">
-        {#each backends as backend (backend.id)}
-          <section class="backend-section">
-            <header class="backend-header">
-              <span class="backend-chip" data-backend={backend.id}>{backend.displayName}</span>
-              {#if backend.installed}
-                <span class="backend-count">{toolsByBackend[backend.id]?.length ?? 0}</span>
-              {:else}
-                <span class="empty">{$_('capabilities.notInstalled')}</span>
-              {/if}
-            </header>
-
-            {#if backend.installed && (toolsByBackend[backend.id]?.length ?? 0) > 0}
-              {#each toolsByBackend[backend.id] as t (t.id)}
-                {@const key = `tool:${backend.id}:${t.id}`}
-                <div class="item-row" class:disabled={!t.enabled}>
-                  <div class="item-info">
-                    <div class="item-name">{t.id}</div>
-                  </div>
-                  <div class="item-actions">
-                    <button class="action-btn" onclick={() => toggleTool(t, backend.id)} disabled={busyKey === key}
-                      title={t.enabled ? $_('capabilities.skills.disable') : $_('capabilities.skills.enable')}>
-                      {t.enabled ? '⏸️' : '▶️'}
-                    </button>
-                  </div>
-                </div>
-              {/each}
-            {:else if backend.installed}
-              <p class="empty">{$_('capabilities.noItems')}</p>
-            {/if}
-          </section>
-        {/each}
-        {#if toolErrors.length > 0}
-          <div class="errors">
-            {#each toolErrors as err (err.backend + ':' + err.message)}
-              <p class="error-line">{err.backend}: {err.message}</p>
-            {/each}
-          </div>
-        {/if}
-      </div>
-    {:else if activeTab === 'hooks'}
-      <div class="backend-panels">
-        {#each backends as backend (backend.id)}
-          <section class="backend-section">
-            <header class="backend-header">
-              <span class="backend-chip" data-backend={backend.id}>{backend.displayName}</span>
-              {#if backend.installed}
-                <span class="backend-count">{hooksByBackend[backend.id]?.length ?? 0}</span>
-              {:else}
-                <span class="empty">{$_('capabilities.notInstalled')}</span>
-              {/if}
-            </header>
-
-            {#if backend.id === 'hermes'}
-              <p class="hint">Hermes hooks are managed via <code>~/.hermes/config.yaml</code> — toggle the <code>enabled</code> flag there and re-run <code>hermes hooks list</code>.</p>
-            {/if}
-
-            {#if backend.installed && (hooksByBackend[backend.id]?.length ?? 0) > 0}
-              {#each hooksByBackend[backend.id] as h (h.id)}
-                {@const key = `hook:${backend.id}:${h.id}`}
-                <div class="item-row" class:disabled={!h.enabled}>
-                  <div class="item-info">
-                    <div class="item-name">{h.name}</div>
-                    <div class="item-meta">
-                      <code class="version">{h.event}</code>
-                    </div>
-                  </div>
-                  <div class="item-actions">
-                    <button class="action-btn" onclick={() => toggleHook(h, backend.id)} disabled={busyKey === key}
-                      title={h.enabled ? $_('capabilities.skills.disable') : $_('capabilities.skills.enable')}>
-                      {h.enabled ? '⏸️' : '▶️'}
-                    </button>
-                  </div>
-                </div>
-              {/each}
-            {:else if backend.installed}
-              <p class="empty">{$_('capabilities.noItems')}</p>
-            {/if}
-          </section>
-        {/each}
-        {#if hooksErrors.length > 0}
-          <div class="errors">
-            {#each hooksErrors as err (err.backend + ':' + err.message)}
-              <p class="error-line">{err.backend}: {err.message}</p>
-            {/each}
-          </div>
-        {/if}
-      </div>
     {/if}
   </div>
 </div>
@@ -1764,21 +1522,6 @@
   .action-btn:hover { background: rgba(0,245,255,0.1); }
   .action-btn.primary:hover { background: rgba(0,245,255,0.2); color: var(--neon-cyan); }
   .action-btn:disabled { opacity: 0.5; cursor: not-allowed; }
-
-  .inline-form {
-    display: flex;
-    gap: 0.5rem;
-    align-items: center;
-    margin-top: 0.5rem;
-  }
-  .inline-form .text-input {
-    flex: 1;
-  }
-  .inline-form .action-btn {
-    width: auto;
-    padding: 0 0.75rem;
-    font-size: 0.75rem;
-  }
 
   .text-input {
     background: var(--bg-tertiary);

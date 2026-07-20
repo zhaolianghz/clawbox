@@ -61,26 +61,6 @@ fn hermes_is_discoverable() {
 }
 
 #[test]
-fn skills_list_runs_against_live_backends() {
-    if !openclaw_installed() && !hermes_installed() {
-        eprintln!("neither backend installed — skipping");
-        return;
-    }
-    let entries = clawbox_lib::backends::entries();
-    let mut found_any = false;
-    for entry in entries {
-        if !entry.backend.is_installed() { continue; }
-        if let Some(skills) = entry.skills {
-            found_any = true;
-            let result = skills.skills_list();
-            // Either Ok or Err depending on gateway state; we just verify the trait method is reachable.
-            eprintln!("{}: skills_list reachable, ok={}", entry.backend.id(), result.is_ok());
-        }
-    }
-    assert!(found_any, "expected at least one installed backend with skills capability");
-}
-
-#[test]
 fn mcp_list_runs_against_live_backends() {
     if !openclaw_installed() && !hermes_installed() {
         eprintln!("skip");
@@ -113,54 +93,6 @@ fn memory_status_runs_against_live_backends() {
             found = true;
             let r = mem.memory_status();
             eprintln!("{}: memory_status reachable, ok={}", entry.backend.id(), r.is_ok());
-        }
-    }
-    assert!(found);
-}
-
-#[test]
-fn plugins_list_runs_against_live_backends() {
-    if !openclaw_installed() && !hermes_installed() {
-        eprintln!("skip");
-        return;
-    }
-    let entries = clawbox_lib::backends::entries();
-    let mut found = false;
-    for entry in entries {
-        if !entry.backend.is_installed() { continue; }
-        if let Some(plugins) = entry.plugins {
-            found = true;
-            let r = plugins.plugins_list();
-            eprintln!("{}: plugins_list reachable, ok={}", entry.backend.id(), r.is_ok());
-        }
-    }
-    assert!(found);
-}
-
-#[test]
-fn tools_list_only_hermes() {
-    ensure_path();
-    let entries = clawbox_lib::backends::entries();
-    let hermes_entry = entries.iter().find(|e| e.backend.id() == "hermes").unwrap();
-    let openclaw_entry = entries.iter().find(|e| e.backend.id() == "openclaw").unwrap();
-    assert!(hermes_entry.tools.is_some(), "hermes should impl ToolsCapability");
-    assert!(openclaw_entry.tools.is_none(), "openclaw has no tools subcommand");
-}
-
-#[test]
-fn hooks_list_runs_against_live_backends() {
-    if !openclaw_installed() && !hermes_installed() {
-        eprintln!("skip");
-        return;
-    }
-    let entries = clawbox_lib::backends::entries();
-    let mut found = false;
-    for entry in entries {
-        if !entry.backend.is_installed() { continue; }
-        if let Some(hooks) = entry.hooks {
-            found = true;
-            let r = hooks.hooks_list();
-            eprintln!("{}: hooks_list reachable, ok={}", entry.backend.id(), r.is_ok());
         }
     }
     assert!(found);

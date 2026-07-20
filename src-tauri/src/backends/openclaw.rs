@@ -92,23 +92,6 @@ impl Backend for OpenClawBackend {
     }
 }
 
-impl super::capabilities::SkillsCapability for OpenClawBackend {
-    fn skills_list(&self) -> Result<Vec<super::capabilities::Skill>, String> {
-        let raw = openclaw_json(&["skills", "list", "--json"])?;
-        Ok(parse_openclaw_skills(raw))
-    }
-    fn skills_install(&self, id: &str) -> Result<String, String> {
-        openclaw_run(&["skills", "install", id])
-    }
-    fn skills_uninstall(&self, id: &str) -> Result<String, String> {
-        openclaw_run(&["skills", "uninstall", id])
-    }
-    fn skills_set_enabled(&self, id: &str, enabled: bool) -> Result<String, String> {
-        let action = if enabled { "enable" } else { "disable" };
-        openclaw_run(&["skills", action, id])
-    }
-}
-
 impl super::capabilities::McpCapability for OpenClawBackend {
     fn mcp_list(&self) -> Result<Vec<super::capabilities::McpServer>, String> {
         let raw = openclaw_json(&["mcp", "list", "--json"])?;
@@ -143,150 +126,6 @@ fn parse_openclaw_memory_status(raw: serde_json::Value) -> super::capabilities::
     super::capabilities::MemoryStatus { provider, builtin_active, raw }
 }
 
-impl super::capabilities::HooksCapability for OpenClawBackend {
-    fn hooks_list(&self) -> Result<Vec<super::capabilities::Hook>, String> {
-        let output = std::process::Command::new("openclaw")
-            .args(["hooks", "list"])
-            .output()
-            .map_err(|e| format!("Failed to run openclaw: {}", e))?;
-        if !output.status.success() {
-            return Err(format!("openclaw hooks list failed: {}",
-                String::from_utf8_lossy(&output.stderr).trim()));
-        }
-        Ok(parse_openclaw_hooks_text(&String::from_utf8_lossy(&output.stdout)))
-    }
-    fn hooks_set_enabled(&self, id: &str, enabled: bool) -> Result<String, String> {
-        let action = if enabled { "enable" } else { "disable" };
-        openclaw_run(&["hooks", action, id])
-    }
-}
-
-fn parse_openclaw_hooks_text(text: &str) -> Vec<super::capabilities::Hook> {
-    if text.trim().is_empty() { return vec![]; }
-    let mut hooks: Vec<super::capabilities::Hook> = Vec::new();
-    let mut current: Option<super::capabilities::Hook> = None;
-    for line in text.lines() {
-        let trimmed = line.trim();
-        if !trimmed.starts_with('│') { continue; }
-        let cells: Vec<&str> = trimmed.split('│').map(str::trim).collect();
-        if cells.len() < 3 { continue; }
-        // Skip header row ("Status") and separator rows.
-        if cells[1].eq_ignore_ascii_case("status") || cells[1].contains('─') { continue; }
-        // Distinguish full row from continuation by status-cell emptiness.
-        // Continuation rows have an empty/whitespace status cell.
-        let status = cells[1];
-        if !status.is_empty() {
-            // Full row: flush previous, start a new hook.
-            if let Some(h) = current.take() { hooks.push(h); }
-            let name = cells.get(2).copied().unwrap_or("");
-            let enabled = status.contains("ready") || (status.contains("enabled") && !status.contains("disabled"));
-            current = Some(super::capabilities::Hook {
-                id: name.to_string(),
-                name: name.to_string(),
-                event: String::new(),
-                enabled,
-                raw: serde_json::json!({}),
-            });
-        } else if let Some(ref mut h) = current {
-            // Continuation row: append wrapped cells[2] (name/desc) and cells[3] (desc) into the hook.
-            if let Some(c) = cells.get(2) {
-                if !c.is_empty() { h.name.push_str(c); h.id.push_str(c); }
-            }
-            if let Some(c) = cells.get(3) {
-                if !c.is_empty() {
-                    if !h.raw.as_object().map(|o| o.contains_key("description")).unwrap_or(false) {
-                        h.raw["description"] = serde_json::Value::String(c.to_string());
-                    }
-                }
-            }
-        }
-    }
-    if let Some(h) = current.take() { hooks.push(h); }
-    hooks
-}
-
-impl super::capabilities::PluginsCapability for OpenClawBackend {
-    fn plugins_list(&self) -> Result<Vec<super::capabilities::Plugin>, String> {
-        // openclaw plugins list has no --json; capture stdout as text
-        let output = std::process::Command::new("openclaw")
-            .args(["plugins", "list"])
-            .output()
-            .map_err(|e| format!("Failed to run openclaw: {}", e))?;
-        if !output.status.success() {
-            return Err(format!("openclaw plugins list failed: {}",
-                String::from_utf8_lossy(&output.stderr).trim()));
-        }
-        Ok(parse_openclaw_plugins_text(&String::from_utf8_lossy(&output.stdout)))
-    }
-    fn plugins_install(&self, source: &str) -> Result<String, String> {
-        openclaw_run(&["plugins", "install", source])
-    }
-    fn plugins_remove(&self, id: &str) -> Result<String, String> {
-        openclaw_run(&["plugins", "disable", id])  // openclaw uses disable, not remove
-    }
-    fn plugins_set_enabled(&self, id: &str, enabled: bool) -> Result<String, String> {
-        let action = if enabled { "enable" } else { "disable" };
-        openclaw_run(&["plugins", action, id])
-    }
-}
-
-fn parse_openclaw_plugins_text(text: &str) -> Vec<super::capabilities::Plugin> {
-    if text.trim().is_empty() || text.contains("No plugins") { return vec![]; }
-    let mut plugins: Vec<super::capabilities::Plugin> = Vec::new();
-    let mut current: Option<super::capabilities::Plugin> = None;
-    for line in text.lines() {
-        let trimmed = line.trim();
-        if !trimmed.starts_with('│') { continue; }
-        let cells: Vec<&str> = trimmed.split('│').map(str::trim).collect();
-        if cells.len() < 7 { continue; }
-        // Skip header/separator rows.
-        if cells[1].eq_ignore_ascii_case("name") || cells[1].contains('─') || cells[1].contains('┼') { continue; }
-        let status = cells[4];
-        let is_data_row = status == "loaded" || status == "disabled"
-            || (status.contains("enabled") && !status.contains("disabled"));
-        if is_data_row {
-            if let Some(p) = current.take() { plugins.push(p); }
-            current = Some(super::capabilities::Plugin {
-                id: cells[2].to_string(),
-                name: cells[1].to_string(),
-                version: cells[6].to_string(),
-                enabled: status == "loaded" || (status.contains("enabled") && !status.contains("disabled")),
-                raw: serde_json::json!({}),
-            });
-        } else if let Some(ref mut p) = current {
-            // Continuation row: wrapped name (cells[1]) or wrapped source description (cells[5]).
-            if !cells[1].is_empty() { p.name.push(' '); p.name.push_str(cells[1]); }
-            if !cells[2].is_empty() { p.id.push_str(cells[2]); }
-            if !cells[5].is_empty() {
-                if !p.raw.as_object().map(|o| o.contains_key("description")).unwrap_or(false) {
-                    p.raw["description"] = serde_json::Value::String(cells[5].to_string());
-                }
-            }
-        }
-    }
-    if let Some(p) = current.take() { plugins.push(p); }
-    plugins
-}
-
-fn parse_openclaw_skills(raw: serde_json::Value) -> Vec<super::capabilities::Skill> {
-    let arr = match raw {
-        serde_json::Value::Object(ref m) if m.contains_key("skills") => m["skills"].clone(),
-        other => other,
-    };
-    let arr = arr.as_array().cloned().unwrap_or_default();
-    arr.into_iter().map(|v| {
-        let o = v.as_object().cloned().unwrap_or_default();
-        let id = o.get("name").and_then(|v| v.as_str()).unwrap_or("").to_string();
-        let name = id.clone();
-        let description = o.get("description").and_then(|v| v.as_str()).unwrap_or("").to_string();
-        let version = o.get("version").and_then(|v| v.as_str()).unwrap_or("").to_string();
-        let enabled = !o.get("disabled").and_then(|v| v.as_bool()).unwrap_or(false);
-        super::capabilities::Skill {
-            id, name, version, description, enabled, raw: v,
-        }
-    }).collect()
-}
-
 fn parse_openclaw_mcp(raw: serde_json::Value) -> Vec<super::capabilities::McpServer> {
     let map = raw.as_object().cloned().unwrap_or_default();
     let servers_val = map.get("servers").cloned().unwrap_or(serde_json::Value::Object(Default::default()));
@@ -314,43 +153,6 @@ fn parse_openclaw_mcp(raw: serde_json::Value) -> Vec<super::capabilities::McpSer
 mod tests {
     use super::*;
     use serde_json::json;
-
-    #[test]
-    fn openclaw_skills_normalises_object() {
-        let raw = json!({
-            "skills": [{
-                "name": "code-review",
-                "description": "Review code",
-                "emoji": "🔍",
-                "eligible": true,
-                "disabled": false,
-                "homepage": "https://example.com",
-                "bundled": true,
-                "source": "openclaw-bundled"
-            }]
-        });
-        let skills = parse_openclaw_skills(raw);
-        assert_eq!(skills.len(), 1);
-        assert_eq!(skills[0].id, "code-review");
-        assert_eq!(skills[0].name, "code-review");
-        assert!(skills[0].enabled);
-    }
-
-    #[test]
-    fn openclaw_skills_disabled_flag() {
-        let raw = json!({"skills": [{"name": "x", "description": "", "disabled": true}]});
-        let skills = parse_openclaw_skills(raw);
-        assert_eq!(skills.len(), 1);
-        assert!(!skills[0].enabled);
-    }
-
-    #[test]
-    fn openclaw_skills_root_array() {
-        let raw = json!([{"name": "a", "description": ""}]);
-        let skills = parse_openclaw_skills(raw);
-        assert_eq!(skills.len(), 1);
-        assert_eq!(skills[0].name, "a");
-    }
 
     #[test]
     fn openclaw_mcp_two_servers_in_servers_object() {
@@ -412,64 +214,7 @@ mod tests {
     }
 
     // Real fixture captured verbatim from `openclaw plugins list` (2026.4.11).
-    const OPENCLAW_PLUGINS_FIXTURE: &str = "\
-Plugins (54/97 loaded)
-Source roots:
-  stock: /opt/homebrew/lib/node_modules/openclaw/dist/extensions
-
-┌──────────────┬──────────┬──────────┬──────────┬──────────────────────────────────────────────────────────┬───────────┐
-│ Name         │ ID       │ Format   │ Status   │ Source                                                   │ Version   │
-├──────────────┼──────────┼──────────┼──────────┼──────────────────────────────────────────────────────────┼───────────┤
-│ ACPX Runtime │ acpx     │ openclaw │ loaded   │ stock:acpx/index.js                                      │ 2026.4.11 │
-│              │          │          │          │ Embedded ACP runtime backend with plugin-owned session   │           │
-│              │          │          │          │ and transport management.                                │           │
-│ Active       │ active-  │ openclaw │ disabled │ stock:active-memory/index.js                             │ 2026.4.11 │
-│ Memory       │ memory   │          │          │ Runs a bounded blocking memory sub-agent before          │           │
-│              │          │          │          │ eligible conversational replies and injects relevant     │           │
-│              │          │          │          │ memory into prompt context.                              │           │
-└──────────────┴──────────┴──────────┴──────────┴──────────────────────────────────────────────────────────┴───────────┘
-";
-
-    #[test]
-    fn openclaw_plugins_parses_table() {
-        let plugins = parse_openclaw_plugins_text(OPENCLAW_PLUGINS_FIXTURE);
-        assert_eq!(plugins.len(), 2);
-        assert_eq!(plugins[0].id, "acpx");
-        assert!(plugins[0].enabled);
-        assert_eq!(plugins[0].name, "ACPX Runtime");
-        assert_eq!(plugins[1].id, "active-memory");
-        assert_eq!(plugins[1].name, "Active Memory");
-        assert!(!plugins[1].enabled);
-    }
-
-    #[test]
-    fn openclaw_plugins_empty() {
-        let plugins = parse_openclaw_plugins_text("No plugins.\n");
-        assert!(plugins.is_empty());
-    }
-
     // Real fixture captured verbatim from `openclaw hooks list` (2026.4.11).
-    const OPENCLAW_HOOKS_FIXTURE: &str = "\
-Hooks (5/5 ready)
-┌──────────┬────────────────────────────────┬────────────────────────────────┬────────────┐
-│ Status   │ Hook                           │ Description                    │ Source     │
-├──────────┼────────────────────────────────┼────────────────────────────────┼────────────┤
-│ ✓ ready  │ 🚀 boot-md                     │ Run BOOT.md on gateway startup │ openclaw-  │
-│          │                                │                                │ bundled    │
-│ ✓ ready  │ 📎 bootstrap-extra-files       │ Inject additional files        │ openclaw-  │
-│          │                                │                                │ bundled    │
-└──────────┴────────────────────────────────┴────────────────────────────────┴────────────┘
-";
-
-    #[test]
-    fn openclaw_hooks_parses_table() {
-        let hooks = parse_openclaw_hooks_text(OPENCLAW_HOOKS_FIXTURE);
-        assert_eq!(hooks.len(), 2);
-        assert_eq!(hooks[0].id, "🚀 boot-md");
-        assert!(hooks[0].enabled);  // "ready" → enabled
-        assert_eq!(hooks[1].id, "📎 bootstrap-extra-files");
-    }
-
     #[test]
     fn is_openclaw_process_accepts_openclaw_binary() {
         assert!(is_openclaw_process("openclaw"));

@@ -42,16 +42,12 @@ pub fn find_backend(id: &str) -> Option<&'static dyn Backend> {
     backends().iter().find(|b| b.id() == id).map(|b| b.as_ref())
 }
 
-use capabilities::{HooksCapability, McpCapability, MemoryCapability, PluginsCapability, SkillsCapability, ToolsCapability};
+use capabilities::{McpCapability, MemoryCapability};
 
 pub struct BackendEntry {
     pub backend: &'static dyn Backend,
-    pub skills: Option<&'static dyn SkillsCapability>,
     pub mcp: Option<&'static dyn McpCapability>,
     pub memory: Option<&'static dyn MemoryCapability>,
-    pub plugins: Option<&'static dyn PluginsCapability>,
-    pub tools: Option<&'static dyn ToolsCapability>,
-    pub hooks: Option<&'static dyn HooksCapability>,
 }
 
 pub fn entries() -> &'static [BackendEntry] {
@@ -60,21 +56,13 @@ pub fn entries() -> &'static [BackendEntry] {
         vec![
             BackendEntry {
                 backend: &openclaw::OpenClawBackend,
-                skills:  Some(&openclaw::OpenClawBackend),
                 mcp:     Some(&openclaw::OpenClawBackend),
                 memory:  Some(&openclaw::OpenClawBackend),
-                plugins: Some(&openclaw::OpenClawBackend),
-                tools:   None,
-                hooks:   Some(&openclaw::OpenClawBackend),
             },
             BackendEntry {
                 backend: &hermes::HermesBackend,
-                skills:  Some(&hermes::HermesBackend),
                 mcp:     Some(&hermes::HermesBackend),
                 memory:  Some(&hermes::HermesBackend),
-                plugins: Some(&hermes::HermesBackend),
-                tools:   Some(&hermes::HermesBackend),
-                hooks:   Some(&hermes::HermesBackend),
             },
         ]
     }).as_slice()

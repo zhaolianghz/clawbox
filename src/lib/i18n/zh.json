@@ -291,22 +291,10 @@
     "title": "能力",
     "tab": {
       "skills": "技能",
-      "memory": "记忆",
-      "plugins": "插件",
-      "tools": "工具",
-      "hooks": "钩子"
-    },
-    "section": {
-      "openclaw": "OpenClaw",
-      "hermes": "Hermes"
+      "memory": "记忆"
     },
     "notInstalled": "未安装",
     "noItems": "无项目",
-    "comingSoon": "即将推出",
-    "skills": {
-      "enable": "启用",
-      "disable": "禁用"
-    },
     "skillsSync": {
       "libraryHint": "技能库位于 ~/.agents/skills,通过软链统一下发到各 agent",
       "import": "导入技能",

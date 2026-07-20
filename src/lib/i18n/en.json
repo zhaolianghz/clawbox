@@ -291,22 +291,10 @@
     "title": "Capabilities",
     "tab": {
       "skills": "Skills",
-      "memory": "Memory",
-      "plugins": "Plugins",
-      "tools": "Tools",
-      "hooks": "Hooks"
-    },
-    "section": {
-      "openclaw": "OpenClaw",
-      "hermes": "Hermes"
+      "memory": "Memory"
     },
     "notInstalled": "Not installed",
     "noItems": "No items",
-    "comingSoon": "Coming soon",
-    "skills": {
-      "enable": "Enable",
-      "disable": "Disable"
-    },
     "skillsSync": {
       "libraryHint": "Library lives in ~/.agents/skills and is symlinked into each agent",
       "import": "Import Skill",
