@@ -108,24 +108,19 @@
     <div class="info-section glass-card">
       <h2>{$_('about.links')}</h2>
       <div class="link-list">
-        <a href="https://github.com/openclaw/clawbox" class="link-item" target="_blank" rel="noopener">
+        <a href="https://github.com/zhaolianghz/clawbox" class="link-item" target="_blank" rel="noopener">
           <span class="link-icon">📦</span>
           <span class="link-text">GitHub Repository</span>
           <span class="link-arrow">→</span>
         </a>
-        <a href="https://docs.openclaw.ai" class="link-item" target="_blank" rel="noopener">
+        <a href="https://github.com/zhaolianghz/clawbox#readme" class="link-item" target="_blank" rel="noopener">
           <span class="link-icon">📚</span>
           <span class="link-text">{$_('about.documentation')}</span>
           <span class="link-arrow">→</span>
         </a>
-        <a href="https://github.com/openclaw/clawbox/issues" class="link-item" target="_blank" rel="noopener">
+        <a href="https://github.com/zhaolianghz/clawbox/issues" class="link-item" target="_blank" rel="noopener">
           <span class="link-icon">🐛</span>
           <span class="link-text">{$_('about.reportIssue')}</span>
-          <span class="link-arrow">→</span>
-        </a>
-        <a href="https://discord.gg/openclaw" class="link-item" target="_blank" rel="noopener">
-          <span class="link-icon">💬</span>
-          <span class="link-text">{$_('about.discord')}</span>
           <span class="link-arrow">→</span>
         </a>
       </div>

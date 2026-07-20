@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { _ } from 'svelte-i18n';
+  import { _, locale } from 'svelte-i18n';
   import { onMount } from 'svelte';
   import { open } from '@tauri-apps/plugin-dialog';
   import { list_backends, type BackendInfo, type BackendId } from '$lib/api/backends';
@@ -12,6 +12,7 @@
     type AgentPlan, type ApplyResult, type ChangeItem,
   } from '$lib/api/skillsSync';
   import { SKILL_SOURCES } from '$lib/data/skillSources';
+  import { localize } from '$lib/data/localized';
   import {
     memory_read, memory_write, memory_targets, memory_target_content,
     sync_memory_plan, sync_memory_apply,
@@ -740,7 +741,7 @@
                 >
                   <span class="source-name">{src.name}</span>
                   <span class="source-repo">{src.repo}</span>
-                  <span class="source-desc">{src.description}</span>
+                  <span class="source-desc">{localize(src.description, $locale)}</span>
                 </button>
               {/each}
             </div>

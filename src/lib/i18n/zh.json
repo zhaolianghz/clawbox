@@ -198,12 +198,11 @@
   },
   "about": {
     "title": "关于",
-    "tagline": "跨平台 OpenClaw Gateway 桌面客户端",
+    "tagline": "AI Agent 统一配置中心 —— 服务商、MCP、技能、记忆一处管理,一键下发到所有 agent",
     "versions": "版本信息",
     "links": "链接",
     "documentation": "文档",
     "reportIssue": "报告问题",
-    "discord": "Discord 社区",
     "allRightsReserved": "保留所有权利。",
     "checkUpdates": "检查更新",
     "checking": "检查中...",

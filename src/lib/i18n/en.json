@@ -198,12 +198,11 @@
   },
   "about": {
     "title": "About",
-    "tagline": "A cross-platform desktop GUI client for OpenClaw Gateway",
+    "tagline": "Unified configuration center for AI agents — manage providers, MCP, skills and memory in one place, sync to every agent",
     "versions": "Versions",
     "links": "Links",
     "documentation": "Documentation",
     "reportIssue": "Report an Issue",
-    "discord": "Discord Community",
     "allRightsReserved": "All rights reserved.",
     "checkUpdates": "Check for Updates",
     "checking": "Checking...",

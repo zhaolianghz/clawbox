@@ -1,5 +1,7 @@
 <script lang="ts">
+  import { locale } from 'svelte-i18n';
   import type { ProviderCatalogEntry } from '$lib/data/providers';
+  import { localize } from '$lib/data/localized';
 
   let { entry }: { entry: ProviderCatalogEntry } = $props();
 </script>
@@ -24,7 +26,7 @@
     <!-- Ollama 羊驼脸 -->
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M12 3c-4 0-6 3-6 7 0 3 1 5 2 6 1 1 2 2 4 2s3-1 4-2c1-1 2-3 2-6 0-4-2-7-6-7z"/><circle cx="9.5" cy="11" r="1" fill="currentColor"/><circle cx="14.5" cy="11" r="1" fill="currentColor"/></svg>
   {:else}
-    <span class="initial">{entry.name.slice(0, 1)}</span>
+    <span class="initial">{localize(entry.name, $locale).slice(0, 1)}</span>
   {/if}
 </span>
 

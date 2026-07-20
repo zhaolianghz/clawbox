@@ -1,10 +1,11 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { _ } from 'svelte-i18n';
+  import { _, locale } from 'svelte-i18n';
   import {
     PROVIDER_CATALOG, PROVIDER_CATEGORIES,
     type ProviderCatalogEntry, type ProviderCategory,
   } from '$lib/data/providers';
+  import { localize } from '$lib/data/localized';
   import ProviderLogo from '$lib/components/ProviderLogo.svelte';
   import AgentLogo from '$lib/components/AgentLogo.svelte';
   import { providers, addProvider, updateProvider, deleteProvider, loadProviders } from '$lib/stores/config';
@@ -91,13 +92,16 @@
     PROVIDER_CATALOG.filter((e) => {
       const matchCat = activeCategory === 'all' || e.category === activeCategory;
       const q = query.trim().toLowerCase();
-      const matchQ = !q || e.name.toLowerCase().includes(q) || e.apiHost.toLowerCase().includes(q) || (e.description ?? '').toLowerCase().includes(q);
+      const name = localize(e.name, $locale).toLowerCase();
+      const desc = e.description ? localize(e.description, $locale).toLowerCase() : '';
+      const matchQ = !q || name.includes(q) || e.apiHost.toLowerCase().includes(q) || desc.includes(q);
       return matchCat && matchQ;
     })
   );
 
   function categoryLabel(c: ProviderCategory): string {
-    return PROVIDER_CATEGORIES.find((x) => x.id === c)?.label ?? c;
+    const label = PROVIDER_CATEGORIES.find((x) => x.id === c)?.label;
+    return label ? localize(label, $locale) : c;
   }
 
   async function toggleEnabled(p: ModelProvider) {
@@ -279,7 +283,7 @@
     }
     editingId = null;
     editingEntry = e;
-    formName = e.name;
+    formName = localize(e.name, $locale);
     formAnthropicUrl = anthropicHostOf(e) ?? '';
     formOpenaiUrl = openaiHostOf(e) ?? '';
     formApiKey = '';
@@ -715,7 +719,7 @@
     </button>
     {#each PROVIDER_CATEGORIES as cat (cat.id)}
       <button class="chip" class:active={activeCategory === cat.id} onclick={() => (activeCategory = cat.id)}>
-        {cat.label}
+        {localize(cat.label, $locale)}
       </button>
     {/each}
   </div>
@@ -732,13 +736,13 @@
           <ProviderLogo entry={e} />
           <div class="card-head-info">
             <div class="card-title">
-              <span class="name">{e.name}</span>
+              <span class="name">{localize(e.name, $locale)}</span>
               <span class="cat-badge cat-{e.category}">{categoryLabel(e.category)}</span>
               {#if configured && activeProviderId === configured.id}
                 <span class="default-badge">{$_('providers.defaultBadge')}</span>
               {/if}
             </div>
-            {#if e.description}<div class="desc">{e.description}</div>{/if}
+            {#if e.description}<div class="desc">{localize(e.description, $locale)}</div>{/if}
           </div>
         </div>
 
@@ -816,7 +820,7 @@
       <!-- 内联配置面板:整行插在所点卡片所在行的行尾之后,同行卡片位置不动 -->
       {#if editorOpen && i === editRowEnd}
         <div class="config-panel glass-card">
-          <h3>{editingId === null ? $_('providers.addTitle') : $_('providers.editTitle')} · {editingEntry?.name}</h3>
+          <h3>{editingId === null ? $_('providers.addTitle') : $_('providers.editTitle')} · {editingEntry ? localize(editingEntry.name, $locale) : ''}</h3>
 
           <div class="form-row">
             <label for="pv-name">{$_('providers.form.name')} *</label>

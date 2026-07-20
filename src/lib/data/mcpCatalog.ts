@@ -1,11 +1,13 @@
 // MCP 精选目录:内置的常用 MCP server,添加面板一键预填配置。
 // 每条均经联网核实(npm 包 / 官方文档真实存在);宁缺毋滥。
-// id 同时作为建议的 server 名(用于「已添加」判定)。
+// id 同时作为建议的 server 名(用于「已添加」判定)。description 内嵌双语。
+
+import type { Localized } from './localized';
 
 export interface McpCatalogEntry {
   id: string;
   name: string;
-  description: string;
+  description: Localized;
   kind: 'stdio' | 'http';
   command?: string;
   args?: string[];
@@ -19,7 +21,10 @@ export const MCP_CATALOG: McpCatalogEntry[] = [
   {
     id: 'filesystem',
     name: 'Filesystem',
-    description: '官方文件系统服务器:读写/搜索本地文件。最后一个参数是允许访问的目录(默认 ~,建议改窄)',
+    description: {
+      en: 'Official filesystem server: read/write/search local files. Last arg is the allowed directory (defaults to ~, narrow it down)',
+      zh: '官方文件系统服务器:读写/搜索本地文件。最后一个参数是允许访问的目录(默认 ~,建议改窄)',
+    },
     kind: 'stdio',
     command: 'npx',
     args: ['-y', '@modelcontextprotocol/server-filesystem', '~'],
@@ -28,7 +33,10 @@ export const MCP_CATALOG: McpCatalogEntry[] = [
   {
     id: 'memory',
     name: 'Memory',
-    description: '官方知识图谱记忆服务器:跨会话保存实体/关系/观察',
+    description: {
+      en: 'Official knowledge-graph memory server: persists entities/relations/observations across sessions',
+      zh: '官方知识图谱记忆服务器:跨会话保存实体/关系/观察',
+    },
     kind: 'stdio',
     command: 'npx',
     args: ['-y', '@modelcontextprotocol/server-memory'],
@@ -37,7 +45,10 @@ export const MCP_CATALOG: McpCatalogEntry[] = [
   {
     id: 'sequential-thinking',
     name: 'Sequential Thinking',
-    description: '官方结构化思考服务器:分步推理、可分支与修订',
+    description: {
+      en: 'Official structured-thinking server: step-by-step reasoning with branching and revision',
+      zh: '官方结构化思考服务器:分步推理、可分支与修订',
+    },
     kind: 'stdio',
     command: 'npx',
     args: ['-y', '@modelcontextprotocol/server-sequential-thinking'],
@@ -46,7 +57,10 @@ export const MCP_CATALOG: McpCatalogEntry[] = [
   {
     id: 'everything',
     name: 'Everything',
-    description: '官方全功能参考服务器:覆盖 MCP 全部特性,适合调试客户端',
+    description: {
+      en: 'Official reference server covering every MCP feature — great for debugging clients',
+      zh: '官方全功能参考服务器:覆盖 MCP 全部特性,适合调试客户端',
+    },
     kind: 'stdio',
     command: 'npx',
     args: ['-y', '@modelcontextprotocol/server-everything'],
@@ -55,7 +69,10 @@ export const MCP_CATALOG: McpCatalogEntry[] = [
   {
     id: 'fetch',
     name: 'Fetch',
-    description: '官方网页抓取服务器:抓取 URL 并转为 Markdown(Python 实现,需已安装 uv)',
+    description: {
+      en: 'Official web fetch server: fetches URLs as Markdown (Python implementation, requires uv)',
+      zh: '官方网页抓取服务器:抓取 URL 并转为 Markdown(Python 实现,需已安装 uv)',
+    },
     kind: 'stdio',
     command: 'uvx',
     args: ['mcp-server-fetch'],
@@ -64,7 +81,10 @@ export const MCP_CATALOG: McpCatalogEntry[] = [
   {
     id: 'playwright',
     name: 'Playwright',
-    description: 'Microsoft 官方浏览器自动化:基于无障碍树驱动真实浏览器',
+    description: {
+      en: "Microsoft's official browser automation: drives a real browser via the accessibility tree",
+      zh: 'Microsoft 官方浏览器自动化:基于无障碍树驱动真实浏览器',
+    },
     kind: 'stdio',
     command: 'npx',
     args: ['@playwright/mcp@latest'],
@@ -73,7 +93,10 @@ export const MCP_CATALOG: McpCatalogEntry[] = [
   {
     id: 'context7',
     name: 'Context7',
-    description: 'Upstash 实时库文档服务器:按版本拉取最新 API 文档(API key 可选)',
+    description: {
+      en: 'Up-to-date library docs by Upstash: version-specific API documentation (API key optional)',
+      zh: 'Upstash 实时库文档服务器:按版本拉取最新 API 文档(API key 可选)',
+    },
     kind: 'stdio',
     command: 'npx',
     args: ['-y', '@upstash/context7-mcp'],
@@ -82,7 +105,10 @@ export const MCP_CATALOG: McpCatalogEntry[] = [
   {
     id: 'github',
     name: 'GitHub',
-    description: 'GitHub 官方远程服务器:仓库/issue/PR 操作。Authorization 头填 "Bearer <PAT>"',
+    description: {
+      en: 'GitHub official remote server: repos/issues/PRs. Set the Authorization header to "Bearer <PAT>"',
+      zh: 'GitHub 官方远程服务器:仓库/issue/PR 操作。Authorization 头填 "Bearer <PAT>"',
+    },
     kind: 'http',
     url: 'https://api.githubcopilot.com/mcp/',
     envHint: ['Authorization'],

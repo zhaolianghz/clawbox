@@ -1,7 +1,7 @@
 [package]
 name = "clawbox"
 version = "0.1.0"
-description = "A cross-platform desktop GUI client for OpenClaw Gateway"
+description = "Unified configuration center for AI agents — providers, MCP, skills and memory in one place"
 authors = ["you"]
 edition = "2021"
 

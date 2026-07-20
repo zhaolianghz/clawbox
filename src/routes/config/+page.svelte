@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { _ } from 'svelte-i18n';
+  import { _, locale } from 'svelte-i18n';
   import {
     config_mcp_list, config_mcp_upsert, config_mcp_remove,
     sync_mcp_plan, sync_mcp_apply,
@@ -12,6 +12,7 @@
   } from '$lib/api/mcpJson';
   import { agents_list } from '$lib/api/agents';
   import { MCP_CATALOG, type McpCatalogEntry } from '$lib/data/mcpCatalog';
+  import { localize } from '$lib/data/localized';
   import AgentLogo from '$lib/components/AgentLogo.svelte';
 
   // ---------- 服务器列表 ----------
@@ -537,7 +538,7 @@
               {c.name}
               {#if added}<span class="added-badge">{$_('mcp.form.catalogAdded')}</span>{/if}
             </span>
-            <span class="source-desc">{c.description}</span>
+            <span class="source-desc">{localize(c.description, $locale)}</span>
           </button>
         {/each}
       </div>
