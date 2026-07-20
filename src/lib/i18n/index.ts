@@ -9,7 +9,16 @@ import zh from './zh.json';
 addMessages('en', en);
 addMessages('zh', zh);
 
+/** 初始语言:localStorage 持久化值 → 系统语言前缀 → 'en';非法值一律兜底 'en'。 */
+function initialLocale(): 'en' | 'zh' {
+  try {
+    const saved = localStorage.getItem('clawbox.locale');
+    if (saved === 'en' || saved === 'zh') return saved;
+  } catch { /* 存储不可用时走系统语言 */ }
+  return navigator.language?.startsWith('zh') ? 'zh' : 'en';
+}
+
 init({
   fallbackLocale: 'en',
-  initialLocale: navigator.language.startsWith('zh') ? 'zh' : 'en',
+  initialLocale: initialLocale(),
 });

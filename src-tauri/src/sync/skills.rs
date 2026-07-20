@@ -34,7 +34,7 @@ pub struct AdoptCandidate {
     pub name: String,
     pub description: String,
     pub path: String,
-    /// 库中已有同名技能。
+    /// Skill already exists in library。
     pub in_library: bool,
 }
 
@@ -188,7 +188,7 @@ fn make_symlink(_target: &Path, _link: &Path) -> Result<(), String> {
 /// 导入外部目录进库:name = 目录名;库中同名 → Err;无 SKILL.md → Err。
 pub fn import(home: &Path, src_dir: &Path) -> Result<SkillEntry, String> {
     if !src_dir.join("SKILL.md").is_file() {
-        return Err(format!("{}: 缺少 SKILL.md,不是技能目录", src_dir.display()));
+        return Err(format!("{}: missing SKILL.md, not a skill directory", src_dir.display()));
     }
     let name = src_dir
         .file_name()
@@ -197,7 +197,7 @@ pub fn import(home: &Path, src_dir: &Path) -> Result<SkillEntry, String> {
         .ok_or_else(|| format!("invalid skill dir name: {}", src_dir.display()))?;
     let dst = library_dir(home).join(&name);
     if dst.exists() {
-        return Err(format!("库中已有同名技能: {}", name));
+        return Err(format!("Skill already exists in library: {}", name));
     }
     copy_dir_recursive(src_dir, &dst)?;
     read_entry(&dst).ok_or_else(|| format!("import of {} produced no SKILL.md", name))
@@ -210,7 +210,7 @@ pub fn remove_from_library(home: &Path, name: &str) -> Result<(), String> {
     }
     let dir = library_dir(home).join(name);
     if !dir.is_dir() {
-        return Err(format!("库中无此技能: {}", name));
+        return Err(format!("No such skill in library: {}", name));
     }
     std::fs::remove_dir_all(&dir)
         .map_err(|e| format!("failed to remove {}: {}", dir.display(), e))
@@ -270,19 +270,19 @@ fn adopt_one(home: &Path, agent_id: &str, name: &str) -> Result<String, String> 
         return Err(format!("invalid skill name: {}", name));
     }
     let dir = agent_skills_dir(home, agent_id)
-        .ok_or_else(|| format!("{} 不支持技能同步", agent_id))?;
+        .ok_or_else(|| format!("{} does not support skills sync", agent_id))?;
     let src = dir.join(name);
     let meta = src
         .symlink_metadata()
-        .map_err(|_| format!("{} 不存在", src.display()))?;
+        .map_err(|_| format!("{} does not exist", src.display()))?;
     if meta.file_type().is_symlink() {
-        return Err("已是软链,无需收编".to_string());
+        return Err("Already a symlink; nothing to adopt".to_string());
     }
     if !meta.is_dir() {
-        return Err(format!("{} 不是目录", src.display()));
+        return Err(format!("{} is not a directory", src.display()));
     }
     if !src.join("SKILL.md").is_file() {
-        return Err(format!("{} 缺少 SKILL.md", src.display()));
+        return Err(format!("{} is missing SKILL.md", src.display()));
     }
     let lib_target = library_dir(home).join(name);
     if !lib_target.exists() {
@@ -366,7 +366,7 @@ fn plan_one(
         let (action, detail) = match link_state(&dir.join(&skill.name), &target) {
             LinkState::Absent => ("add", format!("→ {}", target.display())),
             LinkState::Ours => ("unchanged", String::new()),
-            LinkState::Foreign => ("skip", "同名技能已存在(非 ClawBox 管理)".to_string()),
+            LinkState::Foreign => ("skip", "A skill with this name already exists (not managed by ClawBox)".to_string()),
         };
         changes.push(ChangeItem {
             name: skill.name.clone(),
@@ -606,7 +606,7 @@ fn run_git(args: &[&str]) -> Result<String, String> {
         .output()
         .map_err(|e| {
             if e.kind() == std::io::ErrorKind::NotFound {
-                "需要安装 git(未在 PATH 中找到)".to_string()
+                "Git is required (not found in PATH)".to_string()
             } else {
                 format!("failed to run git: {}", e)
             }
@@ -746,12 +746,12 @@ pub fn repo_install(
             continue;
         }
         if !src.join("SKILL.md").is_file() {
-            outcomes.push(fail(format!("{} 缺少 SKILL.md", subdir)));
+            outcomes.push(fail(format!("{} is missing SKILL.md", subdir)));
             continue;
         }
         let dst = library_dir(home).join(&name);
         if dst.exists() {
-            outcomes.push(fail("库中已有同名技能".to_string()));
+            outcomes.push(fail("Skill already exists in library".to_string()));
             continue;
         }
         match copy_dir_recursive(&src, &dst) {
@@ -827,7 +827,7 @@ pub fn update(
             None => outcomes.push(InstallOutcome {
                 name: name.clone(),
                 ok: false,
-                detail: "无来源记录(非 Git 安装的技能)".to_string(),
+                detail: "No source record (skill was not installed from Git)".to_string(),
             }),
         }
     }
@@ -885,7 +885,7 @@ fn update_one(
     }
     let new_dir = if src.subdir.is_empty() { clone_dir.to_path_buf() } else { clone_dir.join(&src.subdir) };
     if !new_dir.join("SKILL.md").is_file() {
-        return Err(format!("仓库最新版中已无该技能(subdir: {})", src.subdir));
+        return Err(format!("Skill no longer exists in the latest repo version (subdir: {})", src.subdir));
     }
     let lib_dir = library_dir(home).join(name);
     let backup = home
@@ -935,7 +935,7 @@ mod tests {
     #[test]
     fn library_list_parses_frontmatter_and_ignores_non_skills() {
         let home = TempHome::new();
-        lib_skill(&home, "beta", "第二个技能");
+        lib_skill(&home, "beta", "the second skill");
         lib_skill(&home, "alpha", ""); // 无 description
         // 无 SKILL.md 的目录、散文件:都不算技能
         std::fs::create_dir_all(library_dir(home.path()).join("not-a-skill")).unwrap();
@@ -947,7 +947,7 @@ mod tests {
             vec!["alpha", "beta"]
         );
         assert_eq!(list[0].description, "");
-        assert_eq!(list[1].description, "第二个技能");
+        assert_eq!(list[1].description, "the second skill");
         assert!(list[1].path.ends_with("beta"));
         // 库目录不存在 = 空库
         let empty = TempHome::new();
@@ -964,7 +964,7 @@ mod tests {
         assert!(library_dir(home.path()).join("newskill").join("scripts").join("run.sh").is_file());
         // 同名 → Err
         let err = import(home.path(), &src).unwrap_err();
-        assert!(err.contains("同名"), "{}", err);
+        assert!(err.contains("already exists"), "{}", err);
         // 无 SKILL.md → Err
         let bad = home.path().join("downloads").join("junk");
         std::fs::create_dir_all(&bad).unwrap();
@@ -1035,7 +1035,7 @@ mod tests {
             action_map(&hermes.changes),
             vec![("mine".to_string(), "skip".to_string()), ("other".to_string(), "skip".to_string())]
         );
-        assert!(hermes.changes[0].detail.contains("非 ClawBox 管理"));
+        assert!(hermes.changes[0].detail.contains("not managed by ClawBox"));
 
         // apply 不动任何一个:真实目录仍是目录,别处链 target 不变
         assert_eq!(apply_agent(home.path(), "hermes", &[]).unwrap(), 0);
@@ -1145,8 +1145,8 @@ mod tests {
         assert!(lib_md.contains("library version"), "{}", lib_md);
         assert!(home.path().join(".hermes").join("skills").join("known").is_symlink());
         // ③④ 失败条目隔离:不存在的技能、不支持的 agent
-        assert!(!outcomes[2].ok && outcomes[2].detail.contains("不存在"));
-        assert!(!outcomes[3].ok && outcomes[3].detail.contains("不支持"));
+        assert!(!outcomes[2].ok && outcomes[2].detail.contains("does not exist"));
+        assert!(!outcomes[3].ok && outcomes[3].detail.contains("does not support"));
     }
 
     #[test]
@@ -1277,7 +1277,7 @@ mod tests {
                 .unwrap();
         assert_eq!(outcomes.len(), 2);
         assert!(outcomes[0].ok, "{}", outcomes[0].detail);
-        assert!(!outcomes[1].ok && outcomes[1].detail.contains("同名"), "{}", outcomes[1].detail);
+        assert!(!outcomes[1].ok && outcomes[1].detail.contains("already exists"), "{}", outcomes[1].detail);
         assert!(library_dir(home.path()).join("a").join("SKILL.md").is_file());
         // source 只记成功的 a
         assert_eq!(sources.len(), 1);
@@ -1367,7 +1367,7 @@ mod tests {
 
         // 无来源记录 → ok=false
         let (outcomes, updated) = update(home.path(), &["nope".to_string()], &sources);
-        assert!(!outcomes[0].ok && outcomes[0].detail.contains("无来源"), "{}", outcomes[0].detail);
+        assert!(!outcomes[0].ok && outcomes[0].detail.contains("No source record"), "{}", outcomes[0].detail);
         assert!(updated.is_empty());
     }
 

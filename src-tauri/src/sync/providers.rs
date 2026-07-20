@@ -90,7 +90,7 @@ fn resolve_single_active<'a>(
     match active_spec(providers, active_id) {
         None => Target::Skip {
             name: "(active)".to_string(),
-            reason: "未设置默认服务商(在服务商卡片上点 ★ 设为默认)".to_string(),
+            reason: "No default provider set (star one on the Providers page)".to_string(),
         },
         Some(spec) => {
             let Some((url, _)) = pick_endpoint(spec, order) else {
@@ -102,7 +102,7 @@ fn resolve_single_active<'a>(
             if spec.api_key.trim().is_empty() {
                 return Target::Skip {
                     name: spec.name.clone(),
-                    reason: "API Key 未配置".to_string(),
+                    reason: "API key not configured".to_string(),
                 };
             }
             Target::Deploy { spec, url }
@@ -175,7 +175,7 @@ pub fn claude_code() -> EnvSettingsProviderAdapter {
         dir: ".claude",
         keys: ["ANTHROPIC_BASE_URL", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_MODEL"],
         slots: &[Slot::Anthropic],
-        missing: "未配置 Anthropic 端点",
+        missing: "Anthropic endpoint not configured",
         remove_label: "ANTHROPIC_*",
     }
 }
@@ -188,7 +188,7 @@ pub fn codebuddy() -> EnvSettingsProviderAdapter {
         dir: ".codebuddy",
         keys: ["CODEBUDDY_BASE_URL", "CODEBUDDY_API_KEY", "CODEBUDDY_MODEL"],
         slots: &[Slot::Openai],
-        missing: "未配置 OpenAI 端点",
+        missing: "OpenAI endpoint not configured",
         remove_label: "CODEBUDDY_*",
     }
 }
@@ -232,7 +232,7 @@ impl EnvSettingsProviderAdapter {
             "{}={} · model={}",
             self.keys[0],
             url,
-            if model.is_empty() { "(未设置)" } else { model }
+            if model.is_empty() { "(not set)" } else { model }
         )
     }
 }
@@ -352,7 +352,7 @@ pub struct CodexProviderAdapter;
 const CODEX_PROVIDER_KEY: &str = "clawbox";
 /// codex 只认 OpenAI 端点槽。
 const CODEX_SLOTS: [Slot; 1] = [Slot::Openai];
-const CODEX_MISSING: &str = "未配置 OpenAI 端点";
+const CODEX_MISSING: &str = "OpenAI endpoint not configured";
 
 impl CodexProviderAdapter {
     fn auth_path(&self, home: &Path) -> PathBuf {
@@ -421,7 +421,7 @@ impl CodexProviderAdapter {
         format!(
             "base_url={} · model={}",
             url,
-            if model.is_empty() { "(未设置)" } else { model }
+            if model.is_empty() { "(not set)" } else { model }
         )
     }
 
@@ -594,7 +594,7 @@ impl OpencodeProviderAdapter {
     /// 一个服务商 → provider.<id> 的原生值;Err(reason) 变成 skip 项。
     fn render(spec: &ProviderSpec) -> Result<Value, String> {
         let Some((base_url, slot)) = pick_endpoint(spec, &OPENCODE_SLOTS) else {
-            return Err("未配置端点".to_string());
+            return Err("No endpoint configured".to_string());
         };
         let npm = match slot {
             Slot::Anthropic => "@ai-sdk/anthropic",
@@ -771,7 +771,7 @@ pub struct HermesProviderAdapter;
 
 /// hermes 端点偏好:Anthropic 优先、OpenAI 兜底(它按 URL 自检协议,见上)。
 const HERMES_SLOTS: [Slot; 2] = [Slot::Anthropic, Slot::Openai];
-const HERMES_MISSING: &str = "未配置端点";
+const HERMES_MISSING: &str = "No endpoint configured";
 
 impl HermesProviderAdapter {
     fn env_path(home: &Path) -> PathBuf {
@@ -908,7 +908,7 @@ impl HermesProviderAdapter {
             "model.provider={} · base_url={} · model={} · env {}",
             spec.id,
             url,
-            if model.is_empty() { "(未设置)" } else { model },
+            if model.is_empty() { "(not set)" } else { model },
             Self::env_key(&spec.id)
         )
     }
@@ -1053,7 +1053,7 @@ impl OpenclawProviderAdapter {
     /// 一个服务商 → models.providers.<id> 的原生值;Err(reason) 变成 skip 项。
     fn render(spec: &ProviderSpec) -> Result<Value, String> {
         let Some((base_url, slot)) = pick_endpoint(spec, &OPENCLAW_SLOTS) else {
-            return Err("未配置端点".to_string());
+            return Err("No endpoint configured".to_string());
         };
         let api = match slot {
             Slot::Anthropic => "anthropic-messages",
@@ -1363,7 +1363,7 @@ impl KimiProviderAdapter {
     /// 非空时的 [models.<名>] 条目)。Err(reason) 变成 skip 项。
     fn render(spec: &ProviderSpec) -> Result<Value, String> {
         let Some((url, slot)) = pick_endpoint(spec, &KIMI_SLOTS) else {
-            return Err("未配置端点".to_string());
+            return Err("No endpoint configured".to_string());
         };
         let kind = match slot {
             Slot::Openai => "openai_legacy",
@@ -1883,7 +1883,7 @@ mod tests {
         let a = claude_code();
         let changes = a.plan(home.path(), &providers, Some("p-oa"), &[]).unwrap();
         assert_eq!(changes[0].action, "skip");
-        assert!(changes[0].detail.contains("未配置 Anthropic 端点"), "{}", changes[0].detail);
+        assert!(changes[0].detail.contains("Anthropic endpoint not configured"), "{}", changes[0].detail);
         assert_eq!(a.apply(home.path(), &providers, Some("p-oa"), &[]).unwrap(), 0);
         assert!(a.deployed_names(&providers, Some("p-oa")).is_empty());
         // 目标文件从未被创建
@@ -2040,7 +2040,7 @@ mod tests {
         let a = CodexProviderAdapter;
         let changes = a.plan(home.path(), &providers, Some("p-anth"), &[]).unwrap();
         assert_eq!(changes[0].action, "skip");
-        assert!(changes[0].detail.contains("未配置 OpenAI 端点"), "{}", changes[0].detail);
+        assert!(changes[0].detail.contains("OpenAI endpoint not configured"), "{}", changes[0].detail);
         assert_eq!(a.apply(home.path(), &providers, Some("p-anth"), &[]).unwrap(), 0);
         assert!(a.deployed_names(&providers, Some("p-anth")).is_empty());
         assert!(!home.path().join(codex_rel()).exists());
@@ -2221,7 +2221,7 @@ mod tests {
         let a = OpencodeProviderAdapter;
         let changes = a.plan(home.path(), &[p.clone()], None, &[]).unwrap();
         assert_eq!(changes[0].action, "skip");
-        assert!(changes[0].detail.contains("未配置端点"), "{}", changes[0].detail);
+        assert!(changes[0].detail.contains("No endpoint configured"), "{}", changes[0].detail);
         assert!(a.deployed_names(&[p], None).is_empty());
     }
 
@@ -2375,11 +2375,11 @@ mod tests {
             "{}",
             changes[0].detail
         );
-        // 两槽皆空 → skip「未配置端点」
+        // 两槽皆空 → skip「No endpoint configured」
         let none = vec![provider("p-none", "None", "", "")];
         let changes = a.plan(home.path(), &none, Some("p-none"), &[]).unwrap();
         assert_eq!(changes[0].action, "skip");
-        assert!(changes[0].detail.contains("未配置端点"), "{}", changes[0].detail);
+        assert!(changes[0].detail.contains("No endpoint configured"), "{}", changes[0].detail);
         // 未选择激活 → skip,无 remove(hermes 无 remove 语义)
         let changes = a.plan(home.path(), &providers, None, &[]).unwrap();
         assert_eq!(changes.len(), 1);
@@ -2664,7 +2664,7 @@ mod tests {
         let a = codebuddy();
         let changes = a.plan(home.path(), &providers, Some("p-anth"), &[]).unwrap();
         assert_eq!(changes[0].action, "skip");
-        assert!(changes[0].detail.contains("未配置 OpenAI 端点"), "{}", changes[0].detail);
+        assert!(changes[0].detail.contains("OpenAI endpoint not configured"), "{}", changes[0].detail);
         assert_eq!(a.apply(home.path(), &providers, Some("p-anth"), &[]).unwrap(), 0);
         assert!(a.deployed_names(&providers, Some("p-anth")).is_empty());
         assert!(!home.path().join(codebuddy_rel()).exists());
@@ -2798,7 +2798,7 @@ mod tests {
         let p = provider("p-none", "None", "", "  ");
         let changes = a.plan(home.path(), &[p.clone()], None, &[]).unwrap();
         assert_eq!(changes[0].action, "skip");
-        assert!(changes[0].detail.contains("未配置端点"), "{}", changes[0].detail);
+        assert!(changes[0].detail.contains("No endpoint configured"), "{}", changes[0].detail);
         assert!(a.deployed_names(&[p.clone()], None).is_empty());
         // 全 skip 的 apply 不创建文件
         assert_eq!(a.apply(home.path(), &[p], None, &[]).unwrap(), 0);

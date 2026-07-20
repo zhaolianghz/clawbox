@@ -10,7 +10,8 @@
     "config": "Config",
     "agents": "Agent Management",
     "capabilities": "Capabilities",
-    "about": "About"
+    "about": "About",
+    "language": "Language"
   },
   "gateway": {
     "title": "Gateway",
@@ -37,7 +38,15 @@
     "skip": "Skip",
     "installing": "Installing...",
     "complete": "Installation Complete!",
-    "startUsing": "Start Using ClawBox"
+    "startUsing": "Start Using ClawBox",
+    "log": {
+      "nodejs": "Installing Node.js...",
+      "openclaw": "Installing OpenClaw CLI...",
+      "error": "Error: {msg}",
+      "nodeManual": "Node.js not available. Please install Node.js manually.",
+      "openclawManual": "OpenClaw not available. Please install OpenClaw CLI manually.",
+      "verified": "Component verified as available."
+    }
   },
   "config": {
     "models": "Models",
@@ -347,11 +356,23 @@
       "importToLib": "Import to library",
       "targetsEmpty": "No agents to inject into",
       "nativeTitle": "Agent Native Memory"
+    },
+    "native": {
+      "builtin": "Built-in",
+      "active": "active",
+      "inactive": "inactive",
+      "unknownProvider": "(unknown)",
+      "index": "Index",
+      "reset": "Reset"
     }
   },
   "quickSync": {
     "hint": "Changes pending sync",
     "action": "Sync to Agents",
     "dismiss": "Dismiss"
+  },
+  "errors": {
+    "requestFailed": "Request failed",
+    "applyFailed": "Apply failed"
   }
 }

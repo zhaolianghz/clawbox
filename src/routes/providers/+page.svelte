@@ -231,7 +231,7 @@
       if (r.ok) {
         fetchedModels = r.models;
       } else {
-        fetchError = r.error ?? 'Request failed';
+        fetchError = r.error ?? $_('errors.requestFailed');
       }
     } catch (e) {
       fetchError = String(e);
@@ -452,7 +452,7 @@
       rowError = { ...rowError, [r.agent_id]: '' };
       if (r.backup_path) rowBackup = { ...rowBackup, [r.agent_id]: r.backup_path };
     } else {
-      rowError = { ...rowError, [r.agent_id]: r.error ?? 'apply failed' };
+      rowError = { ...rowError, [r.agent_id]: r.error ?? $_('errors.applyFailed') };
     }
   }
 

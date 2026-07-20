@@ -459,7 +459,7 @@
       rowError = { ...rowError, [r.agent_id]: '' };
       if (r.backup_path) rowBackup = { ...rowBackup, [r.agent_id]: r.backup_path };
     } else {
-      rowError = { ...rowError, [r.agent_id]: r.error ?? 'apply failed' };
+      rowError = { ...rowError, [r.agent_id]: r.error ?? $_('errors.applyFailed') };
     }
   }
 

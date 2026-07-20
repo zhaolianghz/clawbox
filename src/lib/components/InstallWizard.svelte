@@ -72,12 +72,12 @@
 
     try {
       if (!checkData.nodejs) {
-        addLog('Installing Node.js...');
+        addLog($_('install.log.nodejs'));
         await installWithProgress('install_nodejs', 50);
       }
 
       if (!checkData.openclaw) {
-        addLog('Installing OpenClaw CLI...');
+        addLog($_('install.log.openclaw'));
         await installWithProgress('install_openclaw', checkData.nodejs ? 100 : 50);
       }
 
@@ -91,7 +91,7 @@
       installComplete.set(true);
     } catch (e) {
       const errorMsg = e instanceof Error ? e.message : String(e);
-      addLog(`Error: ${errorMsg}`);
+      addLog($_('install.log.error', { values: { msg: errorMsg } }));
       newProgress = { ...progressData, error: errorMsg };
       installProgress.set(newProgress);
       progressData = newProgress;
@@ -116,18 +116,18 @@
     }>('check_system');
 
     if (cmd === 'install_nodejs' && !status.nodejs.installed) {
-      addLog('Node.js not available. Please install Node.js manually.');
+      addLog($_('install.log.nodeManual'));
       throw new Error('Node.js installation failed - component not available');
     }
     if (cmd === 'install_openclaw' && !status.openclaw.installed) {
-      addLog('OpenClaw not available. Please install OpenClaw CLI manually.');
+      addLog($_('install.log.openclawManual'));
       throw new Error('OpenClaw installation failed - component not available');
     }
 
     const newProgress: InstallProgress = { ...progressData, progress: targetProgress };
     installProgress.set(newProgress);
     progressData = newProgress;
-    addLog('Component verified as available.');
+    addLog($_('install.log.verified'));
   }
 
   function addLog(message: string) {

@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { _ } from 'svelte-i18n';
+  import { _, locale } from 'svelte-i18n';
   import { onMount } from 'svelte';
   import ProvidersPage from '../../routes/providers/+page.svelte';
   import ConfigPage from '../../routes/config/+page.svelte';
@@ -16,15 +16,21 @@
   }
   let { standalone = false, onexit }: Props = $props();
 
-  // $derived:standalone 是挂载后不变的 prop,用 derived 跟随 props 语义(消除
-  // state_referenced_locally 警告,行为不变)。
-  const sections = $derived<{ id: SectionId; labelKey: string }[]>([
+  // 「关于」不在主导航(挪到侧边栏页脚),sections 不再依赖 standalone。
+  const sections: { id: SectionId; labelKey: string }[] = [
     { id: 'providers', labelKey: 'nav.providers' },
     { id: 'config', labelKey: 'nav.config' },
     { id: 'agents', labelKey: 'nav.agents' },
     { id: 'capabilities', labelKey: 'nav.capabilities' },
-    ...(standalone ? [{ id: 'about' as SectionId, labelKey: 'nav.about' }] : []),
-  ]);
+  ];
+
+  /** 语言切换:svelte-i18n locale + localStorage 持久化(i18n/index.ts 启动时读取) */
+  function setLang(l: 'en' | 'zh') {
+    locale.set(l);
+    try {
+      localStorage.setItem('clawbox.locale', l);
+    } catch { /* 隐私模式等存储不可用时仅本次生效 */ }
+  }
 
   let activeSection = $state<SectionId>('providers');
   // keep-alive:子页首次访问后常驻,切回秒开,避免每次重跑 CLI 探测
@@ -95,17 +101,41 @@
               <path d="M2 17l10 5 10-5"/>
               <path d="M2 12l10 5 10-5"/>
             </svg>
-          {:else if s.id === 'about'}
-            <svg class="menu-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <circle cx="12" cy="12" r="10"/>
-              <line x1="12" y1="16" x2="12" y2="12"/>
-              <line x1="12" y1="8" x2="12.01" y2="8"/>
-            </svg>
           {/if}
           <span class="menu-label">{$_(s.labelKey)}</span>
         </button>
       {/each}
     </nav>
+
+    <!-- 页脚:关于入口(仅 standalone)+ 语言切换器 -->
+    <div class="menu-footer">
+      {#if standalone}
+        <button
+          class="menu-item"
+          class:active={activeSection === 'about'}
+          onclick={() => select('about')}
+        >
+          <svg class="menu-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <circle cx="12" cy="12" r="10"/>
+            <line x1="12" y1="16" x2="12" y2="12"/>
+            <line x1="12" y1="8" x2="12.01" y2="8"/>
+          </svg>
+          <span class="menu-label">{$_('nav.about')}</span>
+        </button>
+      {/if}
+      <div class="lang-switch" role="group" aria-label={$_('nav.language')} title={$_('nav.language')}>
+        <button
+          class="lang-btn"
+          class:active={!$locale?.startsWith('zh')}
+          onclick={() => setLang('en')}
+        >EN</button>
+        <button
+          class="lang-btn"
+          class:active={!!$locale?.startsWith('zh')}
+          onclick={() => setLang('zh')}
+        >中文</button>
+      </div>
+    </div>
   </aside>
 
   <div class="settings-content">
@@ -231,6 +261,42 @@
 
   .menu-label {
     flex: 1;
+  }
+
+  /* 页脚:贴底,细分隔线 */
+  .menu-footer {
+    margin-top: auto;
+    padding: 0.6rem 0.5rem 0.4rem;
+    border-top: 1px solid rgba(255, 255, 255, 0.08);
+    display: flex;
+    flex-direction: column;
+    gap: 0.4rem;
+  }
+
+  .lang-switch {
+    display: flex;
+    gap: 0.25rem;
+    padding: 0 0.35rem;
+  }
+  .lang-btn {
+    flex: 1;
+    padding: 0.3rem 0;
+    font-size: 0.72rem;
+    background: transparent;
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    border-radius: var(--radius-md);
+    color: var(--text-secondary);
+    cursor: pointer;
+    transition: all 0.2s ease;
+  }
+  .lang-btn:hover {
+    color: var(--text-primary);
+    background: var(--bg-tertiary);
+  }
+  .lang-btn.active {
+    background: rgba(0, 245, 255, 0.1);
+    border-color: var(--neon-cyan);
+    color: var(--neon-cyan);
   }
 
   .settings-content {

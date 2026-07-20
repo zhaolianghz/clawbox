@@ -389,7 +389,7 @@
       rowError = { ...rowError, [r.agent_id]: '' };
       if (r.backup_path) rowBackup = { ...rowBackup, [r.agent_id]: r.backup_path };
     } else {
-      rowError = { ...rowError, [r.agent_id]: r.error ?? 'apply failed' };
+      rowError = { ...rowError, [r.agent_id]: r.error ?? $_('errors.applyFailed') };
     }
   }
 
@@ -604,7 +604,7 @@
       memRowError = { ...memRowError, [r.agent_id]: '' };
       if (r.backup_path) memRowBackup = { ...memRowBackup, [r.agent_id]: r.backup_path };
     } else {
-      memRowError = { ...memRowError, [r.agent_id]: r.error ?? 'apply failed' };
+      memRowError = { ...memRowError, [r.agent_id]: r.error ?? $_('errors.applyFailed') };
     }
   }
 
@@ -1338,13 +1338,13 @@
                   {#if status}
                     <div class="item-row">
                       <div class="item-info">
-                        <div class="item-name">{status.provider || '(unknown)'}</div>
+                        <div class="item-name">{status.provider || $_('capabilities.native.unknownProvider')}</div>
                         <div class="item-meta">
-                          <span class="desc">built-in:</span>
+                          <span class="desc">{$_('capabilities.native.builtin')}:</span>
                           {#if status.builtinActive}
-                            <code class="version">active</code>
+                            <code class="version">{$_('capabilities.native.active')}</code>
                           {:else}
-                            <span class="empty">inactive</span>
+                            <span class="empty">{$_('capabilities.native.inactive')}</span>
                           {/if}
                         </div>
                       </div>
@@ -1352,12 +1352,12 @@
                         {#if backend.id === 'openclaw'}
                           <button class="action-btn primary" onclick={() => doMemoryIndex(backend.id)}
                             disabled={busyKey === `mem-index:${backend.id}`}
-                            title="Index">📥</button>
+                            title={$_('capabilities.native.index')}>📥</button>
                         {/if}
                         {#if backend.id === 'hermes'}
                           <button class="action-btn" onclick={() => doMemoryReset(backend.id)}
                             disabled={busyKey === `mem-reset:${backend.id}`}
-                            title="Reset">♻️</button>
+                            title={$_('capabilities.native.reset')}>♻️</button>
                         {/if}
                       </div>
                     </div>

@@ -127,7 +127,7 @@ fn scan_block(text: &str) -> Result<Option<(std::ops::Range<usize>, String)>, St
             let inner = text[inner_start..ends[0]].to_string();
             Ok(Some((full, inner)))
         }
-        _ => Err("托管区块标记残缺或重复(CLAWBOX_START/END),已拒绝改动该文件".to_string()),
+        _ => Err("Managed block markers are broken or duplicated (CLAWBOX_START/END); refusing to modify this file".to_string()),
     }
 }
 
@@ -209,15 +209,15 @@ fn plan_one(path: &Path, lib: &str, managed: &[String]) -> Result<Vec<ChangeItem
         if managed.iter().any(|m| m == MANAGED_MARK) && has_block {
             item("remove", "no longer managed by ClawBox".into())
         } else {
-            item("skip", "记忆库为空".into())
+            item("skip", "Memory library is empty".into())
         }
     } else {
         match &existing {
-            None => item("add", "创建文件并写入托管区块".into()),
+            None => item("add", "Create file with managed block".into()),
             Some(text) => match scan_block(text)? {
-                None => item("add", "文件末尾追加托管区块".into()),
+                None => item("add", "Append managed block at end of file".into()),
                 Some((_, inner)) if inner == normalized(lib) => item("unchanged", String::new()),
-                Some(_) => item("update", "托管区块内容已过期".into()),
+                Some(_) => item("update", "Managed block content is outdated".into()),
             },
         }
     };
@@ -426,7 +426,7 @@ mod tests {
         let orig = "# My rules\ndo X\n";
         let injected = upsert_block(orig, "memo\n").unwrap();
         let removed = remove_block(&injected).unwrap().unwrap();
-        assert_eq!(removed, orig, "append 的逆操作应还原原文");
+        assert_eq!(removed, orig, "remove must restore pre-injection text");
         // 整文件只有区块 → 空串
         let only = upsert_block("", "memo\n").unwrap();
         assert_eq!(remove_block(&only).unwrap().unwrap(), "");
@@ -486,7 +486,7 @@ mod tests {
         let text = std::fs::read_to_string(claude_md(&home)).unwrap();
         assert!(text.starts_with("# user header\n\n"));
         assert!(text.contains("shared memo v2"));
-        assert!(!text.contains("shared memo\n<!--"), "旧内容应被替换");
+        assert!(!text.contains("shared memo\n<!--"), "old content must be replaced");
     }
 
     #[test]
@@ -531,7 +531,7 @@ mod tests {
         let plans = plan_all(home.path(), &HashMap::new());
         let h = plan_of(&plans, "hermes");
         assert_eq!(h.changes[0].action, "skip");
-        assert!(h.changes[0].detail.contains("记忆库为空"));
+        assert!(h.changes[0].detail.contains("Memory library is empty"));
         assert_eq!(apply_agent(home.path(), "hermes", &[]).unwrap(), 0);
         // 未曾管理时即使文件里有区块也不删(managed 空)
         std::fs::write(&path, upsert_block("", "someone else\n").unwrap()).unwrap();
@@ -547,7 +547,7 @@ mod tests {
         write_file(home.path(), &PathBuf::from(".claude").join("CLAUDE.md"), broken);
         let plans = plan_all(home.path(), &HashMap::new());
         let cc = plan_of(&plans, "claude-code");
-        assert!(cc.error.as_deref().unwrap_or_default().contains("残缺或重复"), "{:?}", cc.error);
+        assert!(cc.error.as_deref().unwrap_or_default().contains("broken or duplicated"), "{:?}", cc.error);
         assert!(cc.changes.is_empty());
         // apply 拒动,文件逐字节原样
         assert!(apply_agent(home.path(), "claude-code", &[]).is_err());

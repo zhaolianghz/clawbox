@@ -10,7 +10,8 @@
     "config": "配置",
     "agents": "Agent 管理",
     "capabilities": "能力",
-    "about": "关于"
+    "about": "关于",
+    "language": "语言"
   },
   "gateway": {
     "title": "网关",
@@ -37,7 +38,15 @@
     "skip": "跳过",
     "installing": "正在安装...",
     "complete": "安装完成！",
-    "startUsing": "开始使用 ClawBox"
+    "startUsing": "开始使用 ClawBox",
+    "log": {
+      "nodejs": "正在安装 Node.js...",
+      "openclaw": "正在安装 OpenClaw CLI...",
+      "error": "错误:{msg}",
+      "nodeManual": "Node.js 不可用,请手动安装。",
+      "openclawManual": "OpenClaw 不可用,请手动安装 OpenClaw CLI。",
+      "verified": "组件已验证可用。"
+    }
   },
   "config": {
     "models": "模型",
@@ -347,11 +356,23 @@
       "importToLib": "导入到库",
       "targetsEmpty": "暂无可注入的 agent",
       "nativeTitle": "Agent 原生记忆"
+    },
+    "native": {
+      "builtin": "内置",
+      "active": "启用中",
+      "inactive": "未启用",
+      "unknownProvider": "(未知)",
+      "index": "建立索引",
+      "reset": "重置"
     }
   },
   "quickSync": {
     "hint": "配置有变更待同步",
     "action": "同步到 Agent",
     "dismiss": "关闭"
+  },
+  "errors": {
+    "requestFailed": "请求失败",
+    "applyFailed": "应用失败"
   }
 }
