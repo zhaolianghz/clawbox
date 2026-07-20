@@ -758,6 +758,9 @@
           {:else}
             <code class="host" title={e.apiHost}>{e.apiHost.replace(/^https?:\/\//, '')}</code>
           {/if}
+          {#if e.freeNote}
+            <span class="free-chip" title={localize(e.freeNote, $locale)}>{$_('providers.freeTier')}</span>
+          {/if}
           {#if configured && (configured.models?.length ?? 0) > 0}
             <span class="model-count">{$_('providers.modelCount', { values: { count: configured.models.length } })}</span>
           {/if}
@@ -1077,6 +1080,10 @@
   .endpoint-chip.anthropic { color: #d97757; background: rgba(217,119,87,0.14); }
   .endpoint-chip.openai { color: #74aa9c; background: rgba(116,170,156,0.14); }
   .model-count { font-size: 0.65rem; color: var(--neon-green); background: rgba(94,234,212,0.1); padding: 0.1rem 0.45rem; border-radius: 999px; white-space: nowrap; }
+  .free-chip {
+    font-size: 0.65rem; padding: 0.1rem 0.45rem; border-radius: 999px; white-space: nowrap;
+    background: rgba(74,222,128,0.15); color: #4ade80; cursor: help;
+  }
   .sync-badge { font-size: 0.65rem; padding: 0.1rem 0.45rem; border-radius: 999px; white-space: nowrap; }
   .sync-badge.synced { background: rgba(74,222,128,0.15); color: #4ade80; cursor: help; }
   .sync-badge.pending { background: rgba(251,191,36,0.15); color: #fbbf24; }

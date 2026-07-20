@@ -182,7 +182,8 @@
     },
     "modelCount": "{count} 个模型",
     "pendingTo": "待同步到 {agents}",
-    "confirmRemove": "确认移除"
+    "confirmRemove": "确认移除",
+    "freeTier": "免费额度"
   },
   "skills": {
     "title": "技能商店",

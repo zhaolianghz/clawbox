@@ -182,7 +182,8 @@
     },
     "modelCount": "{count} models",
     "pendingTo": "Pending sync to {agents}",
-    "confirmRemove": "Confirm Remove"
+    "confirmRemove": "Confirm Remove",
+    "freeTier": "Free tier"
   },
   "skills": {
     "title": "Skills Store",
