@@ -2,12 +2,15 @@
   import { _, locale } from 'svelte-i18n';
   import { onMount } from 'svelte';
   import ProvidersPage from '../../routes/providers/+page.svelte';
-  import ConfigPage from '../../routes/config/+page.svelte';
+  import McpPage from '../../routes/mcp/+page.svelte';
   import AgentHubPage from '../../routes/agents/+page.svelte';
   import CapabilitiesPage from '../../routes/capabilities/+page.svelte';
   import AboutPage from '../../routes/about/+page.svelte';
 
-  type SectionId = 'providers' | 'config' | 'agents' | 'capabilities' | 'about';
+  // v1 定位:AI agent 统一配置中心。主导航自上而下:
+  // 基础(服务商) → 能力三件套(MCP/技能/记忆,工具→行为→知识) → 消费者(Agent 管理)。
+  // skills 与 memory 复用同一个 CapabilitiesPage 实例(keep-alive),由 tab prop 锁定。
+  type SectionId = 'providers' | 'mcp' | 'skills' | 'memory' | 'agents' | 'about';
 
   interface Props {
     /** standalone:作为应用本体渲染(无返回按钮,标题为 ClawBox,追加「关于」节) */
@@ -19,9 +22,10 @@
   // 「关于」不在主导航(挪到侧边栏页脚),sections 不再依赖 standalone。
   const sections: { id: SectionId; labelKey: string }[] = [
     { id: 'providers', labelKey: 'nav.providers' },
-    { id: 'config', labelKey: 'nav.config' },
+    { id: 'mcp', labelKey: 'nav.mcp' },
+    { id: 'skills', labelKey: 'nav.skills' },
+    { id: 'memory', labelKey: 'nav.memory' },
     { id: 'agents', labelKey: 'nav.agents' },
-    { id: 'capabilities', labelKey: 'nav.capabilities' },
   ];
 
   /** 语言切换:svelte-i18n locale + localStorage 持久化(i18n/index.ts 启动时读取) */
@@ -36,9 +40,10 @@
   // keep-alive:子页首次访问后常驻,切回秒开,避免每次重跑 CLI 探测
   let mounted = $state<Record<SectionId, boolean>>({
     providers: true,
-    config: false,
+    mcp: false,
+    skills: false,
+    memory: false,
     agents: false,
-    capabilities: false,
     about: false,
   });
 
@@ -50,12 +55,18 @@
   onMount(() => {
     // 预热:首屏就绪后静默挂载其余子页,数据提前加载
     setTimeout(() => {
-      mounted.config = true;
+      mounted.mcp = true;
+      mounted.skills = true;
+      mounted.memory = true;
       mounted.agents = true;
-      mounted.capabilities = true;
       if (standalone) mounted.about = true;
     }, 600);
   });
+
+  /** skills/memory 是否任一可见(共用 CapabilitiesPage 单实例) */
+  function capabilitiesVisible(s: SectionId): boolean {
+    return s === 'skills' || s === 'memory';
+  }
 </script>
 
 <div class="settings-layout">
@@ -84,22 +95,37 @@
               <line x1="6" y1="6.5" x2="6.01" y2="6.5"/>
               <line x1="6" y1="17.5" x2="6.01" y2="17.5"/>
             </svg>
-          {:else if s.id === 'config'}
-            <svg class="menu-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <circle cx="12" cy="12" r="3"/>
-              <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/>
+          {:else if s.id === 'mcp'}
+            <!-- MCP:芯片/工具服务 -->
+            <svg class="menu-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <rect x="4" y="4" width="16" height="16" rx="2"/>
+              <rect x="9" y="9" width="6" height="6"/>
+              <line x1="9" y1="1" x2="9" y2="4"/>
+              <line x1="15" y1="1" x2="15" y2="4"/>
+              <line x1="9" y1="20" x2="9" y2="23"/>
+              <line x1="15" y1="20" x2="15" y2="23"/>
+              <line x1="20" y1="9" x2="23" y2="9"/>
+              <line x1="20" y1="14" x2="23" y2="14"/>
+              <line x1="1" y1="9" x2="4" y2="9"/>
+              <line x1="1" y1="14" x2="4" y2="14"/>
+            </svg>
+          {:else if s.id === 'skills'}
+            <!-- 技能:闪电(可复用行为) -->
+            <svg class="menu-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/>
+            </svg>
+          {:else if s.id === 'memory'}
+            <!-- 记忆:数据库(持久知识) -->
+            <svg class="menu-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <ellipse cx="12" cy="5" rx="9" ry="3"/>
+              <path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/>
+              <path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/>
             </svg>
           {:else if s.id === 'agents'}
-            <svg class="menu-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <svg class="menu-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
               <rect x="3" y="3" width="18" height="18" rx="2" ry="2"/>
               <circle cx="8.5" cy="8.5" r="1.5"/>
               <polyline points="21 15 16 10 5 21"/>
-            </svg>
-          {:else if s.id === 'capabilities'}
-            <svg class="menu-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <path d="M12 2L2 7l10 5 10-5-10-5z"/>
-              <path d="M2 17l10 5 10-5"/>
-              <path d="M2 12l10 5 10-5"/>
             </svg>
           {/if}
           <span class="menu-label">{$_(s.labelKey)}</span>
@@ -115,7 +141,7 @@
           class:active={activeSection === 'about'}
           onclick={() => select('about')}
         >
-          <svg class="menu-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <svg class="menu-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <circle cx="12" cy="12" r="10"/>
             <line x1="12" y1="16" x2="12" y2="12"/>
             <line x1="12" y1="8" x2="12.01" y2="8"/>
@@ -142,14 +168,16 @@
     {#if mounted.providers}
       <div class="pane" hidden={activeSection !== 'providers'}><ProvidersPage /></div>
     {/if}
-    {#if mounted.config}
-      <div class="pane" hidden={activeSection !== 'config'}><ConfigPage /></div>
+    {#if mounted.mcp}
+      <div class="pane" hidden={activeSection !== 'mcp'}><McpPage /></div>
+    {/if}
+    {#if mounted.skills || mounted.memory}
+      <div class="pane" hidden={!capabilitiesVisible(activeSection)}>
+        <CapabilitiesPage tab={activeSection === 'memory' ? 'memory' : 'skills'} />
+      </div>
     {/if}
     {#if mounted.agents}
       <div class="pane" hidden={activeSection !== 'agents'}><AgentHubPage /></div>
-    {/if}
-    {#if mounted.capabilities}
-      <div class="pane" hidden={activeSection !== 'capabilities'}><CapabilitiesPage /></div>
     {/if}
     {#if mounted.about}
       <div class="pane" hidden={activeSection !== 'about'}><AboutPage /></div>

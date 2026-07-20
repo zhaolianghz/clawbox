@@ -28,12 +28,19 @@
 
   type TabId = 'skills' | 'memory';
 
+  interface Props {
+    /** 主导航作为一级菜单时传入:锁定当前 tab 并隐藏页内 tab 栏 */
+    tab?: TabId;
+  }
+  let { tab }: Props = $props();
+
   const tabs: { id: TabId; key: string }[] = [
     { id: 'skills', key: 'capabilities.tab.skills' },
     { id: 'memory', key: 'capabilities.tab.memory' },
   ];
 
-  let activeTab = $state<TabId>('skills');
+  let internalTab = $state<TabId>('skills');
+  let activeTab = $derived(tab ?? internalTab);
   // backends / memoryByBackend:仅供记忆 tab 底部「Agent 原生记忆」折叠区使用
   let backends = $state<BackendInfo[]>([]);
   let memoryByBackend = $state<Record<BackendId, MemoryStatus | null>>({ openclaw: null, hermes: null });
@@ -336,14 +343,15 @@
     return p.changes.filter((c) => c.action === 'skip');
   }
 
-  /** 行状态口径:全 unchanged=已同步;有 add/update/remove=未同步;skip 项只进展开明细 */
-  type RowStatus = 'synced' | 'pending' | 'unsupported' | 'error';
+  /** 行状态口径:有 add/update/remove=未同步;仅 skip 项=跳过;真正全 unchanged 才算已同步 */
+  type RowStatus = 'synced' | 'pending' | 'skipped' | 'unsupported' | 'error';
 
   function rowStatus(p: AgentPlan): RowStatus {
     if (!p.supported) return 'unsupported';
     if (p.error) return 'error';
     if (rowSynced[p.agent_id]) return 'synced';
     if (realChanges(p).length > 0) return 'pending';
+    if (skipItems(p).length > 0) return 'skipped';
     return 'synced';
   }
 
@@ -559,6 +567,7 @@
     if (p.error) return 'error';
     if (memRowSynced[p.agent_id]) return 'synced';
     if (realChanges(p).length > 0) return 'pending';
+    if (skipItems(p).length > 0) return 'skipped';
     return 'synced';
   }
 
@@ -665,20 +674,22 @@
 
 <div class="capabilities-page">
   <div class="page-header">
-    <h1>{$_('capabilities.title')}</h1>
+    <h1>{tab ? $_(tab === 'skills' ? 'capabilities.tab.skills' : 'capabilities.tab.memory') : $_('capabilities.title')}</h1>
   </div>
 
-  <div class="tab-bar glass-card">
-    {#each tabs as tab (tab.id)}
-      <button
-        class="tab-btn"
-        class:active={activeTab === tab.id}
-        onclick={() => (activeTab = tab.id)}
-      >
-        {$_(tab.key)}
-      </button>
-    {/each}
-  </div>
+  {#if !tab}
+    <div class="tab-bar glass-card">
+      {#each tabs as t (t.id)}
+        <button
+          class="tab-btn"
+          class:active={activeTab === t.id}
+          onclick={() => (internalTab = t.id)}
+        >
+          {$_(t.key)}
+        </button>
+      {/each}
+    </div>
+  {/if}
 
   <div class="tab-content glass-card">
     {#if isLoading}
@@ -883,6 +894,11 @@
                                 <span class="change-summary">
                                   {$_('providers.sync.changeCount', { values: { count: changes.length } })}
                                 </span>
+                              {:else if status === 'skipped'}
+                                <span class="tag amber">{$_('providers.sync.statusSkipped')}</span>
+                                {#if skips[0]?.detail}
+                                  <span class="skip-reason">{skips[0].detail}</span>
+                                {/if}
                               {:else if status === 'unsupported'}
                                 <span class="tag gray">{$_('providers.sync.unsupported')}</span>
                               {:else}
@@ -1183,6 +1199,11 @@
                                 <span class="change-summary">
                                   {$_('providers.sync.changeCount', { values: { count: changes.length } })}
                                 </span>
+                              {:else if status === 'skipped'}
+                                <span class="tag amber">{$_('providers.sync.statusSkipped')}</span>
+                                {#if skips[0]?.detail}
+                                  <span class="skip-reason">{skips[0].detail}</span>
+                                {/if}
                               {:else if status === 'unsupported'}
                                 <span class="tag gray">{$_('providers.sync.unsupported')}</span>
                               {:else}
@@ -1620,6 +1641,7 @@
   .plan-title-line { display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; }
   .agent-name { font-weight: 600; font-size: 0.85rem; }
   .change-summary { font-size: 0.72rem; color: var(--text-secondary); }
+  .skip-reason { font-size: 0.72rem; color: var(--text-muted); }
   .chevron { flex-shrink: 0; font-size: 0.8rem; color: var(--text-muted); transition: transform 0.15s ease; }
   .chevron.open { transform: rotate(180deg); }
   .config-path {
@@ -1631,6 +1653,7 @@
   .tag.red { background: rgba(248,113,113,0.15); color: #f87171; }
   .tag.green { background: rgba(74,222,128,0.15); color: #4ade80; }
   .tag.yellow { background: rgba(251,191,36,0.15); color: #fbbf24; }
+  .tag.amber { background: rgba(202,164,60,0.12); color: #d0b978; }
   .change-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 0.25rem; }
   .change { display: flex; align-items: baseline; gap: 0.5rem; font-size: 0.76rem; min-width: 0; }
   .change-action { font-size: 0.65rem; padding: 0.05rem 0.45rem; border-radius: 999px; white-space: nowrap; flex-shrink: 0; }
