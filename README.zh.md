@@ -46,14 +46,16 @@ ClawBox 是一款桌面应用（macOS · Windows · Linux），为你的所有 A
 | Agent | 服务商 | MCP | 技能 | 记忆 |
 |---|---|---|---|---|
 | Claude Code | ✅ | ✅ | ✅ | ✅ |
-| Codex | ✅ | ✅ | ✅ | ✅ |
+| Codex | ✅ | ✅ | — | ✅ |
 | Hermes | ✅ | ✅ | ✅ | ✅ |
 | OpenCode | ✅ | ✅ | ✅ | ✅ |
 | OpenClaw | ✅ | ✅ | ✅ | ✅ |
-| Kimi | ✅ | — | ✅ | ✅ |
-| CodeBuddy | ✅ | — | ✅ | ✅ |
-| Cursor | — | — | — | — |
+| Kimi | ✅ | — | — | — |
+| CodeBuddy | ✅ | ✅ | — | — |
+| Cursor | — | ✅ | — | — |
 | Qoder | — | — | — | — |
+
+每项能力具体写哪个文件、适用哪些安全规则,见 **[透明说明](docs/TRANSPARENCY.zh.md)**。
 
 ## 安装
 

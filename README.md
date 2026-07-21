@@ -46,14 +46,16 @@ Instead of editing config files in five different directories, you configure onc
 | Agent | Providers | MCP | Skills | Memory |
 |---|---|---|---|---|
 | Claude Code | ✅ | ✅ | ✅ | ✅ |
-| Codex | ✅ | ✅ | ✅ | ✅ |
+| Codex | ✅ | ✅ | — | ✅ |
 | Hermes | ✅ | ✅ | ✅ | ✅ |
 | OpenCode | ✅ | ✅ | ✅ | ✅ |
 | OpenClaw | ✅ | ✅ | ✅ | ✅ |
-| Kimi | ✅ | — | ✅ | ✅ |
-| CodeBuddy | ✅ | — | ✅ | ✅ |
-| Cursor | — | — | — | — |
+| Kimi | ✅ | — | — | — |
+| CodeBuddy | ✅ | ✅ | — | — |
+| Cursor | — | ✅ | — | — |
 | Qoder | — | — | — | — |
+
+For exactly which file each capability writes and the safety rules that apply, see **[Transparency](docs/TRANSPARENCY.md)**.
 
 ## Installation
 
