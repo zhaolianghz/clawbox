@@ -2,6 +2,8 @@
 
 Thanks for your interest in improving ClawBox! This document covers how to get set up and the conventions we follow.
 
+This project follows a [Code of Conduct](CODE_OF_CONDUCT.md). By participating, you are expected to uphold it.
+
 ## Prerequisites
 
 - **Node.js** ≥ 18
