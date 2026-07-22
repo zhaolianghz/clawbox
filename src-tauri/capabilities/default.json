@@ -5,6 +5,7 @@
   "windows": ["main"],
   "permissions": [
     "core:default",
+    "core:window:allow-set-background-color",
     "shell:allow-open",
     "dialog:allow-open",
     {

@@ -1,7 +1,15 @@
 <script lang="ts">
   import { _ } from 'svelte-i18n';
-  import { onMount } from 'svelte';
-  import { feedback_submit, feedback_list, type Feedback } from '$lib/api/feedback';
+  import { open } from '@tauri-apps/plugin-shell';
+
+  const REPO_URL = 'https://github.com/zhaolianghz/clawbox';
+  // Feedback category -> existing GitHub label. Missing labels are ignored by
+  // GitHub (the issue is still created), so this stays best-effort.
+  const ISSUE_LABELS: Record<string, string> = {
+    bug: 'bug',
+    feature: 'enhancement',
+    other: 'question',
+  };
 
   let appVersion = $state('0.1.0');
   let checking = $state(false);
@@ -14,7 +22,6 @@
   let feedbackSubmitting = $state(false);
   let feedbackSubmitted = $state(false);
   let feedbackError = $state('');
-  let feedbackHistory = $state<Feedback[]>([]);
 
   async function checkForUpdates() {
     checking = true;
@@ -44,8 +51,28 @@
     feedbackSubmitting = true;
     feedbackError = '';
     try {
-      const entry = await feedback_submit(feedbackCategory, feedbackMessage, feedbackContact || undefined);
-      feedbackHistory = [entry, ...feedbackHistory];
+      const msg = feedbackMessage.trim();
+      const title = `[${feedbackCategory}] ${msg.split('\n')[0].slice(0, 60)}`;
+      const bodyLines = [
+        msg,
+        '',
+        '---',
+        `- ClawBox: v${appVersion}`,
+        `- Platform: ${navigator.userAgent}`,
+      ];
+      if (feedbackContact.trim()) bodyLines.push(`- Contact: ${feedbackContact.trim()}`);
+
+      const params = new URLSearchParams({
+        title,
+        body: bodyLines.join('\n'),
+      });
+      const label = ISSUE_LABELS[feedbackCategory];
+      if (label) params.set('labels', label);
+
+      // Opens in the user's default browser; they submit under their own GitHub
+      // account. Nothing is stored locally or sent anywhere by ClawBox itself.
+      await open(`${REPO_URL}/issues/new?${params.toString()}`);
+
       feedbackMessage = '';
       feedbackContact = '';
       feedbackSubmitted = true;
@@ -56,10 +83,6 @@
       feedbackSubmitting = false;
     }
   }
-
-  onMount(async () => {
-    feedbackHistory = await feedback_list();
-  });
 </script>
 
 
@@ -168,19 +191,6 @@
           {/if}
         </button>
       </div>
-
-      {#if feedbackHistory.length > 0}
-        <div class="feedback-history">
-          <h3>{$_('about.feedbackHistory')}</h3>
-          {#each feedbackHistory as fb (fb.id)}
-            <div class="feedback-entry">
-              <span class="feedback-badge" data-category={fb.category}>{fb.category}</span>
-              <span class="feedback-entry-text">{fb.message}</span>
-              <span class="feedback-entry-date">{new Date(fb.created_at * 1000).toLocaleDateString()}</span>
-            </div>
-          {/each}
-        </div>
-      {/if}
     </div>
   </div>
 
@@ -390,58 +400,5 @@
   .feedback-thanks {
     color: var(--neon-green);
     font-size: 0.85rem;
-  }
-
-  .feedback-history {
-    margin-top: 1.5rem;
-    padding-top: 1rem;
-    border-top: 1px solid rgba(255, 255, 255, 0.1);
-  }
-
-  .feedback-history h3 {
-    margin: 0 0 0.75rem;
-    font-size: 0.95rem;
-    color: var(--text-secondary);
-  }
-
-  .feedback-entry {
-    display: flex;
-    align-items: baseline;
-    gap: 0.75rem;
-    padding: 0.5rem 0;
-    font-size: 0.85rem;
-  }
-
-  .feedback-badge {
-    padding: 0.1rem 0.5rem;
-    border-radius: 999px;
-    font-size: 0.7rem;
-    font-weight: 600;
-    background: rgba(0, 245, 255, 0.15);
-    color: var(--neon-cyan);
-    flex-shrink: 0;
-  }
-
-  .feedback-badge[data-category='bug'] {
-    background: rgba(255, 0, 110, 0.15);
-    color: var(--neon-pink);
-  }
-
-  .feedback-badge[data-category='feature'] {
-    background: rgba(0, 255, 136, 0.15);
-    color: var(--neon-green);
-  }
-
-  .feedback-entry-text {
-    flex: 1;
-    color: var(--text-secondary);
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-
-  .feedback-entry-date {
-    color: var(--text-muted);
-    flex-shrink: 0;
   }
 </style>

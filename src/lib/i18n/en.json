@@ -16,6 +16,12 @@
     "about": "About",
     "language": "Language"
   },
+  "theme": {
+    "label": "Theme",
+    "system": "System",
+    "light": "Light",
+    "dark": "Dark"
+  },
   "gateway": {
     "title": "Gateway",
     "status": "Status",
@@ -127,6 +133,7 @@
     "remove": "Remove",
     "noResults": "No matching providers",
     "configure": "Configure",
+    "addCustom": "+ Custom provider",
     "addTitle": "Add Provider",
     "editTitle": "Edit Provider",
     "save": "Save",
@@ -137,6 +144,16 @@
     "defaultBadge": "Default",
     "syncToAgents": "Sync to Agents",
     "syncedTo": "Synced to {agents}",
+    "import": {
+      "button": "Import from cc-switch",
+      "loading": "Reading cc-switch config...",
+      "previewTitle": "Import providers from cc-switch",
+      "empty": "No importable providers found in cc-switch",
+      "badgeAdd": "New",
+      "badgeMerge": "Merge into {name}",
+      "sourceFrom": "from {apps}",
+      "confirm": "Import selected ({count})"
+    },
     "sync": {
       "previewTitle": "Sync to Agents",
       "planning": "Computing changes...",
@@ -221,7 +238,7 @@
     "feedbackCategoryOther": "Other",
     "feedbackSubmit": "Submit Feedback",
     "feedbackSubmitting": "Submitting...",
-    "feedbackThanks": "Thanks for your feedback!",
+    "feedbackThanks": "Opening GitHub to file your report — submit it there under your account.",
     "feedbackHistory": "Previous Feedback",
     "feedbackEmpty": "No feedback submitted yet."
   },

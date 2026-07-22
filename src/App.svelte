@@ -15,12 +15,12 @@
     padding: 0;
     width: 100%;
     height: 100%;
-    background-color: #0a0a0f !important;
+    background-color: var(--bg-primary);
   }
 
   .app {
     height: 100vh;
-    background-color: #0a0a0f;
+    background-color: var(--bg-primary);
     overflow: hidden;
   }
 </style>
