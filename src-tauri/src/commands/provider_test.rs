@@ -49,6 +49,18 @@ pub fn build_models_url(base_url: &str, flavor: &str) -> String {
     }
 }
 
+/// Build the Anthropic messages URL for a base endpoint, following the same
+/// `/v1` de-duplication rule as [`build_models_url`]. Used as a reachability
+/// fallback for Anthropic-compatible gateways that don't expose `/v1/models`.
+pub fn build_messages_url(base_url: &str) -> String {
+    let base = base_url.trim().trim_end_matches('/');
+    if base.ends_with("/v1") {
+        format!("{}/messages", base)
+    } else {
+        format!("{}/v1/messages", base)
+    }
+}
+
 /// Best-effort extraction of model ids from a models-listing response.
 ///
 /// Accepted shapes (OpenAI and Anthropic both use the first):
@@ -117,6 +129,14 @@ pub async fn provider_test(
 
     let status = response.status();
     if !status.is_success() {
+        // Anthropic-compatible gateways (Aliyun Bailian, etc.) expose only
+        // `POST /v1/messages`, not `GET /v1/models`. A 404 on the models probe
+        // there means "no model-listing route" — NOT a wrong base URL — so fall
+        // back to a reachability probe against the messages endpoint before
+        // reporting failure.
+        if flavor == "anthropic" && status.as_u16() == 404 {
+            return Ok(probe_anthropic_messages(&client, &base_url, &api_key, start).await);
+        }
         let error = match status.as_u16() {
             401 | 403 => "Invalid API key or insufficient permissions".to_string(),
             404 => "Endpoint not found (check Base URL)".to_string(),
@@ -136,6 +156,61 @@ pub async fn provider_test(
         models,
         error: None,
     })
+}
+
+/// Reachability fallback for Anthropic-compatible gateways without `/v1/models`.
+///
+/// Sends a deliberately empty `POST /v1/messages`. These gateways validate the
+/// API key *before* the request body, so the status cleanly separates cases:
+/// - `401`/`403` → bad key
+/// - `404` → genuinely wrong base URL
+/// - `400`/`422`/`2xx`/`429` → endpoint reachable and key accepted (body rejected)
+///
+/// Model listing isn't available on this path, so `models` is always empty.
+async fn probe_anthropic_messages(
+    client: &reqwest::Client,
+    base_url: &str,
+    api_key: &str,
+    start: Instant,
+) -> ProviderTestResult {
+    let url = build_messages_url(base_url);
+    let response = client
+        .post(&url)
+        .header("x-api-key", api_key)
+        .header("anthropic-version", "2023-06-01")
+        .header("content-type", "application/json")
+        .json(&serde_json::json!({}))
+        .send()
+        .await;
+    let latency_ms = start.elapsed().as_millis() as u64;
+
+    let response = match response {
+        Ok(r) => r,
+        Err(e) => {
+            let reason = if e.is_timeout() {
+                "Request timed out (8s)".to_string()
+            } else {
+                format!("Network error: {}", e.without_url())
+            };
+            return ProviderTestResult::fail(latency_ms, reason);
+        }
+    };
+
+    match response.status().as_u16() {
+        404 => ProviderTestResult::fail(latency_ms, "Endpoint not found (check Base URL)"),
+        401 | 403 => {
+            ProviderTestResult::fail(latency_ms, "Invalid API key or insufficient permissions")
+        }
+        // Auth passed; body was (expectedly) rejected, or the request went
+        // through — either way the endpoint is a live Anthropic gateway.
+        code if (200..500).contains(&code) => ProviderTestResult {
+            ok: true,
+            latency_ms,
+            models: Vec::new(),
+            error: None,
+        },
+        code => ProviderTestResult::fail(latency_ms, format!("HTTP {} from provider", code)),
+    }
 }
 
 #[cfg(test)]
@@ -182,6 +257,33 @@ mod tests {
         assert_eq!(
             build_models_url("https://api.anthropic.com/v1/", "anthropic"),
             "https://api.anthropic.com/v1/models"
+        );
+    }
+
+    // ---- build_messages_url ----
+
+    #[test]
+    fn messages_url_inserts_v1_for_gateway() {
+        // Aliyun Bailian: only /v1/messages exists, no /v1/models.
+        assert_eq!(
+            build_messages_url("https://dashscope.aliyuncs.com/apps/anthropic"),
+            "https://dashscope.aliyuncs.com/apps/anthropic/v1/messages"
+        );
+        assert_eq!(
+            build_messages_url("https://api.moonshot.cn/anthropic/"),
+            "https://api.moonshot.cn/anthropic/v1/messages"
+        );
+    }
+
+    #[test]
+    fn messages_url_dedupes_existing_v1() {
+        assert_eq!(
+            build_messages_url("https://api.anthropic.com/v1"),
+            "https://api.anthropic.com/v1/messages"
+        );
+        assert_eq!(
+            build_messages_url("https://api.anthropic.com/v1/"),
+            "https://api.anthropic.com/v1/messages"
         );
     }
 

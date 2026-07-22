@@ -1,6 +1,7 @@
 <script lang="ts">
   import { _, locale } from 'svelte-i18n';
   import { onMount } from 'svelte';
+  import { themeChoice, setTheme, type ThemeChoice } from '$lib/theme';
   import ProvidersPage from '../../routes/providers/+page.svelte';
   import McpPage from '../../routes/mcp/+page.svelte';
   import AgentHubPage from '../../routes/agents/+page.svelte';
@@ -161,6 +162,32 @@
           onclick={() => setLang('zh')}
         >中文</button>
       </div>
+      <div class="lang-switch theme-switch" role="group" aria-label={$_('theme.label')} title={$_('theme.label')}>
+        {#each [
+          { id: 'system', label: $_('theme.system'), icon: 'M4 5h16v11H4zM8 20h8M12 16v4' },
+          { id: 'light', label: $_('theme.light'), icon: 'M12 3v2M12 19v2M5 5l1.5 1.5M17.5 17.5L19 19M3 12h2M19 12h2M5 19l1.5-1.5M17.5 6.5L19 5' },
+          { id: 'dark', label: $_('theme.dark'), icon: 'M21 12.8A8.5 8.5 0 1 1 11.2 3a6.6 6.6 0 0 0 9.8 9.8z' },
+        ] as opt (opt.id)}
+          <button
+            class="lang-btn theme-btn"
+            class:active={$themeChoice === opt.id}
+            onclick={() => setTheme(opt.id as ThemeChoice)}
+            title={opt.label}
+            aria-label={opt.label}
+          >
+            {#if opt.id === 'light'}
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+                <circle cx="12" cy="12" r="4" />
+                <path d={opt.icon} />
+              </svg>
+            {:else}
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d={opt.icon} />
+              </svg>
+            {/if}
+          </button>
+        {/each}
+      </div>
     </div>
   </aside>
 
@@ -201,7 +228,7 @@
     margin: 0 0.5rem 0.75rem;
     padding: 0.5rem 0.75rem;
     background: transparent;
-    border: 1px solid rgba(255, 255, 255, 0.1);
+    border: 1px solid var(--border-subtle);
     border-radius: var(--radius-md);
     color: var(--text-secondary);
     font-size: 0.8rem;
@@ -222,7 +249,7 @@
     width: 200px;
     flex-shrink: 0;
     background: var(--bg-secondary);
-    border-right: 1px solid rgba(255, 255, 255, 0.1);
+    border-right: 1px solid var(--border-subtle);
     padding: 1.25rem 0 0.5rem;
     display: flex;
     flex-direction: column;
@@ -235,7 +262,7 @@
     text-shadow: var(--glow-cyan);
     font-size: 1rem;
     font-weight: 600;
-    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+    border-bottom: 1px solid var(--border-subtle);
   }
 
   .menu-nav {
@@ -295,7 +322,7 @@
   .menu-footer {
     margin-top: auto;
     padding: 0.6rem 0.5rem 0.4rem;
-    border-top: 1px solid rgba(255, 255, 255, 0.08);
+    border-top: 1px solid var(--border-subtle);
     display: flex;
     flex-direction: column;
     gap: 0.4rem;
@@ -311,7 +338,7 @@
     padding: 0.3rem 0;
     font-size: 0.72rem;
     background: transparent;
-    border: 1px solid rgba(255, 255, 255, 0.12);
+    border: 1px solid var(--border-subtle);
     border-radius: var(--radius-md);
     color: var(--text-secondary);
     cursor: pointer;
@@ -322,10 +349,13 @@
     background: var(--bg-tertiary);
   }
   .lang-btn.active {
-    background: rgba(0, 245, 255, 0.1);
+    background: color-mix(in srgb, var(--neon-cyan) 12%, transparent);
     border-color: var(--neon-cyan);
     color: var(--neon-cyan);
   }
+  .theme-switch { margin-top: 0.35rem; }
+  .theme-btn { display: inline-flex; align-items: center; justify-content: center; padding: 0.32rem 0; }
+  .theme-btn svg { width: 15px; height: 15px; }
 
   .settings-content {
     flex: 1;

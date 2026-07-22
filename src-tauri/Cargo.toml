@@ -1,6 +1,6 @@
 [package]
 name = "clawbox"
-version = "0.1.0"
+version = "0.2.0"
 description = "Unified configuration center for AI agents — providers, MCP, skills and memory in one place"
 authors = ["you"]
 edition = "2021"
@@ -25,3 +25,6 @@ rayon = "1.10"
 time = "0.3"
 tokio = { version = "1", features = ["rt-multi-thread", "process", "io-util", "sync", "macros", "time"] }
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
+# 只读 cc-switch 的 SQLite 数据源(~/.cc-switch/cc-switch.db)用于一键导入。
+# bundled:随包编译 libsqlite3,免系统依赖。
+rusqlite = { version = "0.32", features = ["bundled"] }

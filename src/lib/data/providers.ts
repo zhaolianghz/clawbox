@@ -7,7 +7,7 @@
 
 import type { Localized } from './localized';
 
-export type ProviderCategory = 'intl' | 'cn' | 'aggregator' | 'local';
+export type ProviderCategory = 'intl' | 'cn' | 'aggregator' | 'local' | 'custom';
 
 export interface ProviderCatalogEntry {
   id: string;
@@ -31,6 +31,7 @@ export const PROVIDER_CATEGORIES: { id: ProviderCategory; label: Localized }[] =
   { id: 'cn', label: { en: 'China', zh: '国内主流' } },
   { id: 'aggregator', label: { en: 'Aggregators', zh: '聚合中转' } },
   { id: 'local', label: { en: 'Local', zh: '本地' } },
+  { id: 'custom', label: { en: 'Custom', zh: '自定义' } },
 ];
 
 export const PROVIDER_CATALOG: ProviderCatalogEntry[] = [

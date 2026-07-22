@@ -16,6 +16,12 @@
     "about": "关于",
     "language": "语言"
   },
+  "theme": {
+    "label": "主题",
+    "system": "跟随系统",
+    "light": "浅色",
+    "dark": "深色"
+  },
   "gateway": {
     "title": "网关",
     "status": "状态",
@@ -127,6 +133,7 @@
     "remove": "移除",
     "noResults": "没有匹配的服务商",
     "configure": "配置",
+    "addCustom": "+ 自定义服务商",
     "addTitle": "添加服务商",
     "editTitle": "编辑服务商",
     "save": "保存",
@@ -137,6 +144,16 @@
     "defaultBadge": "默认",
     "syncToAgents": "同步到 Agent",
     "syncedTo": "已同步到 {agents}",
+    "import": {
+      "button": "从 cc-switch 导入",
+      "loading": "正在读取 cc-switch 配置...",
+      "previewTitle": "从 cc-switch 导入服务商",
+      "empty": "cc-switch 里没有可导入的服务商",
+      "badgeAdd": "新增",
+      "badgeMerge": "合并到已有 {name}",
+      "sourceFrom": "来自 {apps}",
+      "confirm": "导入选中 ({count})"
+    },
     "sync": {
       "previewTitle": "同步到 Agent",
       "planning": "正在计算变更...",
@@ -221,7 +238,7 @@
     "feedbackCategoryOther": "其他",
     "feedbackSubmit": "提交反馈",
     "feedbackSubmitting": "提交中...",
-    "feedbackThanks": "感谢你的反馈！",
+    "feedbackThanks": "正在打开 GitHub —— 请在浏览器里用你的账号提交。",
     "feedbackHistory": "历史反馈",
     "feedbackEmpty": "还没有提交过反馈。"
   },

@@ -16,6 +16,8 @@
     type AgentPlan, type ApplyResult, type ChangeItem, type ProviderSyncStatus,
   } from '$lib/api/providerSync';
   import { agents_list } from '$lib/api/agents';
+  import { open } from '@tauri-apps/plugin-dialog';
+  import { cc_switch_import_preview, type ImportCandidate } from '$lib/api/ccSwitch';
 
   let query = $state('');
   let activeCategory = $state<ProviderCategory | 'all'>('all');
@@ -88,16 +90,58 @@
       ?? (e.anthropicHost ? configuredByHost.get(hostOf(e.anthropicHost)) : undefined);
   }
 
-  const filtered = $derived(
-    PROVIDER_CATALOG.filter((e) => {
+  // ---------- 自定义服务商(目录里没有的存储条目)----------
+  // 特殊 id:网格末尾那张「+ 自定义服务商」新增卡;也作为新增时内联面板的锚点行。
+  const CUSTOM_NEW_ID = '__custom_new__';
+
+  /** 目录里所有端点 host 的集合(apiHost + anthropicHost) */
+  const catalogHostSet = $derived.by(() => {
+    const s = new Set<string>();
+    for (const e of PROVIDER_CATALOG) {
+      if (e.apiHost) s.add(hostOf(e.apiHost));
+      if (e.anthropicHost) s.add(hostOf(e.anthropicHost));
+    }
+    return s;
+  });
+
+  /** 把一条存储 provider 合成为目录条目形状,好让它进同一个网格渲染 */
+  function syntheticEntry(p: ModelProvider): ProviderCatalogEntry {
+    return {
+      id: p.id,
+      name: p.name || '(未命名)',
+      apiHost: p.openaiBaseUrl || p.anthropicBaseUrl || '',
+      category: 'custom',
+      color: '#7c5cff',
+      defaultModel: p.defaultModel || undefined,
+      anthropicHost: p.anthropicBaseUrl || undefined,
+    };
+  }
+
+  /** 存储里匹配不到任何目录 host 的 provider → 自定义条目 */
+  const customEntries = $derived(
+    $providers
+      .filter((p) => {
+        const hosts = [p.anthropicBaseUrl, p.openaiBaseUrl].filter(Boolean).map(hostOf);
+        return hosts.length > 0 && !hosts.some((h) => catalogHostSet.has(h));
+      })
+      .map(syntheticEntry)
+  );
+
+  const filtered = $derived.by(() => {
+    const q = query.trim().toLowerCase();
+    const list = [...PROVIDER_CATALOG, ...customEntries].filter((e) => {
       const matchCat = activeCategory === 'all' || e.category === activeCategory;
-      const q = query.trim().toLowerCase();
       const name = localize(e.name, $locale).toLowerCase();
       const desc = e.description ? localize(e.description, $locale).toLowerCase() : '';
       const matchQ = !q || name.includes(q) || e.apiHost.toLowerCase().includes(q) || desc.includes(q);
       return matchCat && matchQ;
-    })
-  );
+    });
+    // 「+ 自定义服务商」新增卡:仅在浏览 全部/自定义 且未搜索时出现在末尾
+    if ((activeCategory === 'all' || activeCategory === 'custom') && !q) {
+      list.push({ id: CUSTOM_NEW_ID, name: '', apiHost: '', category: 'custom', color: '#7c5cff' });
+    }
+    return list;
+  });
 
   function categoryLabel(c: ProviderCategory): string {
     const label = PROVIDER_CATEGORIES.find((x) => x.id === c)?.label;
@@ -288,6 +332,27 @@
     formOpenaiUrl = openaiHostOf(e) ?? '';
     formApiKey = '';
     formDefaultModel = e.defaultModel ?? '';
+    formModels = [];
+    formEnabled = true;
+    resetTransientState();
+    editorOpen = true;
+  }
+
+  /** 新增一个目录里没有的自定义服务商:空白表单,内联面板锚在网格末尾的新增卡后 */
+  function openAddCustom() {
+    if (editorOpen && editingEntry?.id === CUSTOM_NEW_ID) {
+      closeEditor();
+      return;
+    }
+    activeCategory = 'custom'; // 确保新增卡在 filtered 里,面板有锚点
+    query = '';
+    editingId = null;
+    editingEntry = { id: CUSTOM_NEW_ID, name: { en: 'Custom Provider', zh: '自定义服务商' }, apiHost: '', category: 'custom', color: '#7c5cff' };
+    formName = '';
+    formAnthropicUrl = '';
+    formOpenaiUrl = '';
+    formApiKey = '';
+    formDefaultModel = '';
     formModels = [];
     formEnabled = true;
     resetTransientState();
@@ -510,6 +575,120 @@
     return p.changes.filter((c) => c.action === 'unchanged').length;
   }
 
+  // ---------- 从 cc-switch 导入(内联预览面板,复用 sync-panel 视觉) ----------
+  type ImportStage = 'closed' | 'loading' | 'preview';
+  let importStage = $state<ImportStage>('closed');
+  let importCandidates = $state<ImportCandidate[]>([]);
+  let importChecked = $state<Record<number, boolean>>({}); // 候选索引 → 勾选
+  let importError = $state('');
+  let importing = $state(false);
+
+  const importCheckedCount = $derived(importCandidates.filter((_, i) => importChecked[i]).length);
+  const importAllPicked = $derived(
+    importCandidates.length > 0 && importCandidates.every((_, i) => importChecked[i])
+  );
+
+  /** 候选按 host 命中的现有 provider(有 = 合并到它,无 = 新增) */
+  function importTarget(c: ImportCandidate): ModelProvider | undefined {
+    const hosts = [c.anthropicBaseUrl, c.openaiBaseUrl].filter(Boolean).map(hostOf);
+    return $providers.find((p) =>
+      [p.anthropicBaseUrl, p.openaiBaseUrl].filter(Boolean).map(hostOf).some((h) => hosts.includes(h))
+    );
+  }
+
+  function maskKey(k: string): string {
+    if (!k) return '';
+    return k.length <= 8 ? '••••' : `${k.slice(0, 4)}••••${k.slice(-4)}`;
+  }
+
+  /** 打开导入:先探测 config.json,未找到则弹文件选择器选导出的 JSON */
+  async function startImport() {
+    if (importStage !== 'closed' || syncStage !== 'closed') return;
+    importError = '';
+    importStage = 'loading';
+    try {
+      let preview = await cc_switch_import_preview();
+      if (preview.kind === 'needFile') {
+        let picked: string | string[] | null;
+        try {
+          picked = await open({ multiple: false, filters: [{ name: 'cc-switch', extensions: ['db', 'json'] }] });
+        } catch (e) {
+          importError = String(e);
+          importStage = 'closed';
+          return;
+        }
+        if (typeof picked !== 'string' || !picked) {
+          importStage = 'closed'; // 用户取消
+          return;
+        }
+        preview = await cc_switch_import_preview(picked);
+      }
+      if (preview.kind === 'found') {
+        importCandidates = preview.candidates;
+        importChecked = Object.fromEntries(importCandidates.map((_, i) => [i, true]));
+      } else {
+        importCandidates = [];
+      }
+      importStage = 'preview';
+    } catch (e) {
+      importError = String(e);
+      importCandidates = [];
+      importStage = 'preview';
+    }
+  }
+
+  function toggleAllImport() {
+    const v = !importAllPicked;
+    importChecked = Object.fromEntries(importCandidates.map((_, i) => [i, v]));
+  }
+
+  /** 应用勾选:命中已有则只填空槽/补空 key(不覆盖),否则新增。逐条走现有 store 动作。 */
+  async function applyImport() {
+    const picked = importCandidates.filter((_, i) => importChecked[i]);
+    if (picked.length === 0 || importing) return;
+    importing = true;
+    importError = '';
+    try {
+      for (const c of picked) {
+        const existing = importTarget(c);
+        if (existing) {
+          const data: Partial<ModelProvider> = {};
+          if (c.anthropicBaseUrl && !existing.anthropicBaseUrl) data.anthropicBaseUrl = c.anthropicBaseUrl;
+          if (c.openaiBaseUrl && !existing.openaiBaseUrl) data.openaiBaseUrl = c.openaiBaseUrl;
+          if (c.apiKey && !existing.apiKey) data.apiKey = c.apiKey;
+          if (c.defaultModel && !existing.defaultModel) data.defaultModel = c.defaultModel;
+          if (Object.keys(data).length > 0) await updateProvider(existing.id, data);
+        } else {
+          await addProvider({
+            id: crypto.randomUUID(),
+            name: c.name || 'Imported',
+            anthropicBaseUrl: c.anthropicBaseUrl,
+            openaiBaseUrl: c.openaiBaseUrl,
+            apiKey: c.apiKey,
+            defaultModel: c.defaultModel,
+            models: [],
+            enabled: true,
+          });
+        }
+      }
+      importStage = 'closed';
+      importCandidates = [];
+      await refreshActive();
+      void refreshSyncStatus();
+      quickSync = syncStage === 'closed'; // 导入成功 → 去同步快捷入口
+    } catch (e) {
+      importError = String(e);
+    } finally {
+      importing = false;
+    }
+  }
+
+  function closeImport() {
+    importStage = 'closed';
+    importCandidates = [];
+    importError = '';
+  }
+
   onMount(async () => {
     try {
       await loadProviders();
@@ -530,6 +709,7 @@
     if (e.key !== 'Escape') return;
     if (editorOpen) closeEditor();
     else if (syncStage === 'preview' && !batchApplying) closeSync();
+    else if (importStage === 'preview' && !importing) closeImport();
   }}
 />
 
@@ -546,9 +726,23 @@
         <input type="text" bind:value={query} placeholder={$_('providers.search')} />
       </div>
       <button
+        class="btn"
+        onclick={openAddCustom}
+        class:active={editorOpen && editingEntry?.id === CUSTOM_NEW_ID}
+      >
+        {$_('providers.addCustom')}
+      </button>
+      <button
+        class="btn"
+        onclick={startImport}
+        disabled={importStage !== 'closed' || syncStage !== 'closed'}
+      >
+        {$_('providers.import.button')}
+      </button>
+      <button
         class="btn primary"
         onclick={startSync}
-        disabled={syncStage !== 'closed'}
+        disabled={syncStage !== 'closed' || importStage !== 'closed'}
       >
         {$_('providers.syncToAgents')}
       </button>
@@ -713,6 +907,83 @@
     </div>
   {/if}
 
+  <!-- cc-switch 导入预览面板(整行展开,复用 sync-panel 视觉;无弹窗) -->
+  {#if importStage !== 'closed'}
+    <div class="sync-panel glass-card">
+      {#if importStage === 'loading'}
+        <div class="loading"><span class="spinner"></span> {$_('providers.import.loading')}</div>
+      {:else}
+        <h3>{$_('providers.import.previewTitle')}</h3>
+        {#if importError}
+          <pre class="error-text">{importError}</pre>
+        {/if}
+        {#if importCandidates.length === 0}
+          <p class="sync-hint">{$_('providers.import.empty')}</p>
+        {:else}
+          <div class="plan-list">
+            <label class="select-all-plans">
+              <input
+                type="checkbox"
+                class="row-check"
+                disabled={importing}
+                checked={importAllPicked}
+                onchange={toggleAllImport}
+              />
+              <span>{$_('providers.sync.selectAll')}</span>
+              <span class="selectable-count">{importCheckedCount}/{importCandidates.length}</span>
+            </label>
+            {#each importCandidates as c, i (i)}
+              {@const target = importTarget(c)}
+              <div class="plan-item">
+                <div class="plan-row">
+                  <input
+                    type="checkbox"
+                    class="row-check"
+                    disabled={importing}
+                    checked={!!importChecked[i]}
+                    onchange={(e) => (importChecked = { ...importChecked, [i]: e.currentTarget.checked })}
+                    aria-label={c.name}
+                  />
+                  <div class="plan-head">
+                    <ProviderLogo entry={{ id: c.name, name: c.name, apiHost: c.openaiBaseUrl || c.anthropicBaseUrl, category: 'aggregator', color: '#7c5cff' }} />
+                    <div class="plan-info">
+                      <div class="plan-title-line">
+                        <span class="agent-name">{c.name}</span>
+                        {#if target}
+                          <span class="tag amber">{$_('providers.import.badgeMerge', { values: { name: target.name } })}</span>
+                        {:else}
+                          <span class="tag green">{$_('providers.import.badgeAdd')}</span>
+                        {/if}
+                        {#if c.anthropicBaseUrl}
+                          <span class="endpoint-chip anthropic" title={c.anthropicBaseUrl}>Anthropic</span>
+                        {/if}
+                        {#if c.openaiBaseUrl}
+                          <span class="endpoint-chip openai" title={c.openaiBaseUrl}>OpenAI</span>
+                        {/if}
+                      </div>
+                      <div class="import-meta">
+                        {#if c.apiKey}<code class="key-mask">{maskKey(c.apiKey)}</code>{/if}
+                        {#if c.defaultModel}<span class="src-apps">{c.defaultModel}</span>{/if}
+                        <span class="src-apps">{$_('providers.import.sourceFrom', { values: { apps: c.sourceApps.join('+') } })}</span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            {/each}
+          </div>
+        {/if}
+        <div class="panel-actions">
+          <button class="btn" onclick={closeImport} disabled={importing}>{$_('providers.close')}</button>
+          <button class="btn primary" onclick={applyImport} disabled={importCheckedCount === 0 || importing}>
+            {#if importing}<span class="spinner small"></span>{/if}
+            {$_('providers.import.confirm', { values: { count: importCheckedCount } })}
+          </button>
+        </div>
+      {/if}
+    </div>
+  {/if}
+
   <div class="category-bar">
     <button class="chip" class:active={activeCategory === 'all'} onclick={() => (activeCategory = 'all')}>
       {$_('providers.all')}
@@ -726,6 +997,18 @@
 
   <div class="provider-grid" bind:this={gridEl}>
     {#each filtered as e, i (e.id)}
+      {#if e.id === CUSTOM_NEW_ID}
+        <!-- 网格末尾:新增自定义服务商卡(点开空白配置面板) -->
+        <button
+          type="button"
+          class="provider-card add-custom-card glass-card"
+          class:active={editorOpen && editingEntry?.id === CUSTOM_NEW_ID}
+          onclick={openAddCustom}
+        >
+          <span class="add-plus">+</span>
+          <span class="add-label">{$_('providers.addCustom')}</span>
+        </button>
+      {:else}
       {@const configured = configuredEntry(e)}
       <div
         class="provider-card glass-card"
@@ -819,6 +1102,7 @@
           {/if}
         </div>
       </div>
+      {/if}
 
       <!-- 内联配置面板:整行插在所点卡片所在行的行尾之后,同行卡片位置不动 -->
       {#if editorOpen && i === editRowEnd}
@@ -1055,6 +1339,17 @@
   .provider-card { padding: 1rem 1.1rem; display: flex; flex-direction: column; gap: 0.75rem; transition: border-color 0.2s ease; }
   .provider-card.added { border-color: rgba(94,234,212,0.35); }
   .provider-card.default-active { border-color: var(--neon-cyan); box-shadow: 0 0 0 1px rgba(0,245,255,0.25); }
+
+  /* 新增自定义服务商卡:虚线占位,居中加号 */
+  .add-custom-card {
+    align-items: center; justify-content: center; gap: 0.5rem; min-height: 120px;
+    border-style: dashed; border-color: rgba(124,92,255,0.5); color: var(--text-secondary);
+    cursor: pointer; background: transparent;
+  }
+  .add-custom-card:hover { border-color: #7c5cff; color: var(--text-primary); }
+  .add-custom-card.active { border-color: #7c5cff; color: #a99bff; }
+  .add-custom-card .add-plus { font-size: 1.6rem; line-height: 1; }
+  .add-custom-card .add-label { font-size: 0.85rem; }
   .default-badge {
     font-size: 0.65rem; padding: 0.1rem 0.5rem; border-radius: 999px; white-space: nowrap;
     background: rgba(0,245,255,0.14); color: var(--neon-cyan); border: 1px solid rgba(0,245,255,0.35);
@@ -1069,6 +1364,7 @@
   .cat-badge.cat-cn { background: rgba(255,107,107,0.15); color: #ff8b8b; }
   .cat-badge.cat-aggregator { background: rgba(123,97,255,0.15); color: #a99bff; }
   .cat-badge.cat-local { background: rgba(148,163,184,0.15); color: #cbd5e1; }
+  .cat-badge.cat-custom { background: rgba(124,92,255,0.15); color: #a99bff; }
   .desc { color: var(--text-muted); font-size: 0.75rem; margin-top: 0.2rem; }
 
   .card-meta { display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; }
@@ -1280,4 +1576,12 @@
   .change-name { font-family: monospace; }
   .change-detail { color: var(--text-muted); font-size: 0.72rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .unchanged-note { font-size: 0.72rem; color: var(--text-muted); }
+
+  /* cc-switch 导入预览:候选行的 meta(key 掩码 / 模型 / 来源) */
+  .import-meta { display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; margin-top: 0.15rem; }
+  .key-mask {
+    font-size: 0.68rem; color: var(--text-secondary); background: var(--bg-tertiary);
+    padding: 0.1rem 0.4rem; border-radius: 0.3rem; font-family: monospace;
+  }
+  .src-apps { font-size: 0.7rem; color: var(--text-muted); }
 </style>
