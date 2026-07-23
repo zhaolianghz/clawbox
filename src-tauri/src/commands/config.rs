@@ -102,10 +102,14 @@ pub struct Config {
     /// Configured model providers. Managed via config_providers_get/set.
     #[serde(default)]
     pub providers: Vec<ProviderSpec>,
-    /// 激活(默认)服务商 id。claude-code / codex 等单激活语义的 agent
-    /// 只下发这一家。None = 未选择。
-    #[serde(default)]
+    /// 废弃:旧「全局激活(默认)服务商」。仅为迁移保留可反序列化;
+    /// load_config 迁移到 agent_providers 后清空,不再落盘。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub active_provider_id: Option<String>,
+    /// agent_id -> 绑定的服务商 id。无条目 = ClawBox 不管理该 agent 的
+    /// 服务商配置。绑定/切换/解绑经 agent_provider_bind,选中即写入生效。
+    #[serde(default)]
+    pub agent_providers: HashMap<String, String>,
     /// agent_id -> 上次服务商同步成功后我们写入的键名(各 agent 语义不同,
     /// 见 sync::providers 各适配器)。驱动 remove 检测:只删我们写过的。
     #[serde(default)]
@@ -164,6 +168,20 @@ pub fn load_config(home: &Path) -> Result<Config, String> {
         .map_err(|e| format!("Config file {} is corrupt: {}", path.display(), e))?;
     for p in &mut config.providers {
         normalize_provider_endpoints(p);
+    }
+    // 旧「全局星标」→ per-agent 绑定迁移(一次性、幂等):有星标且尚无任何
+    // 绑定时,给每个之前同步过(providers_managed 非空)的 agent 生成绑定;
+    // 星标一律清空。悬空星标(服务商已删)只清不迁。
+    if let Some(active) = config.active_provider_id.take() {
+        if config.agent_providers.is_empty()
+            && config.providers.iter().any(|p| p.id == active)
+        {
+            for (agent_id, managed) in &config.providers_managed {
+                if !managed.is_empty() {
+                    config.agent_providers.insert(agent_id.clone(), active.clone());
+                }
+            }
+        }
     }
     Ok(config)
 }
@@ -232,19 +250,21 @@ pub async fn config_providers_get() -> Result<Vec<ProviderSpec>, String> {
     Ok(load_config(&real_home())?.providers)
 }
 
+/// Whole-table overwrite 的 home 参数化核心。被删除的服务商自动解除相关
+/// agent 的绑定(只解绑,不写 agent 配置文件——不打断正在工作的 agent)。
+pub fn providers_set_at(home: &Path, providers: Vec<ProviderSpec>) -> Result<(), String> {
+    let mut config = load_config(home)?;
+    config.providers = providers;
+    let ids: std::collections::HashSet<String> =
+        config.providers.iter().map(|p| p.id.clone()).collect();
+    config.agent_providers.retain(|_, pid| ids.contains(pid));
+    save_config(home, &config)
+}
+
 /// Whole-table overwrite: the frontend always sends the full provider list.
-/// 若激活服务商已不在新列表中,自动清除 active_provider_id,避免悬空引用。
 #[tauri::command]
 pub async fn config_providers_set(providers: Vec<ProviderSpec>) -> Result<(), String> {
-    let home = real_home();
-    let mut config = load_config(&home)?;
-    config.providers = providers;
-    if let Some(id) = &config.active_provider_id {
-        if !config.providers.iter().any(|p| &p.id == id) {
-            config.active_provider_id = None;
-        }
-    }
-    save_config(&home, &config)
+    providers_set_at(&real_home(), providers)
 }
 
 #[tauri::command]
@@ -392,7 +412,9 @@ mod tests {
             assert_eq!(p.base_url, "", "{}", p.id);
             assert!(p.flavor.is_none(), "{}", p.id);
         }
-        assert_eq!(loaded.active_provider_id.as_deref(), Some("p1"));
+        // 旧星标经迁移清空;该配置无 providers_managed → 不生成绑定
+        assert!(loaded.active_provider_id.is_none());
+        assert!(loaded.agent_providers.is_empty());
 
         // 回写:旧字段从文件里消失,其它节不丢
         save_config(home.path(), &loaded).unwrap();
@@ -444,11 +466,12 @@ mod tests {
         let err = active_provider_set_at(home.path(), Some("nope".into())).unwrap_err();
         assert!(err.contains("unknown provider id"));
 
+        // set 后再 load 会经星标迁移清空 active(无 providers_managed →
+        // 也不生成绑定);load 后 active 恒为 None 是新语义。
         active_provider_set_at(home.path(), Some("a".into())).unwrap();
-        assert_eq!(
-            load_config(home.path()).unwrap().active_provider_id,
-            Some("a".to_string())
-        );
+        let loaded = load_config(home.path()).unwrap();
+        assert!(loaded.active_provider_id.is_none());
+        assert!(loaded.agent_providers.is_empty());
 
         // Clearing works.
         active_provider_set_at(home.path(), None).unwrap();
@@ -477,5 +500,58 @@ mod tests {
             "error should name the file: {}",
             err
         );
+    }
+
+    #[test]
+    fn migrates_star_to_per_agent_bindings_idempotently() {
+        let home = TempHome::new();
+        let mut c = Config::default();
+        c.providers = vec![spec("p1", "One")];
+        c.active_provider_id = Some("p1".to_string());
+        // claude-code 之前同步过(managed 非空);codex 从未同步(空)
+        c.providers_managed.insert("claude-code".to_string(), vec!["env".to_string()]);
+        c.providers_managed.insert("codex".to_string(), vec![]);
+        save_config(home.path(), &c).unwrap();
+
+        let loaded = load_config(home.path()).unwrap();
+        assert_eq!(loaded.agent_providers.get("claude-code").map(String::as_str), Some("p1"));
+        assert!(!loaded.agent_providers.contains_key("codex"));
+        assert!(loaded.active_provider_id.is_none());
+
+        // 幂等:落盘再加载,绑定不变
+        save_config(home.path(), &loaded).unwrap();
+        let again = load_config(home.path()).unwrap();
+        assert_eq!(again.agent_providers, loaded.agent_providers);
+        assert!(again.active_provider_id.is_none());
+    }
+
+    #[test]
+    fn migration_ignores_dangling_star() {
+        let home = TempHome::new();
+        let mut c = Config::default();
+        // 星标指向已不存在的服务商 → 不生成任何绑定,星标清空
+        c.active_provider_id = Some("gone".to_string());
+        c.providers_managed.insert("claude-code".to_string(), vec!["env".to_string()]);
+        save_config(home.path(), &c).unwrap();
+
+        let loaded = load_config(home.path()).unwrap();
+        assert!(loaded.agent_providers.is_empty());
+        assert!(loaded.active_provider_id.is_none());
+    }
+
+    #[test]
+    fn providers_set_drops_bindings_of_deleted_providers() {
+        let home = TempHome::new();
+        let mut c = Config::default();
+        c.providers = vec![spec("p1", "One"), spec("p2", "Two")];
+        c.agent_providers.insert("claude-code".to_string(), "p1".to_string());
+        c.agent_providers.insert("opencode".to_string(), "p2".to_string());
+        save_config(home.path(), &c).unwrap();
+
+        // 删掉 p1 → claude-code 解绑;p2 未动 → opencode 绑定保留
+        providers_set_at(home.path(), vec![spec("p2", "Two")]).unwrap();
+        let loaded = load_config(home.path()).unwrap();
+        assert!(!loaded.agent_providers.contains_key("claude-code"));
+        assert_eq!(loaded.agent_providers.get("opencode").map(String::as_str), Some("p2"));
     }
 }
