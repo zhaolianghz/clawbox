@@ -135,6 +135,76 @@ pub async fn sync_providers_apply(agent_ids: Vec<String>) -> Result<Vec<ApplyRes
     Ok(results)
 }
 
+// ---- 服务商 per-agent 绑定:选中即生效 --------------------------------------
+
+/// `agent_provider_bind` 的 home 参数化核心。
+///
+/// Some(id) = 绑定/切换:校验后对该 agent 只下发这一家(单元素列表——多
+/// 服务商适配器由此只写绑定项,旧条目走 managed 差集自然清除),apply 成功
+/// 才落盘绑定。None = 解绑:按 providers_managed 清掉我们写过的键,恢复
+/// agent 原状(hermes 无 remove 语义,只停止管理、保留现值)。
+pub fn agent_provider_bind_at(
+    home: &Path,
+    agent_id: &str,
+    provider_id: Option<String>,
+) -> Result<ApplyResult, String> {
+    let mut config = load_config(home)?;
+    let Some(adapter) = providers::find_adapter(agent_id) else {
+        return Err(format!("unknown agent: {}", agent_id));
+    };
+    let managed = config.providers_managed.get(agent_id).cloned().unwrap_or_default();
+    match provider_id {
+        Some(pid) => {
+            let Some(spec) = config.providers.iter().find(|p| p.id == pid) else {
+                return Err(format!("unknown provider id: {}", pid));
+            };
+            if !spec.enabled {
+                return Err(format!("provider {} is disabled", spec.name));
+            }
+            let bound = vec![spec.clone()];
+            // deployed_names 为空 = 这家在该 agent 下发不了(端点槽不符/
+            // 缺 API key/agent 不支持)。错误信息不含 apiKey。
+            let deployed = adapter.deployed_names(&bound, Some(&pid));
+            if deployed.is_empty() {
+                return Err(format!(
+                    "provider {} cannot be deployed to {} (endpoint slot mismatch, missing API key, or unsupported agent)",
+                    spec.name, agent_id
+                ));
+            }
+            let result = providers::apply_one(home, adapter, &bound, Some(&pid), &managed);
+            if result.ok {
+                config.agent_providers.insert(agent_id.to_string(), pid);
+                config.providers_managed.insert(agent_id.to_string(), deployed);
+                save_config(home, &config)?;
+            }
+            Ok(result)
+        }
+        None => {
+            let result = providers::apply_one(home, adapter, &[], None, &managed);
+            if result.ok {
+                config.agent_providers.remove(agent_id);
+                config.providers_managed.remove(agent_id);
+                save_config(home, &config)?;
+            }
+            Ok(result)
+        }
+    }
+}
+
+#[tauri::command]
+pub async fn agent_provider_bind(
+    agent_id: String,
+    provider_id: Option<String>,
+) -> Result<ApplyResult, String> {
+    agent_provider_bind_at(&real_home(), &agent_id, provider_id)
+}
+
+/// 绑定表只读快照(agents 页选择器当前值 / providers 页「使用中」徽章)。
+#[tauri::command]
+pub async fn agent_providers_get() -> Result<HashMap<String, String>, String> {
+    Ok(load_config(&real_home())?.agent_providers)
+}
+
 // ---- 服务商同步状态(前端卡片标签) ------------------------------------------
 
 #[derive(Serialize, Clone, Debug)]
@@ -1040,5 +1110,101 @@ mod tests {
         assert!(cc.providers.is_empty());
         assert!(cc.mcp_error.is_none());
         assert_eq!((cc.mcp[0].name.as_str(), cc.mcp[0].state.as_str()), ("srv", "removing"));
+    }
+
+    // ---- agent_provider_bind:绑定即生效 / 解绑只删管理键 ----
+
+    fn bind_home_with(providers: Vec<ProviderSpec>) -> TempHome {
+        let home = TempHome::new();
+        let mut c = Config::default();
+        c.providers = providers;
+        crate::commands::config::save_config(home.path(), &c).unwrap();
+        home
+    }
+
+    fn claude_env(home: &Path) -> serde_json::Map<String, serde_json::Value> {
+        let p = home.join(".claude").join("settings.json");
+        let doc: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(p).unwrap()).unwrap();
+        doc.get("env").and_then(|e| e.as_object()).cloned().unwrap_or_default()
+    }
+
+    #[test]
+    fn bind_writes_config_and_persists_binding() {
+        let home = bind_home_with(vec![pspec(
+            "p-anth", "Anthro Relay", "https://relay.example.com/anthropic", "",
+        )]);
+        let r = agent_provider_bind_at(home.path(), "claude-code", Some("p-anth".to_string())).unwrap();
+        assert!(r.ok, "{:?}", r.error);
+
+        let env = claude_env(home.path());
+        assert_eq!(
+            env.get("ANTHROPIC_BASE_URL").and_then(|v| v.as_str()),
+            Some("https://relay.example.com/anthropic")
+        );
+        let cfg = load_config(home.path()).unwrap();
+        assert_eq!(cfg.agent_providers.get("claude-code").map(String::as_str), Some("p-anth"));
+        assert_eq!(cfg.providers_managed.get("claude-code"), Some(&vec!["env".to_string()]));
+    }
+
+    #[test]
+    fn bind_switch_replaces_previous_provider() {
+        let home = bind_home_with(vec![
+            pspec("p1", "One", "https://one.example.com/anthropic", ""),
+            pspec("p2", "Two", "https://two.example.com/anthropic", ""),
+        ]);
+        agent_provider_bind_at(home.path(), "claude-code", Some("p1".to_string())).unwrap();
+        agent_provider_bind_at(home.path(), "claude-code", Some("p2".to_string())).unwrap();
+        let env = claude_env(home.path());
+        assert_eq!(
+            env.get("ANTHROPIC_BASE_URL").and_then(|v| v.as_str()),
+            Some("https://two.example.com/anthropic")
+        );
+        let cfg = load_config(home.path()).unwrap();
+        assert_eq!(cfg.agent_providers.get("claude-code").map(String::as_str), Some("p2"));
+    }
+
+    #[test]
+    fn unbind_removes_only_managed_keys_and_binding() {
+        let home = bind_home_with(vec![pspec(
+            "p-anth", "Anthro Relay", "https://relay.example.com/anthropic", "",
+        )]);
+        // 用户自有键:解绑后必须原样保留
+        fs::create_dir_all(home.path().join(".claude")).unwrap();
+        fs::write(
+            home.path().join(".claude").join("settings.json"),
+            r#"{"env":{"MY_OWN":"keep"},"theme":"dark"}"#,
+        ).unwrap();
+
+        agent_provider_bind_at(home.path(), "claude-code", Some("p-anth".to_string())).unwrap();
+        let r = agent_provider_bind_at(home.path(), "claude-code", None).unwrap();
+        assert!(r.ok, "{:?}", r.error);
+
+        let env = claude_env(home.path());
+        assert!(env.get("ANTHROPIC_BASE_URL").is_none());
+        assert_eq!(env.get("MY_OWN").and_then(|v| v.as_str()), Some("keep"));
+        let cfg = load_config(home.path()).unwrap();
+        assert!(!cfg.agent_providers.contains_key("claude-code"));
+        assert!(!cfg.providers_managed.contains_key("claude-code"));
+    }
+
+    #[test]
+    fn bind_rejects_incompatible_disabled_or_unknown() {
+        // codex 只认 OpenAI 槽 → 绑只有 Anthropic 端点的服务商必须报错且不落盘
+        let mut disabled = pspec("p-off", "Off", "https://off.example.com/anthropic", "");
+        disabled.enabled = false;
+        let home = bind_home_with(vec![
+            pspec("p-anth", "Anthro Relay", "https://relay.example.com/anthropic", ""),
+            disabled,
+        ]);
+
+        assert!(agent_provider_bind_at(home.path(), "codex", Some("p-anth".to_string())).is_err());
+        assert!(agent_provider_bind_at(home.path(), "claude-code", Some("p-off".to_string())).is_err());
+        assert!(agent_provider_bind_at(home.path(), "claude-code", Some("nope".to_string())).is_err());
+        assert!(agent_provider_bind_at(home.path(), "not-an-agent", Some("p-anth".to_string())).is_err());
+
+        let cfg = load_config(home.path()).unwrap();
+        assert!(cfg.agent_providers.is_empty());
+        assert!(!home.path().join(".codex").exists());
     }
 }

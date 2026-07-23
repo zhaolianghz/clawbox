@@ -41,6 +41,8 @@ pub fn run() {
             commands::sync::sync_providers_apply,
             commands::sync::sync_providers_status,
             commands::sync::agent_sync_overview,
+            commands::sync::agent_provider_bind,
+            commands::sync::agent_providers_get,
             commands::sync::skills_library_list,
             commands::sync::skills_import,
             commands::sync::skills_library_remove,
