@@ -140,8 +140,8 @@
     "cancel": "Cancel",
     "close": "Close",
     "usedBy": "Used by {count} agent(s)",
-    "repushOk": "Re-deployed to {count} agents",
-    "repushFail": "Auto-deploy failed: {agents} (re-select on the Agents page to retry)",
+    "repushOk": "Re-deployed to {count} agent(s)",
+    "repushFail": "Auto-deploy failed: {agents} (re-enable the provider or pick another on the Agents page)",
     "import": {
       "button": "Import from cc-switch",
       "loading": "Reading cc-switch config...",
@@ -274,7 +274,7 @@
       "viaCli": "Managed via CLI",
       "none": "Nothing synced",
       "empty": "Nothing synced to this agent yet",
-      "emptyHint": "Sync from the Providers or Config page",
+      "emptyHint": "Pick a provider on this card, or sync MCP / skills / memory from their pages",
       "state": {
         "synced": "Synced",
         "unsynced": "Not synced",

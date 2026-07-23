@@ -7,12 +7,14 @@ All notable changes to ClawBox are documented here. The format follows
 ## [Unreleased]
 
 ### Changed
-- **服务商改为 per-agent 绑定** — 在 Agent 管理页为每个 agent 独立选择服务商,
-  选中即生效;编辑服务商自动重新下发到绑定它的 agent。
+- **Per-agent provider binding** — pick a provider for each agent independently
+  on the Agents page; the selection takes effect immediately, and editing a
+  provider automatically re-deploys it to every agent bound to it.
 
 ### Removed
-- Providers 页的全局默认(星标)与「同步到 Agent」面板,由 per-agent 绑定取代。
-  旧的星标配置(`active_provider_id`)在加载时自动迁移为绑定。
+- The global default (star) and the "Sync to agents" panel on the Providers
+  page, superseded by per-agent binding. Legacy star configs
+  (`active_provider_id`) are migrated to bindings automatically on load.
 
 ## [0.2.0] - 2026-07-22
 

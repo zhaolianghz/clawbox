@@ -63,6 +63,8 @@ pub async fn agent_provider_bind(agent_id: String, provider_id: Option<String>)
   model.* 会破坏其运行），解绑仅停止管理、保留现值——沿用适配器既有行为。
 - 绑定读取：并入 `agent_sync_overview` 返回（新增 `bound_provider_id` 字段），
   避免多一次 IPC。
+  > 实现偏差（审查裁定接受）：最终采用独立命令 `agent_providers_get`（Providers
+  > 页「使用中」徽章复用），未并入 `agent_sync_overview`。
 
 ### 修改
 

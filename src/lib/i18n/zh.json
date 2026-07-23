@@ -141,7 +141,7 @@
     "close": "关闭",
     "usedBy": "{count} 个 agent 使用中",
     "repushOk": "已重新下发到 {count} 个 agent",
-    "repushFail": "自动下发失败: {agents}(在 Agent 管理页重选一次即可重试)",
+    "repushFail": "自动下发失败: {agents}(重新启用该服务商,或在 Agent 管理页改选其它服务商)",
     "import": {
       "button": "从 cc-switch 导入",
       "loading": "正在读取 cc-switch 配置...",
@@ -274,7 +274,7 @@
       "viaCli": "经 CLI 管理",
       "none": "无已同步条目",
       "empty": "尚未同步任何配置",
-      "emptyHint": "到「服务商」或「配置」页发起同步",
+      "emptyHint": "在本卡片选择服务商,或到 MCP / 技能 / 记忆页发起同步",
       "state": {
         "synced": "已同步",
         "unsynced": "未同步",
