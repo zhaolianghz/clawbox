@@ -139,11 +139,9 @@
     "save": "Save",
     "cancel": "Cancel",
     "close": "Close",
-    "setDefault": "Set as default",
-    "unsetDefault": "Unset default",
-    "defaultBadge": "Default",
-    "syncToAgents": "Sync to Agents",
-    "syncedTo": "Synced to {agents}",
+    "usedBy": "Used by {count} agents",
+    "repushOk": "Re-deployed to {count} agents",
+    "repushFail": "Auto-deploy failed: {agents} (re-select on the Agents page to retry)",
     "import": {
       "button": "Import from cc-switch",
       "loading": "Reading cc-switch config...",
@@ -158,10 +156,6 @@
       "previewTitle": "Sync to Agents",
       "planning": "Computing changes...",
       "unsupported": "Not supported yet",
-      "unsupportedReason": {
-        "cursor-agent": "Agent is locked to Cursor's backend; custom endpoints are not allowed",
-        "qodercli": "Only whitelisted providers via account login; arbitrary endpoints not supported"
-      },
       "error": "Error",
       "statusSynced": "Synced",
       "statusPending": "Not synced",
@@ -169,7 +163,6 @@
       "changeCount": "{count} changes",
       "syncOne": "Sync",
       "unchangedCount": "{count} unchanged",
-      "noActiveHint": "No default provider set — some agents will be skipped",
       "action": {
         "add": "Add",
         "update": "Update",
@@ -201,7 +194,6 @@
       "noModelsFetched": "Connected, but no models returned"
     },
     "modelCount": "{count} models",
-    "pendingTo": "Pending sync to {agents}",
     "confirmRemove": "Confirm Remove",
     "freeTier": "Free tier"
   },

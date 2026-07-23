@@ -139,11 +139,9 @@
     "save": "保存",
     "cancel": "取消",
     "close": "关闭",
-    "setDefault": "设为默认",
-    "unsetDefault": "取消默认",
-    "defaultBadge": "默认",
-    "syncToAgents": "同步到 Agent",
-    "syncedTo": "已同步到 {agents}",
+    "usedBy": "{count} 个 agent 使用中",
+    "repushOk": "已重新下发到 {count} 个 agent",
+    "repushFail": "自动下发失败: {agents}(在 Agent 管理页重选一次即可重试)",
     "import": {
       "button": "从 cc-switch 导入",
       "loading": "正在读取 cc-switch 配置...",
@@ -158,10 +156,6 @@
       "previewTitle": "同步到 Agent",
       "planning": "正在计算变更...",
       "unsupported": "暂不支持",
-      "unsupportedReason": {
-        "cursor-agent": "Agent 功能锁定官方后端,不开放自定义端点",
-        "qodercli": "仅支持官方白名单供应商,需账号登录配置"
-      },
       "error": "错误",
       "statusSynced": "已同步",
       "statusPending": "未同步",
@@ -169,7 +163,6 @@
       "changeCount": "{count} 项变更",
       "syncOne": "同步",
       "unchangedCount": "{count} 项未变",
-      "noActiveHint": "未设置默认服务商,部分 agent 将跳过",
       "action": {
         "add": "新增",
         "update": "更新",
@@ -201,7 +194,6 @@
       "noModelsFetched": "连接成功,但未返回模型"
     },
     "modelCount": "{count} 个模型",
-    "pendingTo": "待同步到 {agents}",
     "confirmRemove": "确认移除",
     "freeTier": "免费额度"
   },

@@ -7,14 +7,9 @@
   } from '$lib/data/providers';
   import { localize } from '$lib/data/localized';
   import ProviderLogo from '$lib/components/ProviderLogo.svelte';
-  import AgentLogo from '$lib/components/AgentLogo.svelte';
   import { providers, addProvider, updateProvider, deleteProvider, loadProviders } from '$lib/stores/config';
   import { provider_test, type ModelProvider, type ProviderFlavor, type ProviderTestResult } from '$lib/api/config';
-  import {
-    sync_providers_plan, sync_providers_apply, sync_providers_status,
-    config_active_provider_get, config_active_provider_set,
-    type AgentPlan, type ApplyResult, type ChangeItem, type ProviderSyncStatus,
-  } from '$lib/api/providerSync';
+  import { agent_providers_get, type ApplyResult } from '$lib/api/providerSync';
   import { agents_list } from '$lib/api/agents';
   import { open } from '@tauri-apps/plugin-dialog';
   import { cc_switch_import_preview, type ImportCandidate } from '$lib/api/ccSwitch';
@@ -23,53 +18,24 @@
   let activeCategory = $state<ProviderCategory | 'all'>('all');
   let pageError = $state('');
 
-  // ---------- 激活(默认)服务商 ----------
-  let activeProviderId = $state<string | null>(null);
+  // 编辑保存后的自动重推结果提示(成功 N 家 / 失败列出)
+  let repushNote = $state('');
+  let repushFailed = $state<ApplyResult[]>([]);
 
-  async function refreshActive() {
-    try {
-      activeProviderId = await config_active_provider_get();
-    } catch (e) {
-      pageError = String(e);
-    }
+  function reportRepush(results: ApplyResult[]) {
+    repushFailed = results.filter((r) => !r.ok);
+    const okCount = results.length - repushFailed.length;
+    repushNote = okCount > 0 ? $_('providers.repushOk', { values: { count: okCount } }) : '';
+    if (repushNote) setTimeout(() => (repushNote = ''), 5000);
   }
 
-  /** 点击星标:未激活 → 设为默认;已激活 → 取消(传 null) */
-  async function toggleActive(p: ModelProvider) {
-    pageError = '';
-    const prev = activeProviderId;
-    const next = activeProviderId === p.id ? null : p.id;
-    activeProviderId = next; // 乐观更新
-    try {
-      await config_active_provider_set(next);
-      void refreshSyncStatus(); // 设默认影响 claude-code/codex 的待同步判定
-      quickSync = syncStage === 'closed'; // 设/换默认成功 → 去同步快捷入口
-    } catch (e) {
-      activeProviderId = prev; // 回滚
-      pageError = String(e);
-    }
-  }
-
-  /** 激活服务商缺失或被禁用:同步时 claude-code / codex 会跳过 */
-  const activeMissing = $derived(
-    !activeProviderId || !$providers.some((p) => p.id === activeProviderId && p.enabled)
-  );
-
-  // ---------- 卡片同步状态标签 ----------
-  let cardStatus = $state<Record<string, ProviderSyncStatus>>({}); // provider_id → 状态
-  let cardStatusLoaded = $state(false); // 拉取失败时静默降级:不显示标签
-
-  /** 轻量拉取各服务商同步状态;命令内部读各 agent 配置文件,失败只 warn 不打扰页面 */
-  async function refreshSyncStatus() {
-    try {
-      const list = await sync_providers_status();
-      cardStatus = Object.fromEntries(list.map((s) => [s.provider_id, s]));
-      cardStatusLoaded = true;
-    } catch (e) {
-      console.warn('sync_providers_status failed:', e);
-      cardStatusLoaded = false;
-    }
-  }
+  // agent_id → provider_id 绑定表 → 反查每家服务商被哪些 agent 使用
+  let agentBindings = $state<Record<string, string>>({});
+  const usageByProvider = $derived.by(() => {
+    const m: Record<string, string[]> = {};
+    for (const [agentId, pid] of Object.entries(agentBindings)) (m[pid] ??= []).push(agentId);
+    return m;
+  });
 
   // 已配置的服务商:任一端点槽的 host 命中目录条目即视为匹配
   const configuredByHost = $derived.by(() => {
@@ -151,9 +117,8 @@
   async function toggleEnabled(p: ModelProvider) {
     pageError = '';
     try {
-      await updateProvider(p.id, { enabled: !p.enabled });
-      await refreshActive(); // 禁用/启用后重新拉取激活状态
-      void refreshSyncStatus();
+      // 禁用已绑定的服务商会重推失败 → 正好在失败列表里提示
+      reportRepush(await updateProvider(p.id, { enabled: !p.enabled }));
     } catch (e) {
       pageError = String(e);
     }
@@ -165,8 +130,7 @@
     removingId = null;
     pageError = '';
     try {
-      await deleteProvider(id);
-      await refreshActive(); // 删除激活服务商时后端会自动清除 active_provider_id
+      await deleteProvider(id); // 返回值忽略:删除不重推,后端自动解绑
     } catch (e) {
       pageError = String(e);
     }
@@ -402,34 +366,20 @@
     };
     saving = true;
     try {
+      let repushed: ApplyResult[] = [];
       if (editingId === null) {
-        await addProvider({ id: crypto.randomUUID(), ...data });
+        repushed = await addProvider({ id: crypto.randomUUID(), ...data });
       } else {
-        await updateProvider(editingId, data);
+        repushed = await updateProvider(editingId, data);
       }
       closeEditor();
-      void refreshSyncStatus();
-      quickSync = syncStage === 'closed'; // 保存成功 → 去同步快捷入口
+      reportRepush(repushed);
     } catch (e) {
       formError = String(e);
     } finally {
       saving = false;
     }
   }
-
-  // ---------- 同步到 Agent(逐行状态 + 单行同步 + 批量应用,结果就地写回行内) ----------
-  type SyncStage = 'closed' | 'planning' | 'preview';
-  let syncStage = $state<SyncStage>('closed');
-  let quickSync = $state(false); // 「配置有变更待同步」快捷入口条
-  let plans = $state<AgentPlan[]>([]);
-  let syncError = $state(''); // plan / 批量 invoke 整体失败
-  let expanded = $state<Record<string, boolean>>({}); // 行内明细展开/收起
-  let checked = $state<Record<string, boolean>>({}); // 批量应用勾选
-  let batchApplying = $state(false); // 批量应用进行中
-  let rowApplying = $state<Record<string, boolean>>({}); // 行同步中(行内 spinner)
-  let rowError = $state<Record<string, string>>({}); // 行 apply 失败红字
-  let rowSynced = $state<Record<string, boolean>>({}); // apply 成功后就地翻「已同步」
-  let rowBackup = $state<Record<string, string>>({}); // apply 成功后的备份路径(行内小字)
 
   // agent_id → 显示名;优先用 agents 注册表 label,取不到时回退本地映射
   const FALLBACK_LABELS: Record<string, string> = {
@@ -447,132 +397,6 @@
 
   function agentLabel(id: string): string {
     return agentLabels[id] ?? FALLBACK_LABELS[id] ?? id;
-  }
-
-  // 有 unsupportedReason 文案的 agent(与 i18n 键集对齐;svelte-i18n 没有
-  // 「键是否存在」查询,用本地常量表判断最稳)。未列出的 unsupported agent
-  // 只显示标签不显示小字。
-  const UNSUPPORTED_REASON_IDS = ['cursor-agent', 'qodercli'];
-
-  /** 实际变更项(add/update/remove) */
-  function realChanges(p: AgentPlan): ChangeItem[] {
-    return p.changes.filter((c) => c.action === 'add' || c.action === 'update' || c.action === 'remove');
-  }
-
-  function skipItems(p: AgentPlan): ChangeItem[] {
-    return p.changes.filter((c) => c.action === 'skip');
-  }
-
-  /** 单行状态:apply 成功后 rowSynced 就地覆盖为「已同步」(其它行 plan 数据不刷新) */
-  type RowStatus = 'synced' | 'pending' | 'skipped' | 'unsupported' | 'error';
-
-  function rowStatus(p: AgentPlan): RowStatus {
-    if (!p.supported) return 'unsupported';
-    if (p.error) return 'error';
-    if (rowSynced[p.agent_id]) return 'synced';
-    if (realChanges(p).length > 0) return 'pending';
-    if (skipItems(p).length > 0) return 'skipped';
-    return 'synced'; // 全部 unchanged 或无变更项
-  }
-
-  /** 可勾选参与批量应用:supported、无 plan error、有实际变更、尚未在本面板同步成功 */
-  function selectable(p: AgentPlan): boolean {
-    return p.supported && !p.error && !rowSynced[p.agent_id] && realChanges(p).length > 0;
-  }
-
-  const checkedCount = $derived(plans.filter((p) => selectable(p) && checked[p.agent_id]).length);
-  const selectablePlans = $derived(plans.filter((p) => selectable(p)));
-  const allPlansPicked = $derived(
-    selectablePlans.length > 0 && selectablePlans.every((p) => checked[p.agent_id])
-  );
-
-  function toggleAllPlans() {
-    const next = { ...checked };
-    for (const p of selectablePlans) next[p.agent_id] = !allPlansPicked;
-    checked = next;
-  }
-
-  async function startSync() {
-    syncStage = 'planning';
-    syncError = '';
-    plans = [];
-    expanded = {};
-    checked = {};
-    batchApplying = false;
-    rowApplying = {};
-    rowError = {};
-    rowSynced = {};
-    rowBackup = {};
-    try {
-      plans = await sync_providers_plan();
-      // 默认勾选有实际变更的 supported agent
-      checked = Object.fromEntries(plans.filter(selectable).map((p) => [p.agent_id, true]));
-      syncStage = 'preview';
-    } catch (e) {
-      syncError = String(e);
-      syncStage = 'preview';
-    }
-  }
-
-  /** apply 结果就地写回行内:成功翻「已同步」+ 记备份路径,失败行内红字 */
-  function recordResult(r: ApplyResult) {
-    if (r.ok) {
-      rowSynced = { ...rowSynced, [r.agent_id]: true };
-      rowError = { ...rowError, [r.agent_id]: '' };
-      if (r.backup_path) rowBackup = { ...rowBackup, [r.agent_id]: r.backup_path };
-    } else {
-      rowError = { ...rowError, [r.agent_id]: r.error ?? $_('errors.applyFailed') };
-    }
-  }
-
-  /** 只对该 agent 应用;成功后仅翻当前行状态(其它行 plan 数据不刷新,面板重开才重新 plan) */
-  async function applyOne(id: string) {
-    if (rowApplying[id] || batchApplying) return;
-    rowApplying = { ...rowApplying, [id]: true };
-    rowError = { ...rowError, [id]: '' };
-    try {
-      const results = await sync_providers_apply([id]);
-      if (results[0]) {
-        recordResult(results[0]);
-        if (results[0].ok) void refreshSyncStatus();
-      }
-    } catch (e) {
-      rowError = { ...rowError, [id]: String(e) };
-    } finally {
-      rowApplying = { ...rowApplying, [id]: false };
-    }
-  }
-
-  /** 批量应用勾选的 agent;结果同样逐行就地写回,不切换视图 */
-  async function applyChecked() {
-    const ids = plans.filter((p) => selectable(p) && checked[p.agent_id]).map((p) => p.agent_id);
-    if (ids.length === 0 || batchApplying) return;
-    batchApplying = true;
-    syncError = '';
-    rowApplying = { ...rowApplying, ...Object.fromEntries(ids.map((id) => [id, true])) };
-    try {
-      const results = await sync_providers_apply(ids);
-      for (const r of results) recordResult(r);
-      if (results.some((r) => r.ok)) void refreshSyncStatus();
-    } catch (e) {
-      syncError = String(e);
-    } finally {
-      batchApplying = false;
-      rowApplying = { ...rowApplying, ...Object.fromEntries(ids.map((id) => [id, false])) };
-    }
-  }
-
-  function toggleExpand(id: string) {
-    expanded = { ...expanded, [id]: !expanded[id] };
-  }
-
-  function closeSync() {
-    syncStage = 'closed';
-    void refreshSyncStatus();
-  }
-
-  function unchangedCount(p: AgentPlan): number {
-    return p.changes.filter((c) => c.action === 'unchanged').length;
   }
 
   // ---------- 从 cc-switch 导入(内联预览面板,复用 sync-panel 视觉) ----------
@@ -603,7 +427,7 @@
 
   /** 打开导入:先探测 config.json,未找到则弹文件选择器选导出的 JSON */
   async function startImport() {
-    if (importStage !== 'closed' || syncStage !== 'closed') return;
+    if (importStage !== 'closed') return;
     importError = '';
     importStage = 'loading';
     try {
@@ -649,6 +473,7 @@
     importing = true;
     importError = '';
     try {
+      const repushed: ApplyResult[] = [];
       for (const c of picked) {
         const existing = importTarget(c);
         if (existing) {
@@ -657,9 +482,9 @@
           if (c.openaiBaseUrl && !existing.openaiBaseUrl) data.openaiBaseUrl = c.openaiBaseUrl;
           if (c.apiKey && !existing.apiKey) data.apiKey = c.apiKey;
           if (c.defaultModel && !existing.defaultModel) data.defaultModel = c.defaultModel;
-          if (Object.keys(data).length > 0) await updateProvider(existing.id, data);
+          if (Object.keys(data).length > 0) repushed.push(...(await updateProvider(existing.id, data)));
         } else {
-          await addProvider({
+          repushed.push(...(await addProvider({
             id: crypto.randomUUID(),
             name: c.name || 'Imported',
             anthropicBaseUrl: c.anthropicBaseUrl,
@@ -668,14 +493,12 @@
             defaultModel: c.defaultModel,
             models: [],
             enabled: true,
-          });
+          })));
         }
       }
       importStage = 'closed';
       importCandidates = [];
-      await refreshActive();
-      void refreshSyncStatus();
-      quickSync = syncStage === 'closed'; // 导入成功 → 去同步快捷入口
+      reportRepush(repushed);
     } catch (e) {
       importError = String(e);
     } finally {
@@ -695,12 +518,12 @@
     } catch (e) {
       pageError = String(e);
     }
-    await refreshActive();
-    void refreshSyncStatus();
     try {
       const all = await agents_list();
       agentLabels = Object.fromEntries(all.map((a) => [a.id, a.label]));
     } catch { /* 回退本地映射即可 */ }
+    // 绑定表反查「使用中」徽章;绑定在 Agents 页变更后本页重新挂载时自然刷新
+    agentBindings = await agent_providers_get().catch(() => ({}));
   });
 </script>
 
@@ -708,7 +531,6 @@
   onkeydown={(e) => {
     if (e.key !== 'Escape') return;
     if (editorOpen) closeEditor();
-    else if (syncStage === 'preview' && !batchApplying) closeSync();
     else if (importStage === 'preview' && !importing) closeImport();
   }}
 />
@@ -735,16 +557,9 @@
       <button
         class="btn"
         onclick={startImport}
-        disabled={importStage !== 'closed' || syncStage !== 'closed'}
+        disabled={importStage !== 'closed'}
       >
         {$_('providers.import.button')}
-      </button>
-      <button
-        class="btn primary"
-        onclick={startSync}
-        disabled={syncStage !== 'closed' || importStage !== 'closed'}
-      >
-        {$_('providers.syncToAgents')}
       </button>
     </div>
   </header>
@@ -753,157 +568,14 @@
     <pre class="error-text">{pageError}</pre>
   {/if}
 
-  <!-- 去同步快捷入口(保存/设默认成功后就地出现;面板打开时不显示) -->
-  {#if quickSync && syncStage === 'closed'}
-    <div class="quick-sync-bar">
-      <span class="qs-hint">{$_('quickSync.hint')}</span>
-      <button class="qs-action" onclick={() => { quickSync = false; startSync(); }}>
-        {$_('quickSync.action')}
-      </button>
-      <button class="qs-close" onclick={() => (quickSync = false)} aria-label={$_('quickSync.dismiss')}>✕</button>
-    </div>
+  <!-- 编辑保存后的自动重推结果提示(成功条 5s 自隐;失败条手动关) -->
+  {#if repushNote}
+    <div class="quick-sync-bar"><span class="qs-hint">{repushNote}</span></div>
   {/if}
-
-  <!-- 同步内联面板(按钮下方整行展开,全局无弹窗;逐行状态 + 单行同步) -->
-  {#if syncStage !== 'closed'}
-    <div class="sync-panel glass-card">
-      {#if syncStage === 'planning'}
-        <div class="loading"><span class="spinner"></span> {$_('providers.sync.planning')}</div>
-      {:else}
-        <h3>{$_('providers.sync.previewTitle')}</h3>
-        {#if activeMissing}
-          <p class="sync-hint">{$_('providers.sync.noActiveHint')}</p>
-        {/if}
-        {#if syncError}
-          <pre class="error-text">{syncError}</pre>
-        {/if}
-        {#if plans.length > 0}
-          <div class="plan-list">
-            <label class="select-all-plans">
-              <input
-                type="checkbox"
-                class="row-check"
-                disabled={selectablePlans.length === 0 || batchApplying}
-                checked={allPlansPicked}
-                onchange={toggleAllPlans}
-              />
-              <span>{$_('providers.sync.selectAll')}</span>
-              <span class="selectable-count">{checkedCount}/{selectablePlans.length}</span>
-            </label>
-            {#each plans as p (p.agent_id)}
-              {@const status = rowStatus(p)}
-              {@const changes = realChanges(p)}
-              {@const skips = skipItems(p)}
-              {@const expandable = p.changes.length > 0}
-              {@const canPick = selectable(p)}
-              <div class="plan-item" class:muted={status === 'unsupported'}>
-                <div class="plan-row">
-                  <input
-                    type="checkbox"
-                    class="row-check"
-                    disabled={!canPick || batchApplying}
-                    checked={canPick && !!checked[p.agent_id]}
-                    onchange={(e) => (checked = { ...checked, [p.agent_id]: e.currentTarget.checked })}
-                    aria-label={agentLabel(p.agent_id)}
-                  />
-                  <!-- 行本身可点击:内联展开/收起变更明细 -->
-                  <button
-                    type="button"
-                    class="plan-head"
-                    class:expandable
-                    disabled={!expandable}
-                    onclick={() => toggleExpand(p.agent_id)}
-                  >
-                    <AgentLogo id={p.agent_id} label={agentLabel(p.agent_id)} />
-                    <div class="plan-info">
-                      <div class="plan-title-line">
-                        <span class="agent-name">{agentLabel(p.agent_id)}</span>
-                        {#if status === 'synced'}
-                          <span class="tag green">{$_('providers.sync.statusSynced')}</span>
-                        {:else if status === 'pending'}
-                          <span class="tag yellow">{$_('providers.sync.statusPending')}</span>
-                          <span class="change-summary">
-                            {$_('providers.sync.changeCount', { values: { count: changes.length } })}
-                          </span>
-                        {:else if status === 'skipped'}
-                          <span class="tag amber">{$_('providers.sync.statusSkipped')}</span>
-                          {#if skips[0]?.detail}
-                            <span class="skip-reason">{skips[0].detail}</span>
-                          {/if}
-                        {:else if status === 'unsupported'}
-                          <span class="tag gray">{$_('providers.sync.unsupported')}</span>
-                          {#if UNSUPPORTED_REASON_IDS.includes(p.agent_id)}
-                            <span class="skip-reason">{$_(`providers.sync.unsupportedReason.${p.agent_id}`)}</span>
-                          {/if}
-                        {:else}
-                          <span class="tag red">{$_('providers.sync.error')}</span>
-                        {/if}
-                      </div>
-                      {#if p.supported}
-                        <code class="config-path" title={p.config_path}>{p.config_path}</code>
-                      {/if}
-                    </div>
-                    {#if expandable}
-                      <span class="chevron" class:open={!!expanded[p.agent_id]}>▾</span>
-                    {/if}
-                  </button>
-                  {#if status === 'pending'}
-                    <button
-                      class="btn primary sync-one"
-                      onclick={() => applyOne(p.agent_id)}
-                      disabled={!!rowApplying[p.agent_id] || batchApplying}
-                    >
-                      {#if rowApplying[p.agent_id]}<span class="spinner small"></span>{/if}
-                      {$_('providers.sync.syncOne')}
-                    </button>
-                  {/if}
-                </div>
-                {#if rowSynced[p.agent_id] && rowBackup[p.agent_id]}
-                  <code class="config-path" title={rowBackup[p.agent_id]}>
-                    {$_('providers.sync.backup')}: {rowBackup[p.agent_id]}
-                  </code>
-                {/if}
-                {#if p.error}
-                  <pre class="error-text">{p.error}</pre>
-                {/if}
-                {#if rowError[p.agent_id]}
-                  <pre class="error-text">{rowError[p.agent_id]}</pre>
-                {/if}
-                {#if expandable && expanded[p.agent_id]}
-                  <ul class="change-list">
-                    {#each changes as c (c.name + c.action)}
-                      <li class="change action-{c.action}">
-                        <span class="change-action">{$_(`providers.sync.action.${c.action}`)}</span>
-                        <span class="change-name">{c.name}</span>
-                        {#if c.detail}<span class="change-detail">{c.detail}</span>{/if}
-                      </li>
-                    {/each}
-                    {#each skips as c (c.name)}
-                      <li class="change action-skip">
-                        <span class="change-action">{$_('providers.sync.action.skip')}</span>
-                        <span class="change-name">{c.name}</span>
-                        {#if c.detail}<span class="change-detail">{c.detail}</span>{/if}
-                      </li>
-                    {/each}
-                  </ul>
-                  {#if unchangedCount(p) > 0}
-                    <span class="unchanged-note">
-                      {$_('providers.sync.unchangedCount', { values: { count: unchangedCount(p) } })}
-                    </span>
-                  {/if}
-                {/if}
-              </div>
-            {/each}
-          </div>
-        {/if}
-        <div class="panel-actions">
-          <button class="btn" onclick={closeSync} disabled={batchApplying}>{$_('providers.close')}</button>
-          <button class="btn primary" onclick={applyChecked} disabled={checkedCount === 0 || batchApplying}>
-            {#if batchApplying}<span class="spinner small"></span>{/if}
-            {$_('providers.sync.confirm', { values: { count: checkedCount } })}
-          </button>
-        </div>
-      {/if}
+  {#if repushFailed.length > 0}
+    <div class="quick-sync-bar">
+      <span class="qs-hint">{$_('providers.repushFail', { values: { agents: repushFailed.map((r) => agentLabel(r.agent_id)).join(', ') } })}</span>
+      <button class="qs-close" onclick={() => (repushFailed = [])} aria-label={$_('providers.cancel')}>✕</button>
     </div>
   {/if}
 
@@ -1013,7 +685,6 @@
       <div
         class="provider-card glass-card"
         class:added={!!configured}
-        class:default-active={!!configured && activeProviderId === configured.id}
       >
         <div class="card-top">
           <ProviderLogo entry={e} />
@@ -1021,9 +692,6 @@
             <div class="card-title">
               <span class="name">{localize(e.name, $locale)}</span>
               <span class="cat-badge cat-{e.category}">{categoryLabel(e.category)}</span>
-              {#if configured && activeProviderId === configured.id}
-                <span class="default-badge">{$_('providers.defaultBadge')}</span>
-              {/if}
             </div>
             {#if e.description}<div class="desc">{localize(e.description, $locale)}</div>{/if}
           </div>
@@ -1047,28 +715,12 @@
           {#if configured && (configured.models?.length ?? 0) > 0}
             <span class="model-count">{$_('providers.modelCount', { values: { count: configured.models.length } })}</span>
           {/if}
-          <!-- 同步状态:仅已配置且 enabled 的卡片;status 拉取失败时整体不显示。
-               语义:分母 = 当前适用的 agent 数(synced+pending);全到位才算已同步。 -->
-          {#if configured && configured.enabled && cardStatusLoaded}
-            {@const st = cardStatus[configured.id]}
-            {@const synced = st?.synced_agents.length ?? 0}
-            {@const total = synced + (st?.pending_agents.length ?? 0)}
-            {#if st && total > 0 && synced === total}
-              <span
-                class="sync-badge synced"
-                title={$_('providers.syncedTo', { values: { agents: st.synced_agents.map(agentLabel).join(', ') } })}
-              >{$_('providers.sync.statusSynced')} {synced}/{total}</span>
-            {:else if st && synced > 0}
-              <span
-                class="sync-badge pending"
-                title={$_('providers.pendingTo', { values: { agents: st.pending_agents.map(agentLabel).join(', ') } })}
-              >{$_('providers.sync.statusPending')} {synced}/{total}</span>
-            {:else}
-              <span
-                class="sync-badge pending"
-                title={st && total > 0 ? $_('providers.pendingTo', { values: { agents: st.pending_agents.map(agentLabel).join(', ') } }) : undefined}
-              >{$_('providers.sync.statusPending')}</span>
-            {/if}
+          <!-- 使用中徽章:绑定表反查该服务商被哪些 agent 使用,悬停列出名单 -->
+          {#if configured && (usageByProvider[configured.id]?.length ?? 0) > 0}
+            <span
+              class="sync-badge synced"
+              title={usageByProvider[configured.id].map(agentLabel).join(', ')}
+            >{$_('providers.usedBy', { values: { count: usageByProvider[configured.id].length } })}</span>
           {/if}
         </div>
 
@@ -1078,15 +730,6 @@
           {/if}
           <span class="spacer"></span>
           {#if configured}
-            {#if configured.enabled || activeProviderId === configured.id}
-              <button
-                class="btn star"
-                class:on={activeProviderId === configured.id}
-                onclick={() => toggleActive(configured)}
-                title={activeProviderId === configured.id ? $_('providers.unsetDefault') : $_('providers.setDefault')}
-                aria-label={activeProviderId === configured.id ? $_('providers.unsetDefault') : $_('providers.setDefault')}
-              >{activeProviderId === configured.id ? '★' : '☆'}</button>
-            {/if}
             <button class="btn toggle" class:on={configured.enabled} onclick={() => toggleEnabled(configured)}>
               {configured.enabled ? $_('providers.enabled') : $_('providers.disabled')}
             </button>
@@ -1338,7 +981,6 @@
 
   .provider-card { padding: 1rem 1.1rem; display: flex; flex-direction: column; gap: 0.75rem; transition: border-color 0.2s ease; }
   .provider-card.added { border-color: rgba(94,234,212,0.35); }
-  .provider-card.default-active { border-color: var(--neon-cyan); box-shadow: 0 0 0 1px rgba(0,245,255,0.25); }
 
   /* 新增自定义服务商卡:虚线占位,居中加号 */
   .add-custom-card {
@@ -1350,10 +992,6 @@
   .add-custom-card.active { border-color: #7c5cff; color: #a99bff; }
   .add-custom-card .add-plus { font-size: 1.6rem; line-height: 1; }
   .add-custom-card .add-label { font-size: 0.85rem; }
-  .default-badge {
-    font-size: 0.65rem; padding: 0.1rem 0.5rem; border-radius: 999px; white-space: nowrap;
-    background: rgba(0,245,255,0.14); color: var(--neon-cyan); border: 1px solid rgba(0,245,255,0.35);
-  }
 
   .card-top { display: flex; align-items: center; gap: 0.85rem; }
   .card-head-info { min-width: 0; }
@@ -1382,7 +1020,6 @@
   }
   .sync-badge { font-size: 0.65rem; padding: 0.1rem 0.45rem; border-radius: 999px; white-space: nowrap; }
   .sync-badge.synced { background: rgba(74,222,128,0.15); color: #4ade80; cursor: help; }
-  .sync-badge.pending { background: rgba(251,191,36,0.15); color: #fbbf24; }
 
   .card-actions { display: flex; align-items: center; gap: 0.5rem; margin-top: auto; }
   .spacer { flex: 1; }
@@ -1400,8 +1037,6 @@
   .btn.toggle.on { color: var(--neon-green); border-color: rgba(94,234,212,0.4); background: rgba(94,234,212,0.1); }
   .btn.remove { color: var(--neon-pink); border-color: rgba(255,0,110,0.3); padding: 0.3rem 0.55rem; }
   .btn.danger { background: rgba(248,113,113,0.15); border-color: #f87171; color: #f87171; }
-  .btn.star { color: var(--text-muted); padding: 0.3rem 0.55rem; font-size: 0.85rem; line-height: 1; }
-  .btn.star.on { color: #fbbf24; border-color: rgba(251,191,36,0.45); background: rgba(251,191,36,0.12); }
   .btn:disabled { opacity: 0.5; cursor: default; }
 
   .empty { text-align: center; color: var(--text-muted); padding: 3rem; }
@@ -1415,10 +1050,6 @@
     background: rgba(0,245,255,0.08); border: 1px solid rgba(0,245,255,0.3);
   }
   .qs-hint { flex: 1; font-size: 0.78rem; color: var(--neon-cyan); }
-  .qs-action {
-    padding: 0.25rem 0.7rem; border-radius: 0.4rem; font-size: 0.75rem; cursor: pointer;
-    background: rgba(0,245,255,0.14); border: 1px solid var(--neon-cyan); color: var(--neon-cyan);
-  }
   .qs-close {
     background: transparent; border: none; cursor: pointer; color: var(--text-muted);
     font-size: 0.75rem; padding: 0.2rem 0.3rem; line-height: 1;
@@ -1508,7 +1139,7 @@
 
   .check-label { display: flex; align-items: center; gap: 0.5rem; font-size: 0.82rem; cursor: pointer; }
 
-  /* 同步面板(样式与 MCP 同步面板一致) */
+  /* cc-switch 导入面板(复用原同步面板视觉,与 MCP 同步面板一致) */
   .sync-panel {
     padding: 1.3rem 1.5rem; display: flex; flex-direction: column; gap: 0.9rem;
     background: var(--bg-secondary);
@@ -1530,52 +1161,20 @@
     border: 1px solid rgba(255,255,255,0.08); border-radius: 0.5rem;
     padding: 0.6rem 0.9rem; display: flex; flex-direction: column; gap: 0.4rem;
   }
-  .plan-item.muted { opacity: 0.55; }
   .plan-row { display: flex; align-items: center; gap: 0.6rem; }
   .row-check { flex-shrink: 0; cursor: pointer; }
   .row-check:disabled { cursor: default; opacity: 0.4; }
-  /* 行头是按钮(点击展开明细),重置按钮默认样式 */
   .plan-head {
     flex: 1; min-width: 0; display: flex; align-items: center; gap: 0.6rem;
     background: transparent; border: none; padding: 0; margin: 0;
     color: inherit; font: inherit; text-align: left; cursor: default;
   }
-  .plan-head.expandable { cursor: pointer; }
-  .plan-head:disabled { cursor: default; }
   .plan-info { min-width: 0; flex: 1; display: flex; flex-direction: column; gap: 0.2rem; }
   .plan-title-line { display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; }
   .agent-name { font-weight: 600; font-size: 0.9rem; }
-  .change-summary { font-size: 0.72rem; color: var(--text-secondary); }
-  .skip-reason { font-size: 0.72rem; color: var(--text-muted); }
-  .chevron {
-    flex-shrink: 0; font-size: 0.8rem; color: var(--text-muted);
-    transition: transform 0.15s ease;
-  }
-  .chevron.open { transform: rotate(180deg); }
-  .sync-one { flex-shrink: 0; display: inline-flex; align-items: center; gap: 0.35rem; }
-  .config-path {
-    font-size: 0.68rem; color: var(--text-muted);
-    white-space: nowrap; overflow: hidden; text-overflow: ellipsis; display: block;
-    max-width: 100%;
-  }
   .tag { font-size: 0.65rem; padding: 0.1rem 0.5rem; border-radius: 999px; white-space: nowrap; }
-  .tag.gray { background: rgba(148,163,184,0.15); color: #cbd5e1; }
-  .tag.red { background: rgba(248,113,113,0.15); color: #f87171; }
   .tag.green { background: rgba(74,222,128,0.15); color: #4ade80; }
-  .tag.yellow { background: rgba(251,191,36,0.15); color: #fbbf24; }
   .tag.amber { background: rgba(202,164,60,0.12); color: #d0b978; }
-
-  .change-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 0.25rem; }
-  .change { display: flex; align-items: baseline; gap: 0.5rem; font-size: 0.78rem; min-width: 0; }
-  .change-action { font-size: 0.65rem; padding: 0.05rem 0.45rem; border-radius: 999px; white-space: nowrap; flex-shrink: 0; }
-  .action-add .change-action { background: rgba(74,222,128,0.15); color: #4ade80; }
-  .action-update .change-action { background: rgba(251,191,36,0.15); color: #fbbf24; }
-  .action-remove .change-action { background: rgba(248,113,113,0.15); color: #f87171; }
-  .action-skip .change-action { background: rgba(148,163,184,0.15); color: #cbd5e1; }
-  .action-skip { opacity: 0.7; }
-  .change-name { font-family: monospace; }
-  .change-detail { color: var(--text-muted); font-size: 0.72rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .unchanged-note { font-size: 0.72rem; color: var(--text-muted); }
 
   /* cc-switch 导入预览:候选行的 meta(key 掩码 / 模型 / 来源) */
   .import-meta { display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; margin-top: 0.15rem; }
