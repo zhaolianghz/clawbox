@@ -143,6 +143,9 @@ pub async fn agent_provider_bind(
     agent_id: String,
     provider_id: Option<String>,
 ) -> Result<ApplyResult, String> {
+    let _guard = crate::commands::config::CONFIG_LOCK
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
     agent_provider_bind_at(&real_home(), &agent_id, provider_id)
 }
 

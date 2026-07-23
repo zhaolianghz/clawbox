@@ -8,6 +8,10 @@ fn default_true() -> bool {
     true
 }
 
+/// 串行化所有「load→modify→save」config.json 的命令,防止交错写丢更新。
+/// 只在命令包装层加锁(核心 _at 函数不加,避免 providers_set_at→bind_at 重入死锁)。
+pub static CONFIG_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 /// Canonical MCP server spec — ClawBox's single source of truth. Adapters in
 /// `crate::sync` translate this into each agent's native config format.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
@@ -174,12 +178,25 @@ pub fn load_config(home: &Path) -> Result<Config, String> {
     // 绑定时,给每个之前同步过(providers_managed 非空)的 agent 生成绑定;
     // 星标一律清空。悬空星标(服务商已删)只清不迁。
     if let Some(active) = config.active_provider_id.take() {
-        if config.agent_providers.is_empty()
-            && config.providers.iter().any(|p| p.id == active)
-        {
-            for (agent_id, managed) in &config.providers_managed {
-                if !managed.is_empty() {
-                    config.agent_providers.insert(agent_id.clone(), active.clone());
+        if config.agent_providers.is_empty() {
+            let active_spec = config.providers.iter().find(|p| p.id == active).cloned();
+            if let Some(active_spec) = active_spec {
+                let bound = vec![active_spec];
+                for (agent_id, managed) in &config.providers_managed {
+                    if managed.is_empty() {
+                        continue;
+                    }
+                    // 只迁移「能下发」的绑定:星标服务商与该 agent 的端点槽
+                    // 不符(如 Anthropic-only 服务商配 codex)时跳过,否则迁
+                    // 移出的绑定 agent_provider_bind 自己都会拒绝——只会在
+                    // overview 里制造漂移噪音、首次编辑时弹失败 toast。
+                    // deployed_names 是纯函数、无文件写入,迁移保持零副作用。
+                    let deployable = crate::sync::providers::find_adapter(agent_id)
+                        .map(|a| !a.deployed_names(&bound, Some(&active)).is_empty())
+                        .unwrap_or(false);
+                    if deployable {
+                        config.agent_providers.insert(agent_id.clone(), active.clone());
+                    }
                 }
             }
         }
@@ -205,6 +222,7 @@ pub async fn get_config() -> Result<Config, String> {
 
 #[tauri::command]
 pub async fn set_config(path: String, value: serde_json::Value) -> Result<(), String> {
+    let _guard = CONFIG_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let home = real_home();
     let mut config = load_config(&home)?;
 
@@ -304,6 +322,7 @@ pub fn providers_set_at(
 pub async fn config_providers_set(
     providers: Vec<ProviderSpec>,
 ) -> Result<Vec<ApplyResult>, String> {
+    let _guard = CONFIG_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     providers_set_at(&real_home(), providers)
 }
 
@@ -521,6 +540,26 @@ mod tests {
     }
 
     #[test]
+    fn migration_skips_agents_incompatible_with_star() {
+        let home = TempHome::new();
+        // 星标是 Anthropic-only 服务商:claude-code(Anthropic 槽)能下发,
+        // codex(只认 OpenAI 槽)下发不了 → 迁移只给 claude-code 生成绑定
+        let mut p = spec("p1", "AnthOnly");
+        p.openai_base_url = String::new();
+        let mut c = Config::default();
+        c.providers = vec![p];
+        c.active_provider_id = Some("p1".to_string());
+        c.providers_managed.insert("claude-code".to_string(), vec!["env".to_string()]);
+        c.providers_managed.insert("codex".to_string(), vec!["clawbox".to_string()]);
+        save_config(home.path(), &c).unwrap();
+
+        let loaded = load_config(home.path()).unwrap();
+        assert_eq!(loaded.agent_providers.get("claude-code").map(String::as_str), Some("p1"));
+        assert!(!loaded.agent_providers.contains_key("codex"));
+        assert!(loaded.active_provider_id.is_none());
+    }
+
+    #[test]
     fn migration_ignores_dangling_star() {
         let home = TempHome::new();
         let mut c = Config::default();
@@ -584,6 +623,30 @@ mod tests {
         // 原样保存(未变) → 无重推
         let results = providers_set_at(home.path(), vec![spec("p1", "One")]).unwrap();
         assert!(results.is_empty());
+    }
+
+    #[test]
+    fn providers_set_repush_failure_does_not_roll_back_save() {
+        let home = TempHome::new();
+        let mut p1 = spec("p1", "One");
+        p1.openai_base_url = String::new(); // Anthropic-only
+        let mut c = Config::default();
+        c.providers = vec![p1.clone()];
+        save_config(home.path(), &c).unwrap();
+        crate::commands::sync::agent_provider_bind_at(home.path(), "claude-code", Some("p1".to_string()))
+            .unwrap();
+
+        // 两个端点全清空 → 重推必然失败;但保存本身不回滚,绑定也不清
+        p1.anthropic_base_url = String::new();
+        let results = providers_set_at(home.path(), vec![p1]).unwrap();
+        assert_eq!(results.len(), 1);
+        assert!(!results[0].ok);
+        assert_eq!(results[0].agent_id, "claude-code");
+
+        let loaded = load_config(home.path()).unwrap();
+        assert_eq!(loaded.providers[0].anthropic_base_url, "");
+        assert_eq!(loaded.providers[0].openai_base_url, "");
+        assert_eq!(loaded.agent_providers.get("claude-code").map(String::as_str), Some("p1"));
     }
 
     #[test]
