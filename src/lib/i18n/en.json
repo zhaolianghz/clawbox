@@ -139,7 +139,7 @@
     "save": "Save",
     "cancel": "Cancel",
     "close": "Close",
-    "usedBy": "Used by {count} agents",
+    "usedBy": "Used by {count} agent(s)",
     "repushOk": "Re-deployed to {count} agents",
     "repushFail": "Auto-deploy failed: {agents} (re-select on the Agents page to retry)",
     "import": {

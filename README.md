@@ -35,7 +35,7 @@ Instead of editing config files in five different directories, you configure onc
 
 | Module | What it does |
 |---|---|
-| **Providers** | Add API keys and endpoints for any OpenAI- or Anthropic-compatible provider (78 built-in, dual-endpoint per provider). Sync the active provider to all agents in one click. |
+| **Providers** | Add API keys and endpoints for any OpenAI- or Anthropic-compatible provider (78 built-in, dual-endpoint per provider). Pick a provider per agent — selection applies instantly, edits auto-redeploy. |
 | **MCP** | Manage MCP servers with a visual editor (form or raw JSON). Sync to all agents that support MCP. 8 curated servers for quick setup. |
 | **Skills** | Unified skill library backed by `~/.agents/skills/`. Install from Git repos (Anthropic Skills, Superpowers, …), adopt existing skills from any agent, sync via symlinks. |
 | **Memory** | Edit a single `~/.agents/memory/MEMORY.md` and inject it as a managed block into every agent's instruction file — without touching anything outside the block. |
@@ -84,9 +84,8 @@ npm run tauri dev
 ## Quick Start
 
 1. Open ClawBox → **Providers** → click a provider card → enter your API key → Save
-2. Star (★) one provider as the default
-3. Click **Sync to Agents** → preview changes → Apply
-4. Done — Claude Code, Codex, and others now use your provider
+2. Go to **Agents** → pick that provider for each agent — the selection applies instantly
+3. Done — Claude Code, Codex, and others now use your provider
 
 ## Tech Stack
 

@@ -270,7 +270,7 @@ pub fn providers_set_at(
     let changed: HashSet<String> = config
         .providers
         .iter()
-        .filter(|p| old.iter().find(|o| o.id == p.id).map_or(true, |o| o != *p))
+        .filter(|p| old.iter().find(|o| o.id == p.id) != Some(*p))
         .map(|p| p.id.clone())
         .collect();
     let to_repush: Vec<(String, String)> = config

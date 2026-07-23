@@ -22,7 +22,7 @@ ClawBox is a local tool. It never sends your keys, endpoints, or memory anywhere
 
 ## Providers
 
-Pushes your active provider's endpoint + key + model into each agent's native config. `claude-code` / `codex` / `codebuddy` / `hermes` are **single-active** (switching swaps the values); `opencode` / `openclaw` receive the **full** provider list.
+Pushes the provider **bound to each agent** — endpoint + key + model — into that agent's native config. You pick a provider per agent on the Agents page; the selection applies instantly, and saving edits to a provider automatically redeploys it to every agent bound to it. `claude-code` / `codex` / `codebuddy` / `hermes` are **single-active** (switching swaps the values); `opencode` / `openclaw` receive the **full** provider list.
 
 | Agent | File | What ClawBox owns |
 |---|---|---|

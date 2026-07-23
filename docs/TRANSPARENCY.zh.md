@@ -22,7 +22,7 @@ ClawBox 是本地工具,绝不把你的密钥、端点、记忆传到任何地�
 
 ## 服务商
 
-把当前激活服务商的端点 + 密钥 + 模型下发到各 agent 的原生配置。`claude-code` / `codex` / `codebuddy` / `hermes` 是**单激活**(切换即替换值);`opencode` / `openclaw` 接收**完整**服务商列表。
+把**每个 agent 绑定的服务商**的端点 + 密钥 + 模型下发到该 agent 的原生配置。在 Agent 管理页为每个 agent 独立选择服务商,选中即生效;保存对服务商的编辑会自动重新下发到绑定它的所有 agent。`claude-code` / `codex` / `codebuddy` / `hermes` 是**单激活**(切换即替换值);`opencode` / `openclaw` 接收**完整**服务商列表。
 
 | Agent | 文件 | ClawBox 拥有的部分 |
 |---|---|---|

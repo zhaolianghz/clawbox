@@ -4,6 +4,16 @@ All notable changes to ClawBox are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/), and versions adhere to
 [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Changed
+- **服务商改为 per-agent 绑定** — 在 Agent 管理页为每个 agent 独立选择服务商,
+  选中即生效;编辑服务商自动重新下发到绑定它的 agent。
+
+### Removed
+- Providers 页的全局默认(星标)与「同步到 Agent」面板,由 per-agent 绑定取代。
+  旧的星标配置(`active_provider_id`)在加载时自动迁移为绑定。
+
 ## [0.2.0] - 2026-07-22
 
 ### Added

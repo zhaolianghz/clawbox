@@ -35,7 +35,7 @@ ClawBox 是一款桌面应用（macOS · Windows · Linux），为你的所有 A
 
 | 模块 | 功能说明 |
 |---|---|
-| **服务商** | 为任意 OpenAI 或 Anthropic 兼容服务商添加 API Key 和端点（内置 78 家，每家支持双端点）。一键将默认服务商同步到所有 agent。 |
+| **服务商** | 为任意 OpenAI 或 Anthropic 兼容服务商添加 API Key 和端点（内置 78 家，每家支持双端点）。每个 agent 独立选择服务商，选中即生效，编辑自动重新下发。 |
 | **MCP** | 可视化编辑 MCP 服务器（表单或原始 JSON）。同步到所有支持 MCP 的 agent。内置 8 个精选服务器快速上手。 |
 | **技能** | 统一技能库（`~/.agents/skills/`）。从 Git 仓库安装（Anthropic Skills、Superpowers 等），收编各 agent 现有技能，通过软链同步下发。 |
 | **记忆** | 编辑统一的 `~/.agents/memory/MEMORY.md`，以托管区块形式注入每个 agent 的指令文件——区块外内容一字不动。 |
@@ -84,9 +84,8 @@ npm run tauri dev
 ## 快速上手
 
 1. 打开 ClawBox → **服务商** → 点击服务商卡片 → 填入 API Key → 保存
-2. 点击 ★ 将某个服务商设为默认
-3. 点击**同步到 Agent** → 预览变更 → 应用
-4. 完成——Claude Code、Codex 等 agent 现在使用你的服务商
+2. 前往 **Agent 管理** → 为每个 agent 选择该服务商，选中即生效
+3. 完成——Claude Code、Codex 等 agent 现在使用你的服务商
 
 ## 技术栈
 
