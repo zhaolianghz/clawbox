@@ -1,5 +1,6 @@
+use crate::sync::ApplyResult;
 use serde::{Deserialize, Serialize};
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -250,20 +251,59 @@ pub async fn config_providers_get() -> Result<Vec<ProviderSpec>, String> {
     Ok(load_config(&real_home())?.providers)
 }
 
-/// Whole-table overwrite 的 home 参数化核心。被删除的服务商自动解除相关
-/// agent 的绑定(只解绑,不写 agent 配置文件——不打断正在工作的 agent)。
-pub fn providers_set_at(home: &Path, providers: Vec<ProviderSpec>) -> Result<(), String> {
+/// Whole-table overwrite 的 home 参数化核心。
+///
+/// 1. 被删除的服务商 → 自动解绑相关 agent(只解绑,不写 agent 配置文件)。
+/// 2. 内容有变更的服务商 → 自动重推到绑定它的 agent(「配置好即同步」)。
+///    保存不因个别 agent 推送失败回滚;失败逐条落在返回的 ApplyResult 里,
+///    前端 toast 提示,agent 页重选一次即重试。
+pub fn providers_set_at(
+    home: &Path,
+    providers: Vec<ProviderSpec>,
+) -> Result<Vec<ApplyResult>, String> {
     let mut config = load_config(home)?;
-    config.providers = providers;
-    let ids: std::collections::HashSet<String> =
-        config.providers.iter().map(|p| p.id.clone()).collect();
+    let old = std::mem::replace(&mut config.providers, providers);
+    let ids: HashSet<String> = config.providers.iter().map(|p| p.id.clone()).collect();
     config.agent_providers.retain(|_, pid| ids.contains(pid));
-    save_config(home, &config)
+
+    // 变更集:新列表里与旧条目不等(含新增)的服务商 id
+    let changed: HashSet<String> = config
+        .providers
+        .iter()
+        .filter(|p| old.iter().find(|o| o.id == p.id).map_or(true, |o| o != *p))
+        .map(|p| p.id.clone())
+        .collect();
+    let to_repush: Vec<(String, String)> = config
+        .agent_providers
+        .iter()
+        .filter(|(_, pid)| changed.contains(*pid))
+        .map(|(a, p)| (a.clone(), p.clone()))
+        .collect();
+    save_config(home, &config)?;
+
+    // 重推 = 对该 agent 重新绑定一次(bind_at 自己 load/save,故先落盘上面的状态)
+    let mut results = Vec::new();
+    for (agent_id, pid) in to_repush {
+        match crate::commands::sync::agent_provider_bind_at(home, &agent_id, Some(pid)) {
+            Ok(r) => results.push(r),
+            Err(e) => results.push(ApplyResult {
+                agent_id,
+                ok: false,
+                backup_path: None,
+                applied: 0,
+                error: Some(e),
+            }),
+        }
+    }
+    Ok(results)
 }
 
 /// Whole-table overwrite: the frontend always sends the full provider list.
+/// 返回自动重推结果(无绑定受影响时为空数组)。
 #[tauri::command]
-pub async fn config_providers_set(providers: Vec<ProviderSpec>) -> Result<(), String> {
+pub async fn config_providers_set(
+    providers: Vec<ProviderSpec>,
+) -> Result<Vec<ApplyResult>, String> {
     providers_set_at(&real_home(), providers)
 }
 
@@ -553,5 +593,58 @@ mod tests {
         let loaded = load_config(home.path()).unwrap();
         assert!(!loaded.agent_providers.contains_key("claude-code"));
         assert_eq!(loaded.agent_providers.get("opencode").map(String::as_str), Some("p2"));
+    }
+
+    #[test]
+    fn providers_set_repushes_to_agents_bound_to_changed_provider() {
+        let home = TempHome::new();
+        let mut p1 = spec("p1", "One");
+        p1.anthropic_base_url = "https://v1.example.com/anthropic".to_string();
+        let mut c = Config::default();
+        c.providers = vec![p1.clone()];
+        save_config(home.path(), &c).unwrap();
+        crate::commands::sync::agent_provider_bind_at(home.path(), "claude-code", Some("p1".to_string()))
+            .unwrap();
+
+        // 端点变更 → 自动重推,claude-code 配置文件跟着更新
+        p1.anthropic_base_url = "https://v2.example.com/anthropic".to_string();
+        let results = providers_set_at(home.path(), vec![p1]).unwrap();
+        assert_eq!(results.len(), 1);
+        assert!(results[0].ok, "{:?}", results[0].error);
+        assert_eq!(results[0].agent_id, "claude-code");
+
+        let settings = std::fs::read_to_string(home.path().join(".claude").join("settings.json")).unwrap();
+        assert!(settings.contains("https://v2.example.com/anthropic"));
+    }
+
+    #[test]
+    fn providers_set_untouched_provider_triggers_no_repush() {
+        let home = TempHome::new();
+        let mut c = Config::default();
+        c.providers = vec![spec("p1", "One")];
+        save_config(home.path(), &c).unwrap();
+        crate::commands::sync::agent_provider_bind_at(home.path(), "claude-code", Some("p1".to_string()))
+            .unwrap();
+
+        // 原样保存(未变) → 无重推
+        let results = providers_set_at(home.path(), vec![spec("p1", "One")]).unwrap();
+        assert!(results.is_empty());
+    }
+
+    #[test]
+    fn providers_set_delete_bound_provider_unbinds_without_touching_agent_file() {
+        let home = TempHome::new();
+        let mut c = Config::default();
+        c.providers = vec![spec("p1", "One")];
+        save_config(home.path(), &c).unwrap();
+        crate::commands::sync::agent_provider_bind_at(home.path(), "claude-code", Some("p1".to_string()))
+            .unwrap();
+        let before = std::fs::read_to_string(home.path().join(".claude").join("settings.json")).unwrap();
+
+        let results = providers_set_at(home.path(), vec![]).unwrap();
+        assert!(results.is_empty()); // 删除 = 解绑,不重推、不清文件
+        let after = std::fs::read_to_string(home.path().join(".claude").join("settings.json")).unwrap();
+        assert_eq!(before, after);
+        assert!(load_config(home.path()).unwrap().agent_providers.is_empty());
     }
 }
