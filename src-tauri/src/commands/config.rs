@@ -307,28 +307,6 @@ pub async fn config_providers_set(
     providers_set_at(&real_home(), providers)
 }
 
-#[tauri::command]
-pub async fn config_active_provider_get() -> Result<Option<String>, String> {
-    Ok(load_config(&real_home())?.active_provider_id)
-}
-
-/// Home-parameterized core so tests can point it at a tempdir.
-pub fn active_provider_set_at(home: &Path, id: Option<String>) -> Result<(), String> {
-    let mut config = load_config(home)?;
-    if let Some(id) = &id {
-        if !config.providers.iter().any(|p| &p.id == id) {
-            return Err(format!("unknown provider id: {}", id));
-        }
-    }
-    config.active_provider_id = id;
-    save_config(home, &config)
-}
-
-#[tauri::command]
-pub async fn config_active_provider_set(id: Option<String>) -> Result<(), String> {
-    active_provider_set_at(&real_home(), id)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -493,29 +471,6 @@ mod tests {
         assert_eq!(loaded.providers[0].anthropic_base_url, "");
         assert_eq!(loaded.providers[0].base_url, "");
         assert!(loaded.providers[0].flavor.is_none());
-    }
-
-    #[test]
-    fn active_provider_set_validates_and_roundtrips() {
-        let home = TempHome::new();
-        let mut config = load_config(home.path()).unwrap();
-        config.providers = vec![spec("a", "Alpha")];
-        save_config(home.path(), &config).unwrap();
-
-        // Unknown id rejected.
-        let err = active_provider_set_at(home.path(), Some("nope".into())).unwrap_err();
-        assert!(err.contains("unknown provider id"));
-
-        // set 后再 load 会经星标迁移清空 active(无 providers_managed →
-        // 也不生成绑定);load 后 active 恒为 None 是新语义。
-        active_provider_set_at(home.path(), Some("a".into())).unwrap();
-        let loaded = load_config(home.path()).unwrap();
-        assert!(loaded.active_provider_id.is_none());
-        assert!(loaded.agent_providers.is_empty());
-
-        // Clearing works.
-        active_provider_set_at(home.path(), None).unwrap();
-        assert!(load_config(home.path()).unwrap().active_provider_id.is_none());
     }
 
     #[test]

@@ -1,6 +1,6 @@
 //! 服务商(模型)配置统一下发 — MCP 下发的姊妹功能。
 //!
-//! ClawBox 持有服务商注册表(`Config::providers` + `active_provider_id`);
+//! ClawBox 持有服务商注册表(`Config::providers` + `agent_providers` 绑定表);
 //! 各 agent 适配器把它翻译成 agent 的原生配置,合并写、只动自己管理的键。
 //! `Config::providers_managed` 记录上次同步各 agent 收到的键名,remove 只
 //! 作用于我们写过的键。
@@ -90,7 +90,7 @@ fn resolve_single_active<'a>(
     match active_spec(providers, active_id) {
         None => Target::Skip {
             name: "(active)".to_string(),
-            reason: "No default provider set (star one on the Providers page)".to_string(),
+            reason: "No provider bound (pick one on the Agents page)".to_string(),
         },
         Some(spec) => {
             let Some((url, _)) = pick_endpoint(spec, order) else {
@@ -1657,11 +1657,14 @@ pub fn find_adapter(id: &str) -> Option<&'static dyn ProviderAdapter> {
     adapters().iter().find(|a| a.agent_id() == id).map(|a| a.as_ref())
 }
 
-/// 为每个注册适配器生成计划;单个 agent 的解析失败落在 AgentPlan::error。
+/// 按 per-agent 绑定表为每个注册适配器生成计划。未绑定的 agent 不管理即
+/// 不看(changes 空);绑定的 agent 只围绕绑定服务商展开(单元素列表——与
+/// agent_provider_bind 的下发口径一致)。单个 agent 的解析失败落在
+/// AgentPlan::error。
 pub fn plan_all(
     home: &Path,
     providers: &[ProviderSpec],
-    active_id: Option<&str>,
+    bindings: &std::collections::HashMap<String, String>,
     managed: &std::collections::HashMap<String, Vec<String>>,
 ) -> Vec<AgentPlan> {
     adapters()
@@ -1670,31 +1673,21 @@ pub fn plan_all(
             let agent_id = a.agent_id().to_string();
             let config_path = a.config_path(home).to_string_lossy().to_string();
             if !a.supported() {
-                return AgentPlan {
-                    agent_id,
-                    supported: false,
-                    config_path,
-                    changes: vec![],
-                    error: None,
-                };
+                return AgentPlan { agent_id, supported: false, config_path, changes: vec![], error: None };
             }
+            let bound = bindings
+                .get(a.agent_id())
+                .and_then(|pid| providers.iter().find(|p| p.id == *pid));
+            let Some(spec) = bound else {
+                // 未绑定(或绑定悬空):不管理该 agent,不出条目
+                return AgentPlan { agent_id, supported: true, config_path, changes: vec![], error: None };
+            };
             let empty = vec![];
             let m = managed.get(a.agent_id()).unwrap_or(&empty);
-            match a.plan(home, providers, active_id, m) {
-                Ok(changes) => AgentPlan {
-                    agent_id,
-                    supported: true,
-                    config_path,
-                    changes,
-                    error: None,
-                },
-                Err(e) => AgentPlan {
-                    agent_id,
-                    supported: true,
-                    config_path,
-                    changes: vec![],
-                    error: Some(e),
-                },
+            let single = vec![spec.clone()];
+            match a.plan(home, &single, Some(&spec.id), m) {
+                Ok(changes) => AgentPlan { agent_id, supported: true, config_path, changes, error: None },
+                Err(e) => AgentPlan { agent_id, supported: true, config_path, changes: vec![], error: Some(e) },
             }
         })
         .collect()
@@ -2843,7 +2836,9 @@ mod tests {
             "{ nope",
         );
         let providers = vec![anthropic_provider()];
-        let plans = plan_all(home.path(), &providers, Some("p-anth"), &Default::default());
+        let bindings =
+            std::collections::HashMap::from([("claude-code".to_string(), "p-anth".to_string())]);
+        let plans = plan_all(home.path(), &providers, &bindings, &Default::default());
         assert_eq!(plans.len(), 9);
         let cc = plans.iter().find(|p| p.agent_id == "claude-code").unwrap();
         assert!(cc.error.is_some());
@@ -2855,6 +2850,38 @@ mod tests {
             let p = plans.iter().find(|p| p.agent_id == id).unwrap();
             assert!(!p.supported);
         }
+    }
+
+    #[test]
+    fn plan_all_uses_per_agent_bindings() {
+        let home = TempHome::new();
+        let providers = vec![anthropic_provider(), openai_provider()];
+        let mut bindings = std::collections::HashMap::new();
+        bindings.insert("claude-code".to_string(), "p-anth".to_string());
+        bindings.insert("codex".to_string(), "p-oa".to_string());
+        let managed = std::collections::HashMap::new();
+
+        let plans = plan_all(home.path(), &providers, &bindings, &managed);
+        let of = |id: &str| plans.iter().find(|p| p.agent_id == id).unwrap();
+
+        // 绑定的 agent:按各自绑定的服务商出计划(未写盘 → add)
+        assert!(of("claude-code").changes.iter().any(|c| c.action == "add"));
+        assert!(of("codex").changes.iter().any(|c| c.action == "add"));
+        // 未绑定的 agent:不管理即不看,零条目、无错误
+        assert!(of("opencode").changes.is_empty());
+        assert!(of("opencode").error.is_none());
+        assert!(of("hermes").changes.is_empty());
+    }
+
+    #[test]
+    fn plan_all_dangling_binding_is_empty_not_error() {
+        let home = TempHome::new();
+        let mut bindings = std::collections::HashMap::new();
+        bindings.insert("claude-code".to_string(), "gone".to_string());
+        let plans = plan_all(home.path(), &[], &bindings, &std::collections::HashMap::new());
+        let p = plans.iter().find(|p| p.agent_id == "claude-code").unwrap();
+        assert!(p.changes.is_empty());
+        assert!(p.error.is_none());
     }
 
     #[test]
