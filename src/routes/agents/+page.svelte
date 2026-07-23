@@ -5,6 +5,9 @@
   import { checkLatestVersions, extractSemver, type LatestInfo } from '../../lib/api/latest';
   import { agent_sync_overview, type AgentSyncOverview, type SyncedItem } from '../../lib/api/providerSync';
   import AgentLogo from '../../lib/components/AgentLogo.svelte';
+  import { providers, loadProviders } from '../../lib/stores/config';
+  import { agent_provider_bind, agent_providers_get } from '../../lib/api/providerSync';
+  import type { ModelProvider } from '../../lib/api/config';
 
   let agents = $state<AgentStatus[]>([]);
   let isLoading = $state(true);
@@ -42,7 +45,63 @@
     await refresh();
     // 页面加载时只消费缓存(1h TTL 内零请求);强制刷新走「检查更新」按钮
     checkUpdates(false);
+    void loadProviders();
+    try {
+      bindings = await agent_providers_get();
+    } catch (e) {
+      console.warn('agent_providers_get failed', e);
+    }
   });
+
+  // ---------- 服务商绑定(选中即生效) ----------
+  let bindings = $state<Record<string, string>>({});
+  let bindApplying = $state<Record<string, boolean>>({});
+  let bindErrors = $state<Record<string, string>>({});
+  let bindFlash = $state<Record<string, boolean>>({}); // 成功短暂高亮
+
+  // 各 agent 的端点槽位偏好(与 src-tauri/src/sync/providers.rs 各适配器一致;
+  // 不在表里的 agent 不支持服务商下发,不渲染选择器)
+  const AGENT_SLOTS: Record<string, ('anthropic' | 'openai')[]> = {
+    'claude-code': ['anthropic'],
+    codex: ['openai'],
+    codebuddy: ['openai'],
+    hermes: ['anthropic', 'openai'],
+    opencode: ['openai', 'anthropic'],
+    openclaw: ['anthropic', 'openai'],
+    kimi: ['openai', 'anthropic'],
+  };
+
+  /** 该服务商能否下发给该 agent:任一偏好槽已配置端点,且有 API key */
+  function compatible(agentId: string, p: ModelProvider): boolean {
+    const slots = AGENT_SLOTS[agentId];
+    if (!slots || !p.apiKey) return false;
+    return slots.some((s) => (s === 'anthropic' ? !!p.anthropicBaseUrl : !!p.openaiBaseUrl));
+  }
+
+  const enabledProviders = $derived($providers.filter((p) => p.enabled));
+
+  async function bindProvider(agentId: string, providerId: string) {
+    const prev = bindings[agentId] ?? '';
+    bindApplying = { ...bindApplying, [agentId]: true };
+    bindErrors = { ...bindErrors, [agentId]: '' };
+    try {
+      await agent_provider_bind(agentId, providerId === '' ? null : providerId);
+      if (providerId === '') {
+        const { [agentId]: _, ...rest } = bindings;
+        bindings = rest;
+      } else {
+        bindings = { ...bindings, [agentId]: providerId };
+      }
+      bindFlash = { ...bindFlash, [agentId]: true };
+      setTimeout(() => (bindFlash = { ...bindFlash, [agentId]: false }), 2000);
+      if (overview !== null) void loadOverview(true); // 漂移状态跟着刷新
+    } catch (e) {
+      bindErrors = { ...bindErrors, [agentId]: String(e) };
+      bindings = prev === '' ? (({ [agentId]: _drop, ...rest }) => rest)(bindings) : { ...bindings, [agentId]: prev };
+    } finally {
+      bindApplying = { ...bindApplying, [agentId]: false };
+    }
+  }
 
   function isScript(a: AgentStatus): boolean {
     // unix: curl ... | bash ; windows: irm ... | iex
@@ -204,6 +263,32 @@
               <span class="detect-only">{$_('agents.detectOnly')}</span>
             {/if}
           </div>
+          {#if AGENT_SLOTS[a.id]}
+            <div class="provider-bind" class:flash={bindFlash[a.id]}>
+              <span class="bind-label">{$_('agents.provider.label')}</span>
+              <select
+                class="bind-select"
+                disabled={bindApplying[a.id]}
+                value={bindings[a.id] ?? ''}
+                onchange={(e) => bindProvider(a.id, e.currentTarget.value)}
+              >
+                <option value="">{$_('agents.provider.unmanaged')}</option>
+                {#each enabledProviders as p (p.id)}
+                  <option value={p.id} disabled={!compatible(a.id, p)}>
+                    {p.name}{compatible(a.id, p) ? '' : ` (${$_('agents.provider.incompatible')})`}
+                  </option>
+                {/each}
+                {#if bindings[a.id] && !enabledProviders.some((p) => p.id === bindings[a.id])}
+                  <!-- 绑定的服务商已被禁用:保留一个占位项让选择器如实回显,提示重选 -->
+                  <option value={bindings[a.id]} disabled>{$_('agents.provider.stale')}</option>
+                {/if}
+              </select>
+              {#if bindApplying[a.id]}<span class="spinner small"></span>{/if}
+            </div>
+            {#if bindErrors[a.id]}
+              <pre class="install-error">{bindErrors[a.id]}</pre>
+            {/if}
+          {/if}
           <div class="card-actions">
             {#if a.install_command}
               {#if !a.deps_satisfied}
@@ -401,6 +486,15 @@
   .sync-muted { font-size: 0.75rem; opacity: 0.5; margin: 0; }
   .sync-empty { margin: 0; font-size: 0.8rem; opacity: 0.75; }
   .sync-detail-foot { display: flex; justify-content: flex-end; }
+  .provider-bind { display: flex; align-items: center; gap: 0.5rem; }
+  .bind-label { font-size: 0.75rem; opacity: 0.6; white-space: nowrap; }
+  .bind-select {
+    flex: 1; min-width: 0; padding: 0.25rem 0.5rem; border-radius: 6px;
+    border: 1px solid rgba(255,255,255,0.15); background: transparent;
+    color: inherit; font-size: 0.75rem;
+  }
+  .bind-select:disabled { opacity: 0.5; }
+  .provider-bind.flash .bind-select { border-color: #4ade80; transition: border-color 0.3s; }
   .loading { padding: 2rem; display: flex; justify-content: center; gap: 0.5rem; }
   .spinner { width: 16px; height: 16px; border: 2px solid rgba(94,234,212,0.3); border-top-color: #5eead4; border-radius: 50%; animation: spin 0.8s linear infinite; display: inline-block; }
   .spinner.small { width: 12px; height: 12px; }

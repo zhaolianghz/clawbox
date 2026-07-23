@@ -1,5 +1,5 @@
 import { writable, derived, get } from 'svelte/store';
-import { get_providers, save_providers, type ModelProvider } from '$lib/api/config';
+import { get_providers, save_providers, type ApplyResult, type ModelProvider } from '$lib/api/config';
 
 export const providers = writable<ModelProvider[]>([]);
 
@@ -12,10 +12,10 @@ export async function loadProviders(): Promise<void> {
   providers.set(await get_providers());
 }
 
-/** 落盘当前 store;失败时回滚到 prev 并抛出,让调用方展示错误 */
-async function persist(prev: ModelProvider[]): Promise<void> {
+/** 落盘当前 store;失败时回滚到 prev 并抛出,让调用方展示错误。成功时透传后端自动重推结果 */
+async function persist(prev: ModelProvider[]): Promise<ApplyResult[]> {
   try {
-    await save_providers(get(providers));
+    return await save_providers(get(providers));
   } catch (e) {
     console.warn('save providers failed, rolling back:', e);
     providers.set(prev);
@@ -23,20 +23,20 @@ async function persist(prev: ModelProvider[]): Promise<void> {
   }
 }
 
-export async function addProvider(provider: ModelProvider): Promise<void> {
+export async function addProvider(provider: ModelProvider): Promise<ApplyResult[]> {
   const prev = get(providers);
   providers.update(p => [...p, provider]);
-  await persist(prev);
+  return persist(prev);
 }
 
-export async function updateProvider(id: string, data: Partial<ModelProvider>): Promise<void> {
+export async function updateProvider(id: string, data: Partial<ModelProvider>): Promise<ApplyResult[]> {
   const prev = get(providers);
   providers.update(p => p.map(item => item.id === id ? { ...item, ...data } : item));
-  await persist(prev);
+  return persist(prev);
 }
 
-export async function deleteProvider(id: string): Promise<void> {
+export async function deleteProvider(id: string): Promise<ApplyResult[]> {
   const prev = get(providers);
   providers.update(p => p.filter(item => item.id !== id));
-  await persist(prev);
+  return persist(prev);
 }

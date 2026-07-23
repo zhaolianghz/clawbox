@@ -1,4 +1,8 @@
 import { invoke } from '@tauri-apps/api/core';
+import type { ApplyResult } from './mcpSync';
+
+// save_providers 现在返回后端自动重推的逐 agent 结果,类型与 MCP 同步共用。
+export type { ApplyResult } from './mcpSync';
 
 // 与后端 ProviderSpec(serde camelCase)逐字段对齐,零转换。
 // 双端点契约:旧 baseUrl/flavor 已废弃 —— 后端 load 时自动迁移进槽位,
@@ -33,9 +37,9 @@ export async function get_providers(): Promise<ModelProvider[]> {
   return await invoke<ModelProvider[]>('config_providers_get');
 }
 
-/** 整表覆盖写入 ~/.clawbox/config.json 的 providers 节 */
-export async function save_providers(providers: ModelProvider[]): Promise<void> {
-  await invoke('config_providers_set', { providers });
+/** 整表覆盖写入 ~/.clawbox/config.json 的 providers 节;返回编辑后自动重推的逐 agent 结果 */
+export async function save_providers(providers: ModelProvider[]): Promise<ApplyResult[]> {
+  return await invoke<ApplyResult[]>('config_providers_set', { providers });
 }
 
 /** 测试连接:GET 服务商 models 端点,返回延迟与模型列表。HTTP 失败也走 resolve(ok=false)。 */

@@ -292,6 +292,12 @@
       "defaultModel": "默认模型",
       "skills": "技能",
       "memory": "记忆"
+    },
+    "provider": {
+      "label": "服务商",
+      "unmanaged": "不由 ClawBox 管理",
+      "incompatible": "端点不兼容",
+      "stale": "(已禁用的服务商,请重选)"
     }
   },
   "monitor": {

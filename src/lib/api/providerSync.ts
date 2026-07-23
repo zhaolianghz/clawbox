@@ -74,3 +74,16 @@ export function config_active_provider_get(): Promise<string | null> {
 export function config_active_provider_set(id: string | null): Promise<void> {
   return invoke<void>('config_active_provider_set', { id });
 }
+
+/** 绑定/切换/解绑该 agent 的服务商(选中即写入生效;null = 解绑恢复原状) */
+export function agent_provider_bind(
+  agentId: string,
+  providerId: string | null
+): Promise<ApplyResult> {
+  return invoke<ApplyResult>('agent_provider_bind', { agentId, providerId });
+}
+
+/** 绑定表快照:agent_id → provider_id */
+export function agent_providers_get(): Promise<Record<string, string>> {
+  return invoke<Record<string, string>>('agent_providers_get');
+}

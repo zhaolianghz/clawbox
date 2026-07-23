@@ -292,6 +292,12 @@
       "defaultModel": "Default model",
       "skills": "Skills",
       "memory": "Memory"
+    },
+    "provider": {
+      "label": "Provider",
+      "unmanaged": "Not managed by ClawBox",
+      "incompatible": "endpoint mismatch",
+      "stale": "(disabled provider — pick another)"
     }
   },
   "monitor": {
