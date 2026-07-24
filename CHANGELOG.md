@@ -4,6 +4,16 @@ All notable changes to ClawBox are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/), and versions adhere to
 [Semantic Versioning](https://semver.org/).
 
+## [0.3.1] - 2026-07-24
+
+### Fixed
+- **Light theme visibility on the Agents page** — the provider selector looked
+  like plain text (invisible border, no dropdown arrow, no hover cue); it now
+  has a themed background, border, chevron and hover highlight, with a muted
+  "Select a provider" placeholder. Buttons, sync chips and teal accents on the
+  page now use theme-aware tokens (`--border-strong`, `--border-subtle`,
+  `--accent-teal`) instead of hard-coded white/teal values.
+
 ## [0.3.0] - 2026-07-24
 
 ### Changed

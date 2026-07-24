@@ -264,6 +264,7 @@
               <span class="bind-label">{$_('agents.provider.label')}</span>
               <select
                 class="bind-select"
+                class:empty={!bindings[a.id]}
                 disabled={bindApplying[a.id]}
                 value={bindings[a.id] ?? ''}
                 onchange={(e) => bindProvider(a.id, e.currentTarget.value)}
@@ -429,7 +430,7 @@
   .head-info { display: flex; flex-direction: column; gap: 0.2rem; min-width: 0; }
   .title-line { display: flex; align-items: center; gap: 0.5rem; }
   .agent-label { font-weight: 600; font-size: 0.9rem; }
-  .kind-badge { font-size: 0.7rem; padding: 0.1rem 0.5rem; border-radius: 999px; background: rgba(94, 234, 212, 0.15); color: #5eead4; white-space: nowrap; }
+  .kind-badge { font-size: 0.7rem; padding: 0.1rem 0.5rem; border-radius: 999px; background: rgba(94, 234, 212, 0.15); color: var(--accent-teal); white-space: nowrap; }
   .version { font-family: monospace; font-size: 0.75rem; opacity: 0.7; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; transition: color 0.3s; }
   .version.upgraded { color: #4ade80; opacity: 1; }
   .update-badge { color: #fbbf24; margin-left: 0.3rem; }
@@ -439,20 +440,20 @@
   .card-actions { display: flex; align-items: center; gap: 0.75rem; flex-wrap: wrap; margin-top: auto; }
   .deps-hint { font-size: 0.75rem; color: #fbbf24; }
   .detect-only { font-size: 0.8rem; opacity: 0.5; }
-  .docs-link { font-size: 0.8rem; color: #5eead4; margin-left: auto; }
+  .docs-link { font-size: 0.8rem; color: var(--accent-teal); margin-left: auto; }
   .install-error { font-size: 0.75rem; color: #f87171; white-space: pre-wrap; margin: 0; }
-  .btn { padding: 0.3rem 0.9rem; border-radius: 6px; border: 1px solid rgba(255,255,255,0.15); background: transparent; color: inherit; cursor: pointer; font-size: 0.75rem; }
+  .btn { padding: 0.3rem 0.9rem; border-radius: 6px; border: 1px solid var(--border-strong); background: transparent; color: inherit; cursor: pointer; font-size: 0.75rem; }
   /* 页头按钮:无样式定义时会继承根字号显得过大,与 .btn 同基准 */
   .refresh-btn {
-    padding: 0.3rem 0.9rem; border-radius: 6px; border: 1px solid rgba(255,255,255,0.15);
+    padding: 0.3rem 0.9rem; border-radius: 6px; border: 1px solid var(--border-strong);
     background: transparent; color: inherit; cursor: pointer; font-size: 0.75rem;
     display: inline-flex; align-items: center; gap: 0.4rem;
   }
   .refresh-btn:disabled { opacity: 0.5; cursor: default; }
-  .btn.primary { background: rgba(94, 234, 212, 0.15); border-color: #5eead4; color: #5eead4; }
+  .btn.primary { background: rgba(94, 234, 212, 0.15); border-color: var(--accent-teal); color: var(--accent-teal); }
   .btn.danger { background: rgba(248, 113, 113, 0.15); border-color: #f87171; color: #f87171; }
   .btn.subtle { opacity: 0.55; }
-  .btn.active { border-color: #5eead4; color: #5eead4; }
+  .btn.active { border-color: var(--accent-teal); color: var(--accent-teal); }
   .btn:disabled { opacity: 0.5; cursor: default; }
 
   /* 同步详情:独占一整行的展开面板,插在展开卡片所在行之后 */
@@ -463,12 +464,12 @@
   .sync-detail-title { font-size: 0.85rem; font-weight: 600; }
   .sync-loading { display: flex; align-items: center; gap: 0.5rem; font-size: 0.8rem; opacity: 0.7; }
   .sync-section { display: flex; flex-direction: column; gap: 0.35rem; }
-  .sync-section-title { font-size: 0.78rem; font-weight: 600; color: #5eead4; }
+  .sync-section-title { font-size: 0.78rem; font-weight: 600; color: var(--accent-teal); }
   .sync-chips { display: flex; flex-wrap: wrap; gap: 0.35rem; }
   .sync-chip {
     display: inline-flex; align-items: center; gap: 0.35rem;
     font-size: 0.72rem; font-family: monospace; padding: 0.15rem 0.55rem;
-    border-radius: 999px; border: 1px solid rgba(255,255,255,0.12);
+    border-radius: 999px; border: 1px solid var(--border-subtle);
   }
   .chip-state { font-size: 0.62rem; font-family: inherit; }
   .sync-chip.state-synced { border-color: rgba(74,222,128,0.4); }
@@ -486,14 +487,19 @@
   .provider-bind { display: flex; align-items: center; gap: 0.5rem; }
   .bind-label { font-size: 0.75rem; opacity: 0.6; white-space: nowrap; }
   .bind-select {
-    flex: 1; min-width: 0; padding: 0.25rem 0.5rem; border-radius: 6px;
-    border: 1px solid rgba(255,255,255,0.15); background: transparent;
-    color: inherit; font-size: 0.75rem;
+    /* 用 background-color 而非 background 简写:保留全局 select 的 SVG 下拉箭头 */
+    flex: 1; min-width: 0; width: auto;
+    padding: 0.3rem 1.9rem 0.3rem 0.6rem; border-radius: 6px;
+    border: 1px solid var(--border-strong); background-color: var(--bg-tertiary);
+    color: inherit; font-size: 0.75rem; cursor: pointer;
+    transition: border-color 0.15s ease;
   }
-  .bind-select:disabled { opacity: 0.5; }
+  .bind-select:hover:not(:disabled) { border-color: var(--neon-cyan); }
+  .bind-select.empty { color: var(--text-muted); }
+  .bind-select:disabled { opacity: 0.5; cursor: default; }
   .provider-bind.flash .bind-select { border-color: #4ade80; transition: border-color 0.3s; }
   .loading { padding: 2rem; display: flex; justify-content: center; gap: 0.5rem; }
-  .spinner { width: 16px; height: 16px; border: 2px solid rgba(94,234,212,0.3); border-top-color: #5eead4; border-radius: 50%; animation: spin 0.8s linear infinite; display: inline-block; }
+  .spinner { width: 16px; height: 16px; border: 2px solid rgba(94,234,212,0.3); border-top-color: var(--accent-teal); border-radius: 50%; animation: spin 0.8s linear infinite; display: inline-block; }
   .spinner.small { width: 12px; height: 12px; }
   @keyframes spin { to { transform: rotate(360deg); } }
 </style>
