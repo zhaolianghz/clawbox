@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "ClawBox",
-  "version": "0.2.0",
-  "identifier": "com.clawbox.app",
+  "version": "0.3.0",
+  "identifier": "com.clawbox.desktop",
   "build": {
     "beforeDevCommand": "npm run dev",
     "devUrl": "http://localhost:1420",

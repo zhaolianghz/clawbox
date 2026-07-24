@@ -287,7 +287,7 @@
     },
     "provider": {
       "label": "Provider",
-      "unmanaged": "Not managed by ClawBox",
+      "placeholder": "Select a provider",
       "incompatible": "endpoint mismatch",
       "stale": "(disabled provider — pick another)"
     }

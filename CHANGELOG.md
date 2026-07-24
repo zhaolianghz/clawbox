@@ -4,17 +4,24 @@ All notable changes to ClawBox are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/), and versions adhere to
 [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
+## [0.3.0] - 2026-07-24
 
 ### Changed
 - **Per-agent provider binding** — pick a provider for each agent independently
   on the Agents page; the selection takes effect immediately, and editing a
   provider automatically re-deploys it to every agent bound to it.
+- macOS bundle identifier renamed from `com.clawbox.app` to
+  `com.clawbox.desktop` (the `.app` suffix conflicts with the macOS bundle
+  extension). macOS treats this build as a new app; window state and
+  permissions do not carry over.
 
 ### Removed
 - The global default (star) and the "Sync to agents" panel on the Providers
   page, superseded by per-agent binding. Legacy star configs
   (`active_provider_id`) are migrated to bindings automatically on load.
+- The "Not managed by ClawBox" unbind option in the agent provider selector.
+  Unbound agents now show a disabled "Select a provider" placeholder; once
+  bound, an agent stays managed by ClawBox.
 
 ## [0.2.0] - 2026-07-22
 

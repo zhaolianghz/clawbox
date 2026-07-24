@@ -81,17 +81,13 @@
   const enabledProviders = $derived($providers.filter((p) => p.enabled));
 
   async function bindProvider(agentId: string, providerId: string) {
+    if (providerId === '') return; // 占位符不可选;UI 不提供解绑入口
     const prev = bindings[agentId] ?? '';
     bindApplying = { ...bindApplying, [agentId]: true };
     bindErrors = { ...bindErrors, [agentId]: '' };
     try {
-      await agent_provider_bind(agentId, providerId === '' ? null : providerId);
-      if (providerId === '') {
-        const { [agentId]: _, ...rest } = bindings;
-        bindings = rest;
-      } else {
-        bindings = { ...bindings, [agentId]: providerId };
-      }
+      await agent_provider_bind(agentId, providerId);
+      bindings = { ...bindings, [agentId]: providerId };
       bindFlash = { ...bindFlash, [agentId]: true };
       setTimeout(() => (bindFlash = { ...bindFlash, [agentId]: false }), 2000);
       if (overview !== null) void loadOverview(true); // 漂移状态跟着刷新
@@ -272,7 +268,8 @@
                 value={bindings[a.id] ?? ''}
                 onchange={(e) => bindProvider(a.id, e.currentTarget.value)}
               >
-                <option value="">{$_('agents.provider.unmanaged')}</option>
+                <!-- 未绑定时的占位:不可选,绑定后自动隐藏(不提供解绑入口) -->
+                <option value="" disabled hidden>{$_('agents.provider.placeholder')}</option>
                 {#each enabledProviders as p (p.id)}
                   <option value={p.id} disabled={!compatible(a.id, p)}>
                     {p.name}{compatible(a.id, p) ? '' : ` (${$_('agents.provider.incompatible')})`}
