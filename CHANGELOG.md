@@ -4,6 +4,21 @@ All notable changes to ClawBox are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/), and versions adhere to
 [Semantic Versioning](https://semver.org/).
 
+## [0.3.2] - 2026-07-24
+
+### Added
+- **Codex model catalog** — when a provider bound to Codex lists models,
+  ClawBox now writes `~/.codex/clawbox-model-catalog.json` and points
+  `model_catalog_json` at it in `config.toml`, so Codex's desktop model
+  picker surfaces the models you configured instead of only the built-in
+  ones. `defaultModel` is included even when it isn't in the models list, so
+  the `model =` line always resolves. Removing the binding deletes the file
+  and key, but leaves any `model_catalog_json` you set yourself untouched.
+
+### Fixed
+- **Codex `wire_api` set to `responses`** — Codex 0.5x removed chat
+  completions; writing `wire_api = "chat"` made Codex exit on startup.
+
 ## [0.3.1] - 2026-07-24
 
 ### Fixed

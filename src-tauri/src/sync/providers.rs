@@ -353,10 +353,92 @@ const CODEX_PROVIDER_KEY: &str = "clawbox";
 /// codex 只认 OpenAI 端点槽。
 const CODEX_SLOTS: [Slot; 1] = [Slot::Openai];
 const CODEX_MISSING: &str = "OpenAI endpoint not configured";
+/// 模型目录文件名(相对 CODEX_HOME)。写入它并在 config.toml 用
+/// model_catalog_json 引用,Codex 桌面模型选择器才会列出我们的模型;
+/// 否则选择器只显示内置模型,用户配的模型不可见(codex issue #19694)。
+const CODEX_CATALOG_FILE: &str = "clawbox-model-catalog.json";
 
 impl CodexProviderAdapter {
     fn auth_path(&self, home: &Path) -> PathBuf {
         home.join(".codex").join("auth.json")
+    }
+
+    fn catalog_path(&self, home: &Path) -> PathBuf {
+        home.join(".codex").join(CODEX_CATALOG_FILE)
+    }
+
+    /// 该服务商要在选择器里列出的模型 id。models 为空时回退到 defaultModel;
+    /// 都为空则返回空(不写目录,选择器沿用内置模型)。defaultModel 若不在
+    /// models 里也补进去,保证 config.toml 里 model= 指向的项目录中存在。
+    fn catalog_slugs(spec: &ProviderSpec) -> Vec<String> {
+        let mut slugs: Vec<String> = Vec::new();
+        for m in &spec.models {
+            let m = m.trim();
+            if !m.is_empty() && !slugs.iter().any(|s| s == m) {
+                slugs.push(m.to_string());
+            }
+        }
+        let dm = spec.default_model.trim();
+        if !dm.is_empty() && !slugs.iter().any(|s| s == dm) {
+            slugs.push(dm.to_string());
+        }
+        slugs
+    }
+
+    /// 构造一个 Codex 模型目录条目。字段取 codex 解析所需的最小集合;
+    /// base_instructions 留空,Codex 回退到内置默认系统提示。
+    fn catalog_entry(slug: &str, priority: i64) -> Value {
+        json!({
+            "slug": slug,
+            "display_name": slug,
+            "description": slug,
+            "context_window": 200000,
+            "max_context_window": 200000,
+            "effective_context_window_percent": 95,
+            "default_reasoning_level": "medium",
+            "supported_reasoning_levels": [
+                {"effort": "low", "description": "Fast responses with lighter reasoning"},
+                {"effort": "medium", "description": "Balances speed and reasoning depth"},
+                {"effort": "high", "description": "Greater reasoning depth for complex problems"},
+                {"effort": "xhigh", "description": "Extra high reasoning depth"}
+            ],
+            "default_reasoning_summary": "none",
+            "default_verbosity": "low",
+            "input_modalities": ["text", "image"],
+            "visibility": "list",
+            "supported_in_api": true,
+            "priority": priority,
+            "shell_type": "shell_command",
+            "base_instructions": "",
+            "apply_patch_tool_type": "freeform",
+            "web_search_tool_type": "text_and_image",
+            "support_verbosity": false,
+            "supports_reasoning_summaries": true,
+            "supports_parallel_tool_calls": true,
+            "supports_search_tool": false,
+            "supports_image_detail_original": false,
+            "use_responses_lite": false,
+            "truncation_policy": {"limit": 10000, "mode": "tokens"},
+            "additional_speed_tiers": [],
+            "service_tiers": [],
+            "experimental_supported_tools": [],
+            "availability_nux": null,
+            "upgrade": null
+        })
+    }
+
+    /// 完整目录 JSON(models 数组)。空 slug 列表返回 Null 表示不管理目录。
+    fn catalog_doc(slugs: &[String]) -> Value {
+        if slugs.is_empty() {
+            return Value::Null;
+        }
+        let models: Vec<Value> = slugs
+            .iter()
+            .enumerate()
+            // priority 越大越靠前;按列表顺序递减,首个模型排最前。
+            .map(|(i, s)| Self::catalog_entry(s, 1000 - i as i64))
+            .collect();
+        json!({ "models": models })
     }
 
     fn load_toml(&self, home: &Path) -> Result<DocumentMut, String> {
@@ -393,11 +475,24 @@ impl CodexProviderAdapter {
             .unwrap_or(Value::Null);
         let auth = load_json(&self.auth_path(home))?;
         let key = auth.get("OPENAI_API_KEY").cloned().unwrap_or(Value::Null);
+        // 目录文件当前内容(缺失=Null),纳入等价比较:模型增删会触发 update。
+        let catalog = {
+            let p = self.catalog_path(home);
+            if p.exists() {
+                std::fs::read_to_string(&p)
+                    .ok()
+                    .and_then(|c| serde_json::from_str::<Value>(&c).ok())
+                    .unwrap_or(Value::Null)
+            } else {
+                Value::Null
+            }
+        };
         Ok(json!({
             "provider": provider,
             "model_provider": model_provider,
             "model": model,
             "OPENAI_API_KEY": key,
+            "catalog": catalog,
         }))
     }
 
@@ -408,11 +503,12 @@ impl CodexProviderAdapter {
             "provider": {
                 "name": spec.name,
                 "base_url": url,
-                "wire_api": "chat",
+                "wire_api": "responses",
             },
             "model_provider": CODEX_PROVIDER_KEY,
             "model": if model.is_empty() { current["model"].clone() } else { json!(model) },
             "OPENAI_API_KEY": json!(spec.api_key.trim()),
+            "catalog": Self::catalog_doc(&Self::catalog_slugs(spec)),
         })
     }
 
@@ -516,13 +612,29 @@ impl ProviderAdapter for CodexProviderAdapter {
                 let mut t = Table::new();
                 t["name"] = value(spec.name.as_str());
                 t["base_url"] = value(url);
-                t["wire_api"] = value("chat");
+                // codex 0.5x 起移除了 chat completions,只认 responses
+                // (https://github.com/openai/codex/discussions/7782;写 "chat" 会让 codex 启动即退出)
+                t["wire_api"] = value("responses");
                 doc["model_providers"][CODEX_PROVIDER_KEY] = Item::Table(t);
                 doc["model_provider"] = value(CODEX_PROVIDER_KEY);
                 let model = spec.default_model.trim();
                 if !model.is_empty() {
                     doc["model"] = value(model);
                 }
+
+                // 模型目录:有模型则写目录文件并用 model_catalog_json 引用,
+                // 让桌面选择器列出这些模型;没有则删目录键(回退内置模型)。
+                let catalog = Self::catalog_doc(&Self::catalog_slugs(spec));
+                let catalog_path = self.catalog_path(home);
+                if catalog.is_null() {
+                    doc.remove("model_catalog_json");
+                    let _ = std::fs::remove_file(&catalog_path);
+                } else {
+                    write_json(&catalog_path, &catalog)?;
+                    // codex 接受相对 CODEX_HOME 的路径;用文件名保持可移植。
+                    doc["model_catalog_json"] = value(CODEX_CATALOG_FILE);
+                }
+
                 let path = self.config_path(home);
                 if let Some(dir) = path.parent() {
                     std::fs::create_dir_all(dir)
@@ -558,6 +670,13 @@ impl ProviderAdapter for CodexProviderAdapter {
                 if doc.get("model_provider").and_then(|i| i.as_str()) == Some(CODEX_PROVIDER_KEY) {
                     doc.remove("model_provider");
                     doc.remove("model");
+                    removed = true;
+                }
+                // 目录键与目录文件一并移除,但只动我们下发的那份:值等于
+                // CODEX_CATALOG_FILE 才删,用户自配的 model_catalog_json 保留。
+                if doc.get("model_catalog_json").and_then(|i| i.as_str()) == Some(CODEX_CATALOG_FILE) {
+                    doc.remove("model_catalog_json");
+                    let _ = std::fs::remove_file(self.catalog_path(home));
                     removed = true;
                 }
                 if removed {
@@ -1986,7 +2105,7 @@ mod tests {
         let text = std::fs::read_to_string(home.path().join(codex_rel())).unwrap();
         assert!(text.contains("[model_providers.clawbox]"), "{}", text);
         assert!(text.contains("base_url = \"https://api.oa.example.com/v1\""), "{}", text);
-        assert!(text.contains("wire_api = \"chat\""), "{}", text);
+        assert!(text.contains("wire_api = \"responses\""), "{}", text);
         assert!(text.contains("model_provider = \"clawbox\""), "{}", text);
         assert!(text.contains("model = \"model-a\""), "{}", text);
         assert!(!text.contains("sk-secret"), "config.toml must not contain the key");
@@ -2100,6 +2219,122 @@ mod tests {
         let text = std::fs::read_to_string(home.path().join(codex_rel())).unwrap();
         assert!(text.contains("model = \"user-model\""), "{}", text);
         assert!(text.contains("model_provider = \"clawbox\""), "{}", text);
+    }
+
+    fn codex_catalog_rel() -> PathBuf {
+        PathBuf::from(".codex").join(CODEX_CATALOG_FILE)
+    }
+
+    #[test]
+    fn codex_writes_model_catalog_listing_configured_models() {
+        let home = TempHome::new();
+        let providers = vec![openai_provider()]; // models = [model-a, model-b]
+        let a = CodexProviderAdapter;
+        a.apply(home.path(), &providers, Some("p-oa"), &[]).unwrap();
+
+        let text = std::fs::read_to_string(home.path().join(codex_rel())).unwrap();
+        assert!(
+            text.contains(&format!("model_catalog_json = \"{}\"", CODEX_CATALOG_FILE)),
+            "{}",
+            text
+        );
+        let cat = read_json(home.path(), &[".codex", CODEX_CATALOG_FILE]);
+        let slugs: Vec<&str> = cat["models"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|m| m["slug"].as_str().unwrap())
+            .collect();
+        assert_eq!(slugs, vec!["model-a", "model-b"]);
+        // 首个模型 priority 最高(选择器排最前)。
+        assert!(cat["models"][0]["priority"].as_i64().unwrap() > cat["models"][1]["priority"].as_i64().unwrap());
+        // 必需但我们留空的字段:codex 会回退内置默认提示。
+        assert_eq!(cat["models"][0]["base_instructions"], json!(""));
+        assert_eq!(cat["models"][0]["shell_type"], json!("shell_command"));
+
+        // 幂等:二次 apply 无变更。
+        let managed = vec!["clawbox".to_string()];
+        assert_eq!(a.apply(home.path(), &providers, Some("p-oa"), &managed).unwrap(), 0);
+    }
+
+    #[test]
+    fn codex_catalog_includes_default_model_not_in_models_list() {
+        let home = TempHome::new();
+        let mut p = openai_provider();
+        p.models = vec!["listed-a".to_string()];
+        p.default_model = "solo-default".to_string();
+        let a = CodexProviderAdapter;
+        a.apply(home.path(), &[p], Some("p-oa"), &[]).unwrap();
+        let cat = read_json(home.path(), &[".codex", CODEX_CATALOG_FILE]);
+        let slugs: Vec<&str> = cat["models"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|m| m["slug"].as_str().unwrap())
+            .collect();
+        assert!(slugs.contains(&"listed-a"), "{:?}", slugs);
+        assert!(slugs.contains(&"solo-default"), "{:?}", slugs);
+    }
+
+    #[test]
+    fn codex_no_models_writes_no_catalog() {
+        let home = TempHome::new();
+        let mut p = openai_provider();
+        p.models = vec![];
+        p.default_model = String::new();
+        let a = CodexProviderAdapter;
+        a.apply(home.path(), &[p], Some("p-oa"), &[]).unwrap();
+        let text = std::fs::read_to_string(home.path().join(codex_rel())).unwrap();
+        assert!(!text.contains("model_catalog_json"), "{}", text);
+        assert!(!home.path().join(codex_catalog_rel()).exists());
+    }
+
+    #[test]
+    fn codex_model_change_triggers_update_and_rewrites_catalog() {
+        let home = TempHome::new();
+        let a = CodexProviderAdapter;
+        a.apply(home.path(), &[openai_provider()], Some("p-oa"), &[]).unwrap();
+
+        let mut p2 = openai_provider();
+        p2.models = vec!["model-a".to_string(), "model-c".to_string()];
+        let managed = vec!["clawbox".to_string()];
+        let changes = a.plan(home.path(), &[p2.clone()], Some("p-oa"), &managed).unwrap();
+        assert_eq!(changes[0].action, "update");
+        assert_eq!(a.apply(home.path(), &[p2], Some("p-oa"), &managed).unwrap(), 1);
+        let cat = read_json(home.path(), &[".codex", CODEX_CATALOG_FILE]);
+        let slugs: Vec<&str> = cat["models"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|m| m["slug"].as_str().unwrap())
+            .collect();
+        assert_eq!(slugs, vec!["model-a", "model-c"]);
+    }
+
+    #[test]
+    fn codex_remove_deletes_our_catalog_but_keeps_user_catalog() {
+        // 我们下发过 → remove 时目录键与文件都清掉。
+        let home = TempHome::new();
+        let a = CodexProviderAdapter;
+        let managed = vec!["clawbox".to_string()];
+        a.apply(home.path(), &[openai_provider()], Some("p-oa"), &[]).unwrap();
+        assert!(home.path().join(codex_catalog_rel()).exists());
+        // 无激活服务商 → 走 remove。
+        a.apply(home.path(), &[anthropic_provider()], Some("p-anth"), &managed).unwrap();
+        let text = std::fs::read_to_string(home.path().join(codex_rel())).unwrap();
+        assert!(!text.contains("model_catalog_json"), "{}", text);
+        assert!(!home.path().join(codex_catalog_rel()).exists());
+
+        // 用户自配的 model_catalog_json → remove 时保留。
+        let home = TempHome::new();
+        write_file(
+            home.path(),
+            &codex_rel(),
+            "model_provider = \"clawbox\"\nmodel = \"m\"\nmodel_catalog_json = \"my-own.json\"\n\n[model_providers.clawbox]\nname = \"x\"\n",
+        );
+        a.apply(home.path(), &[anthropic_provider()], Some("p-anth"), &managed).unwrap();
+        let text = std::fs::read_to_string(home.path().join(codex_rel())).unwrap();
+        assert!(text.contains("model_catalog_json = \"my-own.json\""), "{}", text);
     }
 
     #[test]
