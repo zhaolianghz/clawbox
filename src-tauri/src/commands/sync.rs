@@ -155,6 +155,70 @@ pub async fn agent_providers_get() -> Result<HashMap<String, String>, String> {
     Ok(load_config(&real_home())?.agent_providers)
 }
 
+/// 启动对账:对每个已绑定 agent 跑 plan,有漂移(ClawBox 升级改了下发格式、
+/// 或用户手改过 agent 配置文件)才按当前绑定重推。无漂移零写入——不产生
+/// 备份、不碰任何文件。静默执行:失败不打断启动,下次启动或用户在
+/// Providers/Agents 页操作时自然重试并可见报错。
+pub fn reconcile_bindings_at(home: &Path) -> Vec<ApplyResult> {
+    let Ok(config) = load_config(home) else {
+        return vec![];
+    };
+    let mut results = Vec::new();
+    for (agent_id, pid) in &config.agent_providers {
+        let Some(adapter) = providers::find_adapter(agent_id) else {
+            continue;
+        };
+        let Some(spec) = config.providers.iter().find(|p| &p.id == pid) else {
+            continue;
+        };
+        if !spec.enabled {
+            continue; // 绑定指向已禁用服务商:Agents 页已有「请重选」提示,不代用户做主
+        }
+        let bound = vec![spec.clone()];
+        let managed = config.providers_managed.get(agent_id).cloned().unwrap_or_default();
+        let drifted = match adapter.plan(home, &bound, Some(pid), &managed) {
+            Ok(changes) => changes
+                .iter()
+                .any(|c| c.action != "unchanged" && c.action != "skip"),
+            // 目标文件读不了/解析不了:不动它,留给用户操作路径显式报错。
+            Err(_) => false,
+        };
+        if !drifted {
+            continue;
+        }
+        match agent_provider_bind_at(home, agent_id, Some(pid.clone())) {
+            Ok(r) => results.push(r),
+            Err(e) => results.push(ApplyResult {
+                agent_id: agent_id.clone(),
+                ok: false,
+                backup_path: None,
+                applied: 0,
+                error: Some(e),
+            }),
+        }
+    }
+    results
+}
+
+/// 启动时后台跑一次对账(lib.rs setup 调用)。持 CONFIG_LOCK,与用户同时
+/// 触发的 config 命令互斥。
+pub fn reconcile_bindings_on_startup() {
+    std::thread::spawn(|| {
+        let _guard = crate::commands::config::CONFIG_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        for r in reconcile_bindings_at(&real_home()) {
+            if !r.ok {
+                eprintln!(
+                    "[clawbox] startup reconcile failed for {}: {}",
+                    r.agent_id,
+                    r.error.as_deref().unwrap_or("unknown error")
+                );
+            }
+        }
+    });
+}
+
 // ---- 技能(skills)统一同步:库管理 / 收编 / plan / apply --------------------
 
 /// 库列表 + 来源 join 的 home 参数化核心。
@@ -829,6 +893,49 @@ mod tests {
         let cfg = load_config(home.path()).unwrap();
         assert_eq!(cfg.agent_providers.get("claude-code").map(String::as_str), Some("p-anth"));
         assert_eq!(cfg.providers_managed.get("claude-code"), Some(&vec!["env".to_string()]));
+    }
+
+    // ---- reconcile_bindings_at:启动对账,漂移才重推 ----
+
+    #[test]
+    fn reconcile_noop_without_drift_and_repairs_hand_edited_config() {
+        let home = bind_home_with(vec![pspec(
+            "p1", "One", "https://one.example.com/anthropic", "",
+        )]);
+        agent_provider_bind_at(home.path(), "claude-code", Some("p1".to_string())).unwrap();
+
+        // 无漂移:零结果 = 零写入(不产生备份)
+        assert!(reconcile_bindings_at(home.path()).is_empty());
+
+        // 手改 agent 配置制造漂移 → 对账按绑定修复
+        let p = home.path().join(".claude").join("settings.json");
+        let text = fs::read_to_string(&p)
+            .unwrap()
+            .replace("one.example.com", "evil.example.com");
+        fs::write(&p, text).unwrap();
+        let results = reconcile_bindings_at(home.path());
+        assert_eq!(results.len(), 1);
+        assert!(results[0].ok, "{:?}", results[0].error);
+        let env = claude_env(home.path());
+        assert_eq!(
+            env.get("ANTHROPIC_BASE_URL").and_then(|v| v.as_str()),
+            Some("https://one.example.com/anthropic")
+        );
+    }
+
+    #[test]
+    fn reconcile_skips_disabled_provider_even_when_drifted() {
+        let home = bind_home_with(vec![pspec(
+            "p1", "One", "https://one.example.com/anthropic", "",
+        )]);
+        agent_provider_bind_at(home.path(), "claude-code", Some("p1".to_string())).unwrap();
+        let mut cfg = load_config(home.path()).unwrap();
+        cfg.providers[0].enabled = false;
+        crate::commands::config::save_config(home.path(), &cfg).unwrap();
+        let p = home.path().join(".claude").join("settings.json");
+        fs::write(&p, r#"{"env":{}}"#).unwrap();
+        // 禁用的服务商不代用户做主:Agents 页有「请重选」提示
+        assert!(reconcile_bindings_at(home.path()).is_empty());
     }
 
     #[test]

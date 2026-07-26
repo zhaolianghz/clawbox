@@ -11,6 +11,11 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_dialog::init())
+        .setup(|_app| {
+            // 启动对账:绑定过的 agent 配置若与期望漂移(升级/手改)则静默重推。
+            commands::sync::reconcile_bindings_on_startup();
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
             commands::aggregate::list_backends,
             commands::aggregate::gateway_status_all,

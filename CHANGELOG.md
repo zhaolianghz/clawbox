@@ -14,6 +14,11 @@ All notable changes to ClawBox are documented here. The format follows
   ones. `defaultModel` is included even when it isn't in the models list, so
   the `model =` line always resolves. Removing the binding deletes the file
   and key, but leaves any `model_catalog_json` you set yourself untouched.
+- **Startup reconciliation** — on launch, ClawBox re-checks every agent
+  binding and silently re-deploys when the agent's config has drifted from
+  what the binding expects (e.g. a ClawBox upgrade changed the deployed
+  format, or the file was hand-edited). No drift means no writes and no
+  backups; bindings to disabled providers are left alone.
 
 ### Fixed
 - **Codex `wire_api` set to `responses`** — Codex 0.5x removed chat
