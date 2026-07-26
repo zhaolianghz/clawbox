@@ -631,8 +631,9 @@ impl ProviderAdapter for CodexProviderAdapter {
                     let _ = std::fs::remove_file(&catalog_path);
                 } else {
                     write_json(&catalog_path, &catalog)?;
-                    // codex 接受相对 CODEX_HOME 的路径;用文件名保持可移植。
-                    doc["model_catalog_json"] = value(CODEX_CATALOG_FILE);
+                    // 必须绝对路径:codex 反序列化为 AbsolutePathBuf,
+                    // 相对路径会让 codex(含桌面版)启动即报错。
+                    doc["model_catalog_json"] = value(catalog_path.to_string_lossy().as_ref());
                 }
 
                 let path = self.config_path(home);
@@ -672,9 +673,14 @@ impl ProviderAdapter for CodexProviderAdapter {
                     doc.remove("model");
                     removed = true;
                 }
-                // 目录键与目录文件一并移除,但只动我们下发的那份:值等于
-                // CODEX_CATALOG_FILE 才删,用户自配的 model_catalog_json 保留。
-                if doc.get("model_catalog_json").and_then(|i| i.as_str()) == Some(CODEX_CATALOG_FILE) {
+                // 目录键与目录文件一并移除,但只动我们下发的那份:路径的文件名
+                // 等于 CODEX_CATALOG_FILE 才删,用户自配的 model_catalog_json 保留。
+                let ours = doc
+                    .get("model_catalog_json")
+                    .and_then(|i| i.as_str())
+                    .map(|p| Path::new(p).file_name() == Some(std::ffi::OsStr::new(CODEX_CATALOG_FILE)))
+                    .unwrap_or(false);
+                if ours {
                     doc.remove("model_catalog_json");
                     let _ = std::fs::remove_file(self.catalog_path(home));
                     removed = true;
@@ -2233,9 +2239,10 @@ mod tests {
         a.apply(home.path(), &providers, Some("p-oa"), &[]).unwrap();
 
         let text = std::fs::read_to_string(home.path().join(codex_rel())).unwrap();
+        let abs_catalog = home.path().join(codex_catalog_rel());
         assert!(
-            text.contains(&format!("model_catalog_json = \"{}\"", CODEX_CATALOG_FILE)),
-            "{}",
+            text.contains(&format!("model_catalog_json = \"{}\"", abs_catalog.display())),
+            "must reference the catalog by absolute path: {}",
             text
         );
         let cat = read_json(home.path(), &[".codex", CODEX_CATALOG_FILE]);
