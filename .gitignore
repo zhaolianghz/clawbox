@@ -28,3 +28,8 @@ npm-debug.log*
 *.tmp
 *.temp
 .gstack/
+
+# 本地工具目录
+.codegraph/
+.cursor/
+.orca/
