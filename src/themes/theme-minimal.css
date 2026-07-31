@@ -1,0 +1,211 @@
+/**
+ * Theme: Minimal Industrial
+ * 极简工业风 - 瑞士网格 + 机械终端美学
+ */
+
+/* 基础变量覆盖 */
+html[data-theme="minimal"] {
+  --bg-primary: #ffffff;
+  --bg-secondary: #f5f5f5;
+  --bg-tertiary: #eeeeee;
+  --bg-elevated: #ffffff;
+
+  --neon-cyan: #000000;
+  --neon-purple: #333333;
+  --neon-pink: #666666;
+  --neon-green: #000000;
+  --neon-orange: #333333;
+
+  --text-primary: #000000;
+  --text-secondary: #666666;
+  --text-muted: #999999;
+
+  --glow-cyan: none;
+  --glow-purple: none;
+  --glow-green: none;
+  --glow-pink: none;
+
+  --border-subtle: rgba(0, 0, 0, 0.08);
+  --border-strong: rgba(0, 0, 0, 0.15);
+  --hover-surface: rgba(0, 0, 0, 0.04);
+  --accent-teal: #000000;
+  --card-bg: #ffffff;
+  --card-border: rgba(0, 0, 0, 0.1);
+  --shadow-card: none;
+
+  --radius-sm: 0px;
+  --radius-md: 0px;
+  --radius-lg: 0px;
+  --radius-xl: 0px;
+}
+
+/* 全局背景 */
+html[data-theme="minimal"] body {
+  background-color: var(--bg-primary);
+  color: var(--text-primary);
+  font-family: 'SF Mono', 'Fira Code', 'JetBrains Mono', -apple-system, BlinkMacSystemFont, sans-serif;
+}
+
+/* 侧边栏 */
+html[data-theme="minimal"] .settings-menu {
+  background: var(--bg-primary);
+  border-right: 1px solid #000000;
+  box-shadow: none;
+}
+
+html[data-theme="minimal"] .menu-title {
+  color: #000000;
+  text-shadow: none;
+  font-family: 'SF Mono', 'Fira Code', monospace;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 2px;
+  border-bottom: 1px solid #000000;
+}
+
+html[data-theme="minimal"] .menu-item {
+  color: var(--text-secondary);
+  border: 1px solid transparent;
+  border-left: 3px solid transparent;
+  border-radius: 0;
+  font-family: 'SF Mono', 'Fira Code', monospace;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  transition: all 0.1s ease;
+}
+
+html[data-theme="minimal"] .menu-item:hover {
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+  border-color: transparent;
+  box-shadow: none;
+}
+
+html[data-theme="minimal"] .menu-item.active {
+  background: #000000;
+  color: #ffffff;
+  border-left-color: #ff0000;
+  box-shadow: none;
+}
+
+/* 按钮 */
+html[data-theme="minimal"] .neon-button,
+html[data-theme="minimal"] button {
+  background: #ffffff;
+  border: 1px solid #000000;
+  border-radius: 0;
+  color: #000000;
+  font-family: 'SF Mono', 'Fira Code', monospace;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 1.5px;
+  text-shadow: none;
+  box-shadow: none;
+  transition: all 0.1s ease;
+}
+
+html[data-theme="minimal"] .neon-button:hover,
+html[data-theme="minimal"] button:hover {
+  background: #000000;
+  color: #ffffff;
+  border-color: #000000;
+  box-shadow: none;
+}
+
+/* 卡片 */
+html[data-theme="minimal"] .glass-card {
+  background: #ffffff;
+  border: 1px solid #000000;
+  border-radius: 0;
+  box-shadow: none;
+}
+
+/* 输入框 */
+html[data-theme="minimal"] input,
+html[data-theme="minimal"] textarea,
+html[data-theme="minimal"] select {
+  background: #ffffff;
+  border: 1px solid #000000;
+  border-radius: 0;
+  color: #000000;
+  font-family: 'SF Mono', 'Fira Code', monospace;
+  font-size: 12px;
+}
+
+html[data-theme="minimal"] input:focus,
+html[data-theme="minimal"] textarea:focus,
+html[data-theme="minimal"] select:focus {
+  border-width: 2px;
+  box-shadow: none;
+}
+
+/* 标签 */
+html[data-theme="minimal"] .neon-badge {
+  background: transparent;
+  border: 1px solid #000000;
+  border-radius: 0;
+  color: #000000;
+  font-family: 'SF Mono', 'Fira Code', monospace;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  box-shadow: none;
+}
+
+/* 导航项 */
+html[data-theme="minimal"] .nav-item {
+  border-radius: 0;
+}
+
+html[data-theme="minimal"] .nav-item.active {
+  background: #000000;
+  color: #ffffff;
+  box-shadow: none;
+}
+
+/* 标签页 */
+html[data-theme="minimal"] .tab-button {
+  border-radius: 0;
+}
+
+html[data-theme="minimal"] .tab-button.active {
+  background: #000000;
+  border-color: #000000;
+  color: #ffffff;
+}
+
+/* 滚动条 */
+html[data-theme="minimal"] ::-webkit-scrollbar {
+  width: 8px;
+}
+
+html[data-theme="minimal"] ::-webkit-scrollbar-track {
+  background: var(--bg-secondary);
+}
+
+html[data-theme="minimal"] ::-webkit-scrollbar-thumb {
+  background: #000000;
+  border-radius: 0;
+}
+
+/* 主内容区 */
+html[data-theme="minimal"] .settings-content {
+  background: var(--bg-primary);
+}
+
+/* 页脚 */
+html[data-theme="minimal"] .menu-footer {
+  border-top: 1px solid #000000;
+}
+
+html[data-theme="minimal"] .lang-btn {
+  border: 1px solid var(--border-subtle);
+  border-radius: 0;
+}
+
+html[data-theme="minimal"] .lang-btn.active {
+  background: #000000;
+  border-color: #000000;
+  color: #ffffff;
+}

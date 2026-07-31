@@ -188,6 +188,7 @@
           </button>
         {/each}
       </div>
+      <!-- 风格主题选择器已移至「关于」页面 -->
     </div>
   </aside>
 
@@ -356,7 +357,6 @@
   .theme-switch { margin-top: 0.35rem; }
   .theme-btn { display: inline-flex; align-items: center; justify-content: center; padding: 0.32rem 0; }
   .theme-btn svg { width: 15px; height: 15px; }
-
   .settings-content {
     flex: 1;
     min-width: 0;

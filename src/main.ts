@@ -1,4 +1,7 @@
 import "./app.css";
+import "./themes/theme-cyberpunk.css";
+import "./themes/theme-minimal.css";
+import "./themes/theme-liquid-glass.css";
 import "./lib/i18n/index.ts";
 import { initTheme } from "./lib/theme";
 import { mount } from 'svelte';

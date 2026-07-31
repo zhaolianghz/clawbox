@@ -1,0 +1,226 @@
+/**
+ * Theme: Liquid Glass
+ * 液态玻璃风格 - 物理材质感 + 深度层次
+ */
+
+/* 基础变量覆盖 */
+html[data-theme="liquid-glass"] {
+  --bg-primary: #f0f4f8;
+  --bg-secondary: rgba(255, 255, 255, 0.6);
+  --bg-tertiary: rgba(255, 255, 255, 0.8);
+  --bg-elevated: rgba(255, 255, 255, 0.9);
+
+  --neon-cyan: #6366f1;
+  --neon-purple: #8b5cf6;
+  --neon-pink: #ec4899;
+  --neon-green: #10b981;
+  --neon-orange: #f59e0b;
+
+  --text-primary: #1e1b4b;
+  --text-secondary: #6b7280;
+  --text-muted: #9ca3af;
+
+  --glow-cyan: 0 4px 20px rgba(99, 102, 241, 0.2);
+  --glow-purple: 0 4px 20px rgba(139, 92, 246, 0.2);
+  --glow-green: 0 4px 20px rgba(16, 185, 129, 0.2);
+  --glow-pink: 0 4px 20px rgba(236, 72, 153, 0.2);
+
+  --border-subtle: rgba(255, 255, 255, 0.3);
+  --border-strong: rgba(255, 255, 255, 0.5);
+  --hover-surface: rgba(255, 255, 255, 0.4);
+  --accent-teal: #6366f1;
+  --card-bg: rgba(255, 255, 255, 0.25);
+  --card-border: rgba(255, 255, 255, 0.3);
+  --shadow-card: 0 4px 20px rgba(31, 38, 135, 0.1);
+
+  --radius-sm: 8px;
+  --radius-md: 14px;
+  --radius-lg: 20px;
+  --radius-xl: 28px;
+}
+
+/* 全局背景 - 渐变 */
+html[data-theme="liquid-glass"] body {
+  background: linear-gradient(135deg, #e0e7ff 0%, #f0f4f8 50%, #fef3c7 100%);
+  background-attachment: fixed;
+  color: var(--text-primary);
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'SF Pro Display', sans-serif;
+}
+
+/* 侧边栏 */
+html[data-theme="liquid-glass"] .settings-menu {
+  background: rgba(255, 255, 255, 0.25);
+  backdrop-filter: blur(20px) saturate(180%);
+  -webkit-backdrop-filter: blur(20px) saturate(180%);
+  border-right: 1px solid rgba(255, 255, 255, 0.3);
+  box-shadow: 0 4px 20px rgba(31, 38, 135, 0.1);
+}
+
+html[data-theme="liquid-glass"] .menu-title {
+  color: var(--text-primary);
+  text-shadow: none;
+  font-weight: 700;
+  font-size: 18px;
+  letter-spacing: -0.3px;
+}
+
+html[data-theme="liquid-glass"] .menu-item {
+  color: var(--text-secondary);
+  border: 1px solid transparent;
+  border-radius: 12px;
+  margin: 4px 8px;
+  font-weight: 500;
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+html[data-theme="liquid-glass"] .menu-item:hover {
+  background: rgba(255, 255, 255, 0.4);
+  color: var(--text-primary);
+  border-color: transparent;
+  box-shadow: none;
+}
+
+html[data-theme="liquid-glass"] .menu-item.active {
+  background: linear-gradient(135deg, #818cf8, #6366f1);
+  color: #ffffff;
+  border-color: transparent;
+  box-shadow: 0 4px 15px rgba(99, 102, 241, 0.3);
+}
+
+/* 按钮 */
+html[data-theme="liquid-glass"] .neon-button,
+html[data-theme="liquid-glass"] button {
+  background: rgba(255, 255, 255, 0.45);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  border: 1px solid rgba(255, 255, 255, 0.5);
+  border-radius: 14px;
+  color: var(--text-primary);
+  font-weight: 600;
+  text-shadow: none;
+  box-shadow: 0 2px 8px rgba(31, 38, 135, 0.08);
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+html[data-theme="liquid-glass"] .neon-button:hover,
+html[data-theme="liquid-glass"] button:hover {
+  background: rgba(255, 255, 255, 0.6);
+  box-shadow: 0 4px 20px rgba(31, 38, 135, 0.12);
+  transform: translateY(-1px);
+}
+
+/* 卡片 */
+html[data-theme="liquid-glass"] .glass-card {
+  background: rgba(255, 255, 255, 0.25);
+  backdrop-filter: blur(16px) saturate(180%);
+  -webkit-backdrop-filter: blur(16px) saturate(180%);
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  border-radius: 24px;
+  box-shadow: 0 4px 20px rgba(31, 38, 135, 0.1);
+  transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+html[data-theme="liquid-glass"] .glass-card:hover {
+  box-shadow: 0 8px 32px rgba(31, 38, 135, 0.15);
+  transform: translateY(-2px);
+  border-color: rgba(255, 255, 255, 0.5);
+}
+
+/* 输入框 */
+html[data-theme="liquid-glass"] input,
+html[data-theme="liquid-glass"] textarea,
+html[data-theme="liquid-glass"] select {
+  background: rgba(255, 255, 255, 0.4);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  border-radius: 16px;
+  color: var(--text-primary);
+  box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.03);
+}
+
+html[data-theme="liquid-glass"] input:focus,
+html[data-theme="liquid-glass"] textarea:focus,
+html[data-theme="liquid-glass"] select:focus {
+  border-color: #818cf8;
+  box-shadow: 0 0 0 4px rgba(99, 102, 241, 0.1), inset 0 2px 4px rgba(0, 0, 0, 0.03);
+}
+
+/* 标签 */
+html[data-theme="liquid-glass"] .neon-badge {
+  background: rgba(255, 255, 255, 0.4);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  border-radius: 20px;
+  color: var(--text-secondary);
+  font-weight: 600;
+  font-size: 12px;
+  box-shadow: none;
+}
+
+/* 导航项 */
+html[data-theme="liquid-glass"] .nav-item {
+  border-radius: 12px;
+  margin: 4px 8px;
+}
+
+html[data-theme="liquid-glass"] .nav-item.active {
+  background: linear-gradient(135deg, #818cf8, #6366f1);
+  color: #ffffff;
+  box-shadow: 0 4px 15px rgba(99, 102, 241, 0.3);
+}
+
+/* 标签页 */
+html[data-theme="liquid-glass"] .tab-button {
+  border-radius: 14px;
+}
+
+html[data-theme="liquid-glass"] .tab-button.active {
+  background: linear-gradient(135deg, rgba(129, 140, 248, 0.2), rgba(99, 102, 241, 0.1));
+  border-color: rgba(99, 102, 241, 0.3);
+  color: var(--neon-cyan);
+}
+
+/* 滚动条 */
+html[data-theme="liquid-glass"] ::-webkit-scrollbar {
+  width: 8px;
+}
+
+html[data-theme="liquid-glass"] ::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+html[data-theme="liquid-glass"] ::-webkit-scrollbar-thumb {
+  background: rgba(156, 163, 175, 0.4);
+  border-radius: 4px;
+}
+
+html[data-theme="liquid-glass"] ::-webkit-scrollbar-thumb:hover {
+  background: rgba(156, 163, 175, 0.6);
+}
+
+/* 主内容区 */
+html[data-theme="liquid-glass"] .settings-content {
+  background: transparent;
+}
+
+/* 页脚 */
+html[data-theme="liquid-glass"] .menu-footer {
+  border-top: 1px solid rgba(255, 255, 255, 0.3);
+}
+
+html[data-theme="liquid-glass"] .lang-btn {
+  background: rgba(255, 255, 255, 0.3);
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  border-radius: 10px;
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+}
+
+html[data-theme="liquid-glass"] .lang-btn.active {
+  background: linear-gradient(135deg, #818cf8, #6366f1);
+  border-color: transparent;
+  color: #ffffff;
+  box-shadow: 0 2px 8px rgba(99, 102, 241, 0.2);
+}

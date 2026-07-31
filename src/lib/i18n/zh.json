@@ -247,7 +247,11 @@
     "feedbackSubmitting": "提交中...",
     "feedbackThanks": "正在打开 GitHub —— 请在浏览器里用你的账号提交。",
     "feedbackHistory": "历史反馈",
-    "feedbackEmpty": "还没有提交过反馈。"
+    "feedbackEmpty": "还没有提交过反馈。",
+    "theme": "主题风格",
+    "themeCyberpunk": "赛博朋克霓虹暗色风格",
+    "themeMinimal": "简洁明快的浅色主题",
+    "themeLiquid": "液态玻璃渐变效果"
   },
   "agents": {
     "title": "Agent 管理",

@@ -1,11 +1,11 @@
 import { get, writable } from 'svelte/store';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 
-// 主题(皮肤)切换:跟随系统 / 浅色 / 深色。
+// 主题(皮肤)切换:跟随系统 / 浅色 / 深色 + 三种风格(cyberpunk/minimal/liquid-glass)。
 // 偏好存 localStorage('clawbox.theme'),启动时在 main.ts(mount 前)应用,避免首帧闪烁。
 // 与 i18n locale 的持久化模式一致。
 
-export type ThemeChoice = 'system' | 'light' | 'dark';
+export type ThemeChoice = 'system' | 'light' | 'dark' | 'cyberpunk' | 'minimal' | 'liquid-glass';
 type Resolved = 'light' | 'dark';
 
 const STORAGE_KEY = 'clawbox.theme';
@@ -14,14 +14,14 @@ const STORAGE_KEY = 'clawbox.theme';
 function initialChoice(): ThemeChoice {
   try {
     const s = localStorage.getItem(STORAGE_KEY);
-    if (s === 'system' || s === 'light' || s === 'dark') return s;
+    if (s === 'system' || s === 'light' || s === 'dark' || s === 'cyberpunk' || s === 'minimal' || s === 'liquid-glass') return s;
   } catch {
     /* localStorage 不可用 */
   }
   return 'system';
 }
 
-/** 用户当前选择(system|light|dark),UI 切换器绑定它 */
+/** 用户当前选择,UI 切换器绑定它 */
 export const themeChoice = writable<ThemeChoice>(initialChoice());
 
 function systemPrefersDark(): boolean {
@@ -32,10 +32,16 @@ function systemPrefersDark(): boolean {
   }
 }
 
-/** 把选择解析成实际明暗:system → 跟随系统,否则原值 */
+/** 把选择解析成实际明暗:system → 跟随系统,风格主题默认按 dark 处理 */
 function resolve(choice: ThemeChoice): Resolved {
   if (choice === 'system') return systemPrefersDark() ? 'dark' : 'light';
+  if (choice === 'cyberpunk' || choice === 'minimal' || choice === 'liquid-glass') return 'dark';
   return choice;
+}
+
+/** 是否是风格主题(非明暗主题) */
+export function isStyleTheme(choice: ThemeChoice): boolean {
+  return choice === 'cyberpunk' || choice === 'minimal' || choice === 'liquid-glass';
 }
 
 // 原生窗口背景色(RGB),需与 app.css 的 --bg-primary 保持一致。
@@ -50,7 +56,10 @@ const WINDOW_BG: Record<Resolved, [number, number, number]> = {
 function apply(choice: ThemeChoice): void {
   const r = resolve(choice);
   const el = document.documentElement;
-  el.setAttribute('data-theme', r);
+  // 风格主题使用 data-theme 属性,明暗主题也使用 data-theme
+  // 对于 system 选择,设置解析后的实际明暗值
+  const themeAttr = choice === 'system' ? r : choice;
+  el.setAttribute('data-theme', themeAttr);
   el.style.colorScheme = r;
   // 原生窗口背景随主题走(见 WINDOW_BG 注释)。非 Tauri 环境/权限缺失时静默失败。
   try {
@@ -66,7 +75,7 @@ export function setTheme(choice: ThemeChoice): void {
   try {
     localStorage.setItem(STORAGE_KEY, choice);
   } catch {
-    /* 忽略:存不了下次仍会走系统/默认 */
+    /* 忽略:存不了下次仍将走系统/默认 */
   }
   apply(choice);
 }

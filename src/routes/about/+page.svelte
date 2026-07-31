@@ -1,6 +1,7 @@
 <script lang="ts">
   import { _ } from 'svelte-i18n';
   import { open } from '@tauri-apps/plugin-shell';
+  import { themeChoice, setTheme, type ThemeChoice } from '$lib/theme';
 
   const REPO_URL = 'https://github.com/zhaolianghz/clawbox';
   // Feedback category -> existing GitHub label. Missing labels are ignored by
@@ -125,6 +126,38 @@
             {#if updateAvailable}🎉 {/if}{updateMessage}
           </div>
         {/if}
+      </div>
+    </div>
+    
+    <div class="info-section glass-card">
+      <h2>{$_('about.theme')}</h2>
+      <div class="theme-options">
+        {#each [
+          { id: 'cyberpunk', label: 'Cyberpunk', desc: 'about.themeCyberpunk' },
+          { id: 'minimal', label: 'Minimal', desc: 'about.themeMinimal' },
+          { id: 'liquid-glass', label: 'Liquid Glass', desc: 'about.themeLiquid' },
+        ] as opt (opt.id)}
+          <button
+            class="theme-option"
+            class:active={$themeChoice === opt.id}
+            onclick={() => setTheme(opt.id as ThemeChoice)}
+          >
+            <div class="theme-preview theme-{opt.id}">
+              <div class="preview-bar"></div>
+              <div class="preview-content">
+                <div class="preview-line"></div>
+                <div class="preview-line short"></div>
+              </div>
+            </div>
+            <div class="theme-info">
+              <span class="theme-name">{opt.label}</span>
+              <span class="theme-desc">{$_(opt.desc)}</span>
+            </div>
+            {#if $themeChoice === opt.id}
+              <span class="theme-check">✓</span>
+            {/if}
+          </button>
+        {/each}
       </div>
     </div>
     
@@ -400,5 +433,133 @@
   .feedback-thanks {
     color: var(--neon-green);
     font-size: 0.85rem;
+  }
+
+  /* Theme selector */
+  .theme-options {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 0.75rem;
+  }
+
+  .theme-option {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.75rem;
+    background: var(--bg-tertiary);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 0.75rem;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    position: relative;
+  }
+
+  .theme-option:hover {
+    border-color: var(--neon-cyan);
+    background: rgba(0, 245, 255, 0.05);
+  }
+
+  .theme-option.active {
+    border-color: var(--neon-cyan);
+    box-shadow: 0 0 0 1px var(--neon-cyan), var(--glow-cyan);
+  }
+
+  .theme-preview {
+    width: 100%;
+    aspect-ratio: 16 / 10;
+    border-radius: 0.5rem;
+    overflow: hidden;
+    position: relative;
+  }
+
+  .theme-preview .preview-bar {
+    height: 20%;
+    width: 100%;
+  }
+
+  .theme-preview .preview-content {
+    padding: 0.4rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.3rem;
+  }
+
+  .theme-preview .preview-line {
+    height: 4px;
+    border-radius: 2px;
+    width: 80%;
+  }
+
+  .theme-preview .preview-line.short {
+    width: 50%;
+  }
+
+  /* Cyberpunk preview */
+  .theme-cyberpunk {
+    background: #0a0a0f;
+  }
+  .theme-cyberpunk .preview-bar {
+    background: linear-gradient(90deg, #ff0055, #00f5ff);
+  }
+  .theme-cyberpunk .preview-line {
+    background: rgba(0, 245, 255, 0.4);
+  }
+
+  /* Minimal preview */
+  .theme-minimal {
+    background: #f6f7f9;
+  }
+  .theme-minimal .preview-bar {
+    background: #1a1a1a;
+  }
+  .theme-minimal .preview-line {
+    background: rgba(0, 0, 0, 0.2);
+  }
+
+  /* Liquid Glass preview */
+  .theme-liquid-glass {
+    background: linear-gradient(135deg, #e0e7ff 0%, #f3e8ff 100%);
+  }
+  .theme-liquid-glass .preview-bar {
+    background: linear-gradient(90deg, #6366f1, #a855f7);
+  }
+  .theme-liquid-glass .preview-line {
+    background: rgba(99, 102, 241, 0.3);
+  }
+
+  .theme-info {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0.15rem;
+  }
+
+  .theme-name {
+    font-size: 0.8rem;
+    font-weight: 600;
+    color: var(--text-primary);
+  }
+
+  .theme-desc {
+    font-size: 0.7rem;
+    color: var(--text-muted);
+  }
+
+  .theme-check {
+    position: absolute;
+    top: 0.4rem;
+    right: 0.4rem;
+    width: 18px;
+    height: 18px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: var(--neon-cyan);
+    color: #000;
+    border-radius: 50%;
+    font-size: 0.7rem;
+    font-weight: bold;
   }
 </style>

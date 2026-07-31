@@ -247,7 +247,11 @@
     "feedbackSubmitting": "Submitting...",
     "feedbackThanks": "Opening GitHub to file your report — submit it there under your account.",
     "feedbackHistory": "Previous Feedback",
-    "feedbackEmpty": "No feedback submitted yet."
+    "feedbackEmpty": "No feedback submitted yet.",
+    "theme": "Theme Style",
+    "themeCyberpunk": "Cyberpunk neon style with dark background",
+    "themeMinimal": "Clean minimal light theme",
+    "themeLiquid": "Liquid glass effect with soft gradients"
   },
   "agents": {
     "title": "Agent Management",

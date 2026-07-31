@@ -1,0 +1,180 @@
+/**
+ * Theme: Cyberpunk 2.0
+ * 赛博朋克风格 - 霓虹灯效 + 暗色背景
+ */
+
+/* 基础变量覆盖 */
+html[data-theme="cyberpunk"] {
+  --bg-primary: #0a0a0f;
+  --bg-secondary: #13131c;
+  --bg-tertiary: #1a1a28;
+  --bg-elevated: #22222f;
+
+  --neon-cyan: #00f5ff;
+  --neon-purple: #a855f7;
+  --neon-pink: #ec4899;
+  --neon-green: #10b981;
+  --neon-orange: #f59e0b;
+
+  --text-primary: #ffffff;
+  --text-secondary: #94a3b8;
+  --text-muted: #64748b;
+
+  --glow-cyan: 0 0 30px rgba(0, 245, 255, 0.4);
+  --glow-purple: 0 0 30px rgba(168, 85, 247, 0.4);
+  --glow-green: 0 0 20px rgba(16, 185, 129, 0.4);
+  --glow-pink: 0 0 20px rgba(236, 72, 153, 0.4);
+
+  --border-subtle: rgba(0, 245, 255, 0.15);
+  --border-strong: rgba(0, 245, 255, 0.3);
+  --hover-surface: rgba(0, 245, 255, 0.05);
+  --accent-teal: #5eead4;
+  --card-bg: linear-gradient(135deg, rgba(26, 26, 40, 0.9) 0%, rgba(18, 18, 28, 0.95) 100%);
+  --card-border: rgba(0, 245, 255, 0.2);
+  --shadow-card: 0 4px 24px rgba(0, 245, 255, 0.1), inset 0 1px 0 rgba(0, 245, 255, 0.1);
+
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 16px;
+  --radius-xl: 24px;
+}
+
+/* 全局背景 */
+html[data-theme="cyberpunk"] body {
+  background-color: var(--bg-primary);
+  color: var(--text-primary);
+}
+
+/* 扫描线效果 */
+html[data-theme="cyberpunk"] body::after {
+  content: '';
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  background: repeating-linear-gradient(
+    0deg,
+    transparent,
+    transparent 2px,
+    rgba(0, 245, 255, 0.015) 2px,
+    rgba(0, 245, 255, 0.015) 4px
+  );
+  z-index: 9999;
+}
+
+/* 侧边栏 */
+html[data-theme="cyberpunk"] .settings-menu {
+  background: var(--bg-secondary);
+  border-right: 1px solid var(--border-subtle);
+  box-shadow: 4px 0 20px rgba(0, 245, 255, 0.05);
+}
+
+html[data-theme="cyberpunk"] .menu-title {
+  color: var(--neon-cyan);
+  text-shadow: var(--glow-cyan);
+  font-family: 'Courier New', monospace;
+  letter-spacing: 2px;
+}
+
+html[data-theme="cyberpunk"] .menu-item {
+  color: var(--text-secondary);
+  border: 1px solid transparent;
+  transition: all 0.3s ease;
+}
+
+html[data-theme="cyberpunk"] .menu-item:hover {
+  background: rgba(0, 245, 255, 0.08);
+  border-color: rgba(0, 245, 255, 0.3);
+  color: var(--neon-cyan);
+  box-shadow: var(--glow-cyan);
+}
+
+html[data-theme="cyberpunk"] .menu-item.active {
+  background: linear-gradient(135deg, rgba(0, 245, 255, 0.15) 0%, rgba(168, 85, 247, 0.1) 100%);
+  color: var(--neon-cyan);
+  border-color: var(--neon-cyan);
+  box-shadow: var(--glow-cyan), inset 0 0 20px rgba(0, 245, 255, 0.1);
+}
+
+/* 按钮 */
+html[data-theme="cyberpunk"] .neon-button,
+html[data-theme="cyberpunk"] button {
+  background: linear-gradient(135deg, rgba(0, 245, 255, 0.15) 0%, rgba(0, 245, 255, 0.05) 100%);
+  border: 1px solid rgba(0, 245, 255, 0.3);
+  color: var(--neon-cyan);
+  text-shadow: 0 0 5px rgba(0, 245, 255, 0.5);
+  box-shadow: 0 0 10px rgba(0, 245, 255, 0.1);
+}
+
+html[data-theme="cyberpunk"] .neon-button:hover,
+html[data-theme="cyberpunk"] button:hover {
+  border-color: var(--neon-cyan);
+  box-shadow: var(--glow-cyan), inset 0 0 20px rgba(0, 245, 255, 0.1);
+}
+
+/* 卡片 */
+html[data-theme="cyberpunk"] .glass-card {
+  background: var(--card-bg);
+  border: 1px solid var(--card-border);
+  box-shadow: var(--shadow-card);
+}
+
+/* 输入框 */
+html[data-theme="cyberpunk"] input,
+html[data-theme="cyberpunk"] textarea,
+html[data-theme="cyberpunk"] select {
+  background: var(--bg-tertiary);
+  border: 1px solid rgba(0, 245, 255, 0.2);
+  color: var(--text-primary);
+}
+
+html[data-theme="cyberpunk"] input:focus,
+html[data-theme="cyberpunk"] textarea:focus,
+html[data-theme="cyberpunk"] select:focus {
+  border-color: var(--neon-cyan);
+  box-shadow: 0 0 0 3px rgba(0, 245, 255, 0.15), var(--glow-cyan);
+}
+
+/* 标签 */
+html[data-theme="cyberpunk"] .neon-badge {
+  background: rgba(0, 245, 255, 0.1);
+  border: 1px solid rgba(0, 245, 255, 0.2);
+  color: var(--neon-cyan);
+  box-shadow: 0 0 5px rgba(0, 245, 255, 0.1);
+}
+
+/* 导航项 */
+html[data-theme="cyberpunk"] .nav-item.active {
+  background: linear-gradient(135deg, rgba(0, 245, 255, 0.15) 0%, rgba(168, 85, 247, 0.1) 100%);
+  color: var(--neon-cyan);
+  box-shadow: inset 0 0 20px rgba(0, 245, 255, 0.1);
+}
+
+/* 标签页 */
+html[data-theme="cyberpunk"] .tab-button.active {
+  background: linear-gradient(135deg, rgba(0, 245, 255, 0.2) 0%, rgba(168, 85, 247, 0.1) 100%);
+  border-color: rgba(0, 245, 255, 0.3);
+  color: var(--neon-cyan);
+}
+
+/* 滚动条 */
+html[data-theme="cyberpunk"] ::-webkit-scrollbar-thumb {
+  background: var(--neon-cyan);
+  border-radius: 4px;
+}
+
+html[data-theme="cyberpunk"] ::-webkit-scrollbar-thumb:hover {
+  background: var(--neon-purple);
+}
+
+/* 动画 */
+html[data-theme="cyberpunk"] .animate-fade-in {
+  animation: fade-in 0.3s ease forwards;
+}
+
+@keyframes cyberpunk-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.7; }
+}

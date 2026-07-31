@@ -1,6 +1,8 @@
 @import "tailwindcss";
 
-:root {
+/* ===== 默认深色主题 (无 data-theme 或 data-theme="dark") ===== */
+:root:not([data-theme]),
+:root[data-theme="dark"] {
   --bg-primary: #0a0a0f;
   --bg-secondary: #13131c;
   --bg-tertiary: #1a1a28;
