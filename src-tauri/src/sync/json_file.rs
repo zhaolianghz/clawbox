@@ -66,6 +66,48 @@ pub fn opencode() -> JsonFileAdapter {
     }
 }
 
+pub fn gemini() -> JsonFileAdapter {
+    JsonFileAdapter {
+        id: "gemini",
+        rel: &[".gemini", "settings.json"],
+        servers_key: "mcpServers",
+        map: map_gemini,
+        skeleton: || json!({}),
+    }
+}
+
+/// qwen-code 是 gemini-cli fork,settings.json 的 mcpServers 格式一致。
+pub fn qwen_code() -> JsonFileAdapter {
+    JsonFileAdapter {
+        id: "qwen-code",
+        rel: &[".qwen", "settings.json"],
+        servers_key: "mcpServers",
+        map: map_gemini,
+        skeleton: || json!({}),
+    }
+}
+
+/// cline CLI 全局 MCP 配置(与 VS Code 扩展共享 agent core,但文件独立)。
+pub fn cline() -> JsonFileAdapter {
+    JsonFileAdapter {
+        id: "cline",
+        rel: &[".cline", "data", "settings", "cline_mcp_settings.json"],
+        servers_key: "mcpServers",
+        map: map_untyped,
+        skeleton: || json!({}),
+    }
+}
+
+pub fn copilot_cli() -> JsonFileAdapter {
+    JsonFileAdapter {
+        id: "copilot-cli",
+        rel: &[".copilot", "mcp-config.json"],
+        servers_key: "mcpServers",
+        map: map_copilot,
+        skeleton: || json!({}),
+    }
+}
+
 /// claude-code / codebuddy: `{"type":"stdio","command",...}` / `{"type":"http","url",...}`.
 fn map_typed(spec: &McpServerSpec) -> Result<Value, String> {
     match spec.kind.as_str() {
@@ -108,6 +150,38 @@ fn map_typed(spec: &McpServerSpec) -> Result<Value, String> {
 fn map_untyped(spec: &McpServerSpec) -> Result<Value, String> {
     let mut v = map_typed(spec)?;
     v.as_object_mut().unwrap().remove("type");
+    Ok(v)
+}
+
+/// gemini / qwen-code: stdio `{command,args,env}`(无 type),http 用 `httpUrl`。
+fn map_gemini(spec: &McpServerSpec) -> Result<Value, String> {
+    match spec.kind.as_str() {
+        "stdio" => map_untyped(spec),
+        "http" => {
+            let url = spec
+                .url
+                .as_deref()
+                .filter(|u| !u.is_empty())
+                .ok_or_else(|| "http server has no url".to_string())?;
+            let mut o = Map::new();
+            o.insert("httpUrl".into(), json!(url));
+            if !spec.headers.is_empty() {
+                o.insert("headers".into(), json!(spec.headers));
+            }
+            Ok(Value::Object(o))
+        }
+        other => Err(format!("unsupported server kind: {}", other)),
+    }
+}
+
+/// copilot-cli: stdio→type "local",http→type "http";tools 必填,"*" = 全部启用。
+fn map_copilot(spec: &McpServerSpec) -> Result<Value, String> {
+    let mut v = map_typed(spec)?;
+    let o = v.as_object_mut().unwrap();
+    if spec.kind == "stdio" {
+        o.insert("type".into(), json!("local"));
+    }
+    o.insert("tools".into(), json!(["*"]));
     Ok(v)
 }
 
@@ -268,7 +342,10 @@ mod tests {
     }
 
     fn all_adapters() -> Vec<JsonFileAdapter> {
-        vec![claude_code(), codebuddy(), cursor_agent(), opencode()]
+        vec![
+            claude_code(), codebuddy(), cursor_agent(), opencode(),
+            gemini(), qwen_code(), cline(), copilot_cli(),
+        ]
     }
 
     // -- generic suite, run against every JSON adapter ----------------------

@@ -15,6 +15,12 @@
     kimi: { bg: 'rgba(107, 87, 255, 0.2)', fg: '#8f7bff', initial: 'K' },
     qodercli: { bg: 'rgba(94, 92, 230, 0.2)', fg: '#7d7bff', initial: 'Q' },
     hermes: { bg: 'rgba(212, 160, 23, 0.18)', fg: '#d4a017', initial: 'H' },
+    gemini: { bg: 'rgba(66, 133, 244, 0.18)', fg: '#8ab4f8', initial: 'G' },
+    cline: { bg: 'rgba(158, 134, 255, 0.18)', fg: '#b3a1ff', initial: 'C' },
+    pi: { bg: 'rgba(251, 191, 36, 0.16)', fg: '#fbbf24', initial: 'π' },
+    'qwen-code': { bg: 'rgba(97, 92, 237, 0.2)', fg: '#8b87ff', initial: 'Q' },
+    'copilot-cli': { bg: 'rgba(139, 148, 158, 0.18)', fg: '#c9d1d9', initial: 'C' },
+    'trae-agent': { bg: 'rgba(240, 68, 86, 0.18)', fg: '#f87171', initial: 'T' },
   };
 
   const brand = $derived(
@@ -39,6 +45,18 @@
     <!-- 翅膀 -->
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round">
       <path d="M3 15c4 0 6-2 7-5 1 3 3 5 7 5M5 19c4 0 9-1 12-6M12 10V4"/>
+    </svg>
+  {:else if id === 'gemini'}
+    <!-- 四角星火花 -->
+    <svg viewBox="0 0 24 24" fill="currentColor" stroke="none">
+      <path d="M12 2c.9 5.2 4.8 9.1 10 10-5.2.9-9.1 4.8-10 10-.9-5.2-4.8-9.1-10-10 5.2-.9 9.1-4.8 10-10z"/>
+    </svg>
+  {:else if id === 'copilot-cli'}
+    <!-- 护目镜 -->
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+      <rect x="2.5" y="8.5" width="7.5" height="7" rx="2.5"/>
+      <rect x="14" y="8.5" width="7.5" height="7" rx="2.5"/>
+      <path d="M10 12h4" stroke-linecap="round"/>
     </svg>
   {:else}
     <span class="initial">{brand.initial}</span>

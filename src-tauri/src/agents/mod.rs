@@ -116,6 +116,52 @@ static AGENTS: &[AgentDef] = &[
         check_probe: &["--version"], depends_on: &[],
         docs_url: Some("https://github.com/NousResearch/hermes-agent"),
     },
+    AgentDef {
+        id: "gemini", label: "Gemini CLI", binary: "gemini",
+        kind: AgentKind::NativeCli,
+        install: InstallMethod::Npm { package: "@google/gemini-cli", force: false },
+        check_probe: &["--version"], depends_on: &[],
+        docs_url: Some("https://github.com/google-gemini/gemini-cli"),
+    },
+    AgentDef {
+        id: "cline", label: "Cline", binary: "cline",
+        kind: AgentKind::NativeCli,
+        install: InstallMethod::Npm { package: "cline", force: false },
+        check_probe: &["--version"], depends_on: &[],
+        docs_url: Some("https://docs.cline.bot/cline-cli/installation"),
+    },
+    AgentDef {
+        // badlogic/pi:npm 包已迁移为 @earendil-works/pi-coding-agent
+        // (旧名 @mariozechner/pi-coding-agent)。设计上不支持 MCP。
+        id: "pi", label: "Pi", binary: "pi",
+        kind: AgentKind::NativeCli,
+        install: InstallMethod::Npm { package: "@earendil-works/pi-coding-agent", force: false },
+        check_probe: &["--version"], depends_on: &[],
+        docs_url: Some("https://github.com/badlogic/pi-mono"),
+    },
+    AgentDef {
+        id: "qwen-code", label: "Qwen Code", binary: "qwen",
+        kind: AgentKind::NativeCli,
+        install: InstallMethod::Npm { package: "@qwen-code/qwen-code", force: false },
+        check_probe: &["--version"], depends_on: &[],
+        docs_url: Some("https://qwenlm.github.io/qwen-code-docs/"),
+    },
+    AgentDef {
+        id: "copilot-cli", label: "Copilot CLI", binary: "copilot",
+        kind: AgentKind::NativeCli,
+        install: InstallMethod::Npm { package: "@github/copilot", force: false },
+        check_probe: &["--version"], depends_on: &[],
+        docs_url: Some("https://docs.github.com/en/copilot/how-tos/copilot-cli"),
+    },
+    AgentDef {
+        // bytedance/trae-agent:不发 npm/PyPI,仅源码安装(clone + uv sync),
+        // 故 DetectOnly。注意 Trae IDE 无 CLI,这里接的是开源 trae-agent。
+        id: "trae-agent", label: "Trae Agent", binary: "trae-cli",
+        kind: AgentKind::NativeCli,
+        install: InstallMethod::DetectOnly,
+        check_probe: &["--version"], depends_on: &[],
+        docs_url: Some("https://github.com/bytedance/trae-agent"),
+    },
 ];
 
 pub fn agents() -> &'static [AgentDef] {
@@ -233,13 +279,13 @@ mod tests {
     use super::*;
 
     #[test]
-    fn registry_has_exactly_10_unique_entries() {
+    fn registry_has_exactly_16_unique_entries() {
         let ids: Vec<_> = agents().iter().map(|a| a.id).collect();
-        assert_eq!(ids.len(), 10);
+        assert_eq!(ids.len(), 16);
         let mut dedup = ids.clone();
         dedup.sort();
         dedup.dedup();
-        assert_eq!(dedup.len(), 10, "duplicate agent ids");
+        assert_eq!(dedup.len(), 16, "duplicate agent ids");
     }
 
     #[test]
@@ -247,6 +293,7 @@ mod tests {
         for id in [
             "node", "claude-code", "codex", "openclaw", "opencode", "codebuddy",
             "cursor-agent", "kimi", "qodercli", "hermes",
+            "gemini", "cline", "pi", "qwen-code", "copilot-cli", "trae-agent",
         ] {
             assert!(find_agent(id).is_some(), "missing agent: {}", id);
         }

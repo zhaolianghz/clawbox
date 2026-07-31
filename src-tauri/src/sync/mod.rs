@@ -133,6 +133,13 @@ pub fn adapters() -> &'static [Box<dyn ConfigAdapter>] {
                 Box::new(UnsupportedAdapter { id: "kimi" }),
                 Box::new(UnsupportedAdapter { id: "qodercli" }),
                 Box::new(cli::CliMcpAdapter { id: "hermes" }),
+                Box::new(json_file::gemini()),
+                Box::new(json_file::cline()),
+                Box::new(json_file::qwen_code()),
+                Box::new(json_file::copilot_cli()),
+                // pi 设计上不支持 MCP(官方:build CLI tools with READMEs)。
+                Box::new(UnsupportedAdapter { id: "pi" }),
+                Box::new(UnsupportedAdapter { id: "trae-agent" }),
             ]
         })
         .as_slice()
@@ -419,8 +426,8 @@ mod tests {
             );
         }
         assert!(find_adapter("node").is_none());
-        // 9 = 10 registry entries minus node.
-        assert_eq!(adapters().len(), 9);
+        // 15 = 16 registry entries minus node.
+        assert_eq!(adapters().len(), 15);
     }
 
     #[test]

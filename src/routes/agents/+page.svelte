@@ -11,6 +11,7 @@
 
   let agents = $state<AgentStatus[]>([]);
   let isLoading = $state(true);
+  let probing = $state(false); // 后台静默重探测中(有缓存兜底时不置 isLoading)
   let installing = $state<Record<string, boolean>>({});
   let confirming = $state<string | null>(null); // script 类两步确认:当前展开确认的 agent id
   let errors = $state<Record<string, string>>({});
@@ -18,16 +19,35 @@
   let checkingLatest = $state(false);
   let justUpgraded = $state<Record<string, boolean>>({}); // 升级成功后版本号短暂高亮
 
+  // 上次探测结果缓存:打开页面先渲染旧状态,探测(最慢的 CLI ~2s)后台跑完再覆盖
+  const STATUS_CACHE_KEY = 'clawbox.agents.status';
+
+  function readStatusCache(): AgentStatus[] | null {
+    try {
+      const raw = localStorage.getItem(STATUS_CACHE_KEY);
+      const parsed = raw ? (JSON.parse(raw) as AgentStatus[]) : null;
+      return Array.isArray(parsed) && parsed.length > 0 ? parsed : null;
+    } catch {
+      return null;
+    }
+  }
+
   async function refresh() {
-    isLoading = true;
+    // 有缓存兜底时静默刷新,不清列表不闪全屏 spinner
+    isLoading = agents.length === 0;
+    probing = true;
     try {
       const all = await agents_list();
       // Node.js 是运行时依赖,不是 agent;仅用于依赖检测,不在 agent 列表里展示。
       agents = all.filter((a) => a.kind !== 'runtime');
+      try {
+        localStorage.setItem(STATUS_CACHE_KEY, JSON.stringify(agents));
+      } catch { /* storage 满/禁用则下次仍走全屏加载 */ }
     } catch (e) {
       console.error('agents_list failed', e);
     } finally {
       isLoading = false;
+      probing = false;
     }
   }
 
@@ -42,6 +62,12 @@
   }
 
   onMount(async () => {
+    // 秒开:先渲染上次探测结果,真实探测后台进行
+    const cached = readStatusCache();
+    if (cached) {
+      agents = cached;
+      isLoading = false;
+    }
     await refresh();
     // 页面加载时只消费缓存(1h TTL 内零请求);强制刷新走「检查更新」按钮
     checkUpdates(false);
@@ -66,6 +92,11 @@
     codex: ['openai'],
     codebuddy: ['openai'],
     hermes: ['anthropic', 'openai'],
+    // gemini-cli 走 Gemini 协议,端点取 Anthropic 槽的网关根 URL
+    gemini: ['anthropic'],
+    // cline 经 `cline auth -p anthropic -b <url>`;pi 双协议,Anthropic 优先
+    cline: ['anthropic'],
+    pi: ['anthropic', 'openai'],
     opencode: ['openai', 'anthropic'],
     openclaw: ['anthropic', 'openai'],
     kimi: ['openai', 'anthropic'],
@@ -222,7 +253,8 @@
       {#if checkingLatest}<span class="spinner small"></span>{/if}
       {$_('agents.checkUpdates')}
     </button>
-    <button class="refresh-btn" onclick={refresh} disabled={isLoading}>
+    <button class="refresh-btn" onclick={refresh} disabled={probing}>
+      {#if probing}<span class="spinner small"></span>{/if}
       {$_('agents.refresh')}
     </button>
   </header>
