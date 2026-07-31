@@ -4,10 +4,22 @@
 
 import type { Localized } from './localized';
 
+/** 市场分类;chip 过滤用。official=官方参考实现,其余按用途分。 */
+export type McpCategory = 'official' | 'dev' | 'browser' | 'productivity' | 'data';
+
+export const MCP_CATEGORIES: Array<{ id: McpCategory; label: Localized }> = [
+  { id: 'official', label: { en: 'Official', zh: '官方' } },
+  { id: 'dev', label: { en: 'Dev', zh: '开发' } },
+  { id: 'browser', label: { en: 'Browser', zh: '浏览器' } },
+  { id: 'productivity', label: { en: 'Productivity', zh: '效率' } },
+  { id: 'data', label: { en: 'Data', zh: '数据' } },
+];
+
 export interface McpCatalogEntry {
   id: string;
   name: string;
   description: Localized;
+  category: McpCategory;
   kind: 'stdio' | 'http';
   command?: string;
   args?: string[];
@@ -20,6 +32,7 @@ export interface McpCatalogEntry {
 export const MCP_CATALOG: McpCatalogEntry[] = [
   {
     id: 'filesystem',
+    category: 'official',
     name: 'Filesystem',
     description: {
       en: 'Official filesystem server: read/write/search local files. Last arg is the allowed directory (defaults to ~, narrow it down)',
@@ -32,6 +45,7 @@ export const MCP_CATALOG: McpCatalogEntry[] = [
   },
   {
     id: 'memory',
+    category: 'official',
     name: 'Memory',
     description: {
       en: 'Official knowledge-graph memory server: persists entities/relations/observations across sessions',
@@ -44,6 +58,7 @@ export const MCP_CATALOG: McpCatalogEntry[] = [
   },
   {
     id: 'sequential-thinking',
+    category: 'official',
     name: 'Sequential Thinking',
     description: {
       en: 'Official structured-thinking server: step-by-step reasoning with branching and revision',
@@ -56,6 +71,7 @@ export const MCP_CATALOG: McpCatalogEntry[] = [
   },
   {
     id: 'everything',
+    category: 'official',
     name: 'Everything',
     description: {
       en: 'Official reference server covering every MCP feature — great for debugging clients',
@@ -68,6 +84,7 @@ export const MCP_CATALOG: McpCatalogEntry[] = [
   },
   {
     id: 'fetch',
+    category: 'official',
     name: 'Fetch',
     description: {
       en: 'Official web fetch server: fetches URLs as Markdown (Python implementation, requires uv)',
@@ -80,6 +97,7 @@ export const MCP_CATALOG: McpCatalogEntry[] = [
   },
   {
     id: 'playwright',
+    category: 'browser',
     name: 'Playwright',
     description: {
       en: "Microsoft's official browser automation: drives a real browser via the accessibility tree",
@@ -92,6 +110,7 @@ export const MCP_CATALOG: McpCatalogEntry[] = [
   },
   {
     id: 'context7',
+    category: 'dev',
     name: 'Context7',
     description: {
       en: 'Up-to-date library docs by Upstash: version-specific API documentation (API key optional)',
@@ -104,6 +123,7 @@ export const MCP_CATALOG: McpCatalogEntry[] = [
   },
   {
     id: 'github',
+    category: 'dev',
     name: 'GitHub',
     description: {
       en: 'GitHub official remote server: repos/issues/PRs. Set the Authorization header to "Bearer <PAT>"',
@@ -113,5 +133,92 @@ export const MCP_CATALOG: McpCatalogEntry[] = [
     url: 'https://api.githubcopilot.com/mcp/',
     envHint: ['Authorization'],
     docsUrl: 'https://github.com/github/github-mcp-server',
+  },
+  {
+    id: 'chrome-devtools',
+    category: 'browser',
+    name: 'Chrome DevTools',
+    description: {
+      en: "Google's official DevTools server: performance traces, network/console inspection, screenshots in a real Chrome",
+      zh: 'Google 官方 DevTools 服务器:在真实 Chrome 中做性能 trace、网络/console 检查、截图',
+    },
+    kind: 'stdio',
+    command: 'npx',
+    args: ['-y', 'chrome-devtools-mcp@latest'],
+    docsUrl: 'https://github.com/ChromeDevTools/chrome-devtools-mcp',
+  },
+  {
+    id: 'deepwiki',
+    category: 'dev',
+    name: 'DeepWiki',
+    description: {
+      en: 'Cognition (Devin) official remote server: ask questions about any public GitHub repo. Free, no auth required',
+      zh: 'Cognition(Devin)官方远程服务器:向任意 GitHub 公开仓库提问。免费,无需认证',
+    },
+    kind: 'http',
+    url: 'https://mcp.deepwiki.com/mcp',
+    docsUrl: 'https://docs.devin.ai/work-with-devin/deepwiki-mcp',
+  },
+  {
+    id: 'supabase',
+    category: 'data',
+    name: 'Supabase',
+    description: {
+      en: 'Supabase official server: tables, SQL, logs. Read-only prefilled; requires a personal access token',
+      zh: 'Supabase 官方服务器:表管理、SQL、日志。已预填只读模式;需要 personal access token',
+    },
+    kind: 'stdio',
+    command: 'npx',
+    args: ['-y', '@supabase/mcp-server-supabase@latest', '--read-only'],
+    envHint: ['SUPABASE_ACCESS_TOKEN'],
+    docsUrl: 'https://github.com/supabase/mcp',
+  },
+  {
+    id: 'figma',
+    category: 'productivity',
+    name: 'Figma',
+    description: {
+      en: 'Figma official remote server: Dev Mode design context and design-to-code. Sign in via OAuth in your agent',
+      zh: 'Figma 官方远程服务器:Dev Mode 设计上下文与 design-to-code。在 agent 内通过 OAuth 登录',
+    },
+    kind: 'http',
+    url: 'https://mcp.figma.com/mcp',
+    docsUrl: 'https://help.figma.com/hc/en-us/articles/32132100833559-Guide-to-the-Figma-MCP-server',
+  },
+  {
+    id: 'sentry',
+    category: 'dev',
+    name: 'Sentry',
+    description: {
+      en: 'Sentry official remote server: query errors and analyze issues. OAuth sign-in in your agent',
+      zh: 'Sentry 官方远程服务器:查询错误、分析 issue。在 agent 内通过 OAuth 登录',
+    },
+    kind: 'http',
+    url: 'https://mcp.sentry.dev/mcp',
+    docsUrl: 'https://github.com/getsentry/sentry-mcp',
+  },
+  {
+    id: 'linear',
+    category: 'productivity',
+    name: 'Linear',
+    description: {
+      en: 'Linear official remote server: issues/projects. OAuth sign-in; a read-only endpoint /mcp/readonly also exists',
+      zh: 'Linear 官方远程服务器:issue/项目管理。OAuth 登录;另有只读端点 /mcp/readonly',
+    },
+    kind: 'http',
+    url: 'https://mcp.linear.app/mcp',
+    docsUrl: 'https://linear.app/docs/mcp',
+  },
+  {
+    id: 'notion',
+    category: 'productivity',
+    name: 'Notion',
+    description: {
+      en: 'Notion official remote server: pages/databases. OAuth only — bearer tokens are not supported',
+      zh: 'Notion 官方远程服务器:页面/数据库操作。仅支持 OAuth,不支持直接填 token',
+    },
+    kind: 'http',
+    url: 'https://mcp.notion.com/mcp',
+    docsUrl: 'https://developers.notion.com/guides/mcp/get-started-with-mcp',
   },
 ];

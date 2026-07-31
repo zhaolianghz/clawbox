@@ -78,7 +78,22 @@
   },
   "mcp": {
     "title": "MCP Servers",
-    "description": "Configure MCP servers once, then sync them to every agent",
+    "description": "Discover and install MCP servers, then sync them to every agent",
+    "tabs": {
+      "market": "Marketplace",
+      "mine": "Configured"
+    },
+    "market": {
+      "all": "All",
+      "search": "Search MCP...",
+      "empty": "No matching MCP",
+      "add": "Add",
+      "added": "Added",
+      "manage": "Manage →",
+      "paramsHint": "Required: {keys}",
+      "paramsRequired": "Please fill in all required fields",
+      "confirmAdd": "Confirm"
+    },
     "addServer": "Add Server",
     "editServer": "Edit Server",
     "syncToAgents": "Sync to Agents",
@@ -353,7 +368,15 @@
       "hasUpdate": "Update available",
       "update": "Update",
       "missingInSource": "Removed from source",
-      "selectAll": "Select all"
+      "selectAll": "Select all",
+      "categories": {
+        "official": "Official",
+        "dev": "Software Development",
+        "web": "Web & Frontend",
+        "ops": "Infrastructure & DevOps",
+        "content": "Content Creation",
+        "research": "Research & Knowledge"
+      }
     },
     "memorySync": {
       "hint": "Injected into each agent instruction file as a managed block; content outside the block is untouched",

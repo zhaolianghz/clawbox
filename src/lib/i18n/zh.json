@@ -78,7 +78,22 @@
   },
   "mcp": {
     "title": "MCP 服务器",
-    "description": "一处配置 MCP 服务器,统一同步到所有 agent",
+    "description": "发现、安装 MCP 服务器,统一同步到所有 agent",
+    "tabs": {
+      "market": "市场",
+      "mine": "已配置"
+    },
+    "market": {
+      "all": "全部",
+      "search": "搜索 MCP...",
+      "empty": "没有匹配的 MCP",
+      "add": "添加",
+      "added": "已添加",
+      "manage": "去管理 →",
+      "paramsHint": "需要填写:{keys}",
+      "paramsRequired": "请填写所有必填项",
+      "confirmAdd": "确认添加"
+    },
     "addServer": "添加服务器",
     "editServer": "编辑服务器",
     "syncToAgents": "同步到 Agent",
@@ -353,7 +368,15 @@
       "hasUpdate": "有更新",
       "update": "更新",
       "missingInSource": "源中已移除",
-      "selectAll": "全选"
+      "selectAll": "全选",
+      "categories": {
+        "official": "官方",
+        "dev": "软件开发",
+        "web": "Web / 前端",
+        "ops": "基础设施 / DevOps",
+        "content": "内容创作",
+        "research": "研究 / 知识管理"
+      }
     },
     "memorySync": {
       "hint": "内容将以托管区块注入各 agent 指令文件(CLAUDE.md / AGENTS.md 等),区块外内容不受影响",

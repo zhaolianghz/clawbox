@@ -11,7 +11,7 @@
     type NamedServer, type ParseIssue,
   } from '$lib/api/mcpJson';
   import { agents_list } from '$lib/api/agents';
-  import { MCP_CATALOG, type McpCatalogEntry } from '$lib/data/mcpCatalog';
+  import { MCP_CATALOG, MCP_CATEGORIES, type McpCatalogEntry, type McpCategory } from '$lib/data/mcpCatalog';
   import { localize } from '$lib/data/localized';
   import AgentLogo from '$lib/components/AgentLogo.svelte';
 
@@ -20,6 +20,80 @@
   let isLoading = $state(true);
   let listError = $state('');
   let deleting = $state<string | null>(null); // 两步删除确认:当前展开确认的服务器名
+
+  // ---------- 市场 / 已配置 Tab ----------
+  let activeTab = $state<'market' | 'mine'>('market');
+  let marketCat = $state<McpCategory | 'all'>('all');
+  let marketQuery = $state('');
+  /** 当前展开补参迷你表单的目录条目 id(一次只开一个) */
+  let paramOpenId = $state<string | null>(null);
+  let paramValues = $state<Record<string, string>>({});
+  let cardBusy = $state<Record<string, boolean>>({});
+  let cardError = $state<Record<string, string>>({});
+
+  const marketEntries = $derived.by(() => {
+    const q = marketQuery.trim().toLowerCase();
+    return MCP_CATALOG.filter((c) => {
+      if (marketCat !== 'all' && c.category !== marketCat) return false;
+      if (!q) return true;
+      return (
+        c.name.toLowerCase().includes(q) ||
+        c.id.includes(q) ||
+        localize(c.description, $locale).toLowerCase().includes(q)
+      );
+    });
+  });
+
+  /** 目录条目 → spec;补参值 stdio 进 env,http 进 headers */
+  function specFromCatalog(c: McpCatalogEntry, params: Record<string, string>): McpServerSpec {
+    return {
+      kind: c.kind,
+      command: c.kind === 'stdio' ? (c.command ?? '') : null,
+      args: c.kind === 'stdio' ? [...(c.args ?? [])] : [],
+      env: c.kind === 'stdio' ? params : {},
+      url: c.kind === 'http' ? (c.url ?? '') : null,
+      headers: c.kind === 'http' ? params : {},
+      enabled: true,
+    };
+  }
+
+  /** 点市场卡片「添加」:无必填参直接入库,有则展开补参表单 */
+  async function marketAdd(c: McpCatalogEntry) {
+    const hints = c.envHint ?? [];
+    if (hints.length > 0) {
+      paramOpenId = paramOpenId === c.id ? null : c.id;
+      paramValues = Object.fromEntries(hints.map((k) => [k, '']));
+      cardError = { ...cardError, [c.id]: '' };
+      return;
+    }
+    await doMarketAdd(c, {});
+  }
+
+  /** 补参表单确认(所有键必填) */
+  async function marketAddWithParams(c: McpCatalogEntry) {
+    const hints = c.envHint ?? [];
+    if (hints.some((k) => !paramValues[k]?.trim())) {
+      cardError = { ...cardError, [c.id]: $_('mcp.market.paramsRequired') };
+      return;
+    }
+    await doMarketAdd(c, Object.fromEntries(hints.map((k) => [k, paramValues[k].trim()])));
+  }
+
+  async function doMarketAdd(c: McpCatalogEntry, params: Record<string, string>) {
+    if (cardBusy[c.id]) return;
+    cardBusy = { ...cardBusy, [c.id]: true };
+    cardError = { ...cardError, [c.id]: '' };
+    try {
+      await config_mcp_upsert(c.id, specFromCatalog(c, params));
+      paramOpenId = null;
+      await refresh();
+      quickSync = syncStage === 'closed'; // 入库成功 → 去同步快捷入口
+    } catch (e) {
+      cardError = { ...cardError, [c.id]: String(e) };
+    } finally {
+      cardBusy = { ...cardBusy, [c.id]: false };
+    }
+  }
 
   const serverNames = $derived(Object.keys(servers).sort());
 
@@ -34,6 +108,12 @@
     hermes: 'Hermes',
     kimi: 'Kimi CLI',
     qodercli: 'Qoder CLI',
+    gemini: 'Gemini CLI',
+    cline: 'Cline',
+    pi: 'Pi',
+    'qwen-code': 'Qwen Code',
+    'copilot-cli': 'Copilot CLI',
+    'trae-agent': 'Trae Agent',
   };
   let agentLabels = $state<Record<string, string>>({});
 
@@ -169,10 +249,10 @@
   function closeEditor() {
     editorOpen = false;
     editingName = null;
-    catalogHint = [];
   }
 
   function openAdd() {
+    activeTab = 'mine'; // 手动添加的表单挂在已配置网格顶部
     // 再次点击「添加服务器」时收起
     if (editorOpen && editingName === null) {
       closeEditor();
@@ -190,32 +270,7 @@
     formError = '';
     editorMode = 'form';
     jsonText = '';
-    catalogHint = [];
     editorOpen = true;
-  }
-
-  // ---------- 精选目录:点卡片 = 切表单模式并预填,用户可改后保存 ----------
-  let catalogHint = $state<string[]>([]); // 当前预填条目需要用户自填的键名(提示行)
-
-  function pickCatalog(c: McpCatalogEntry) {
-    editorMode = 'form';
-    formError = '';
-    formName = c.id;
-    formKind = c.kind;
-    formCommand = c.command ?? '';
-    formArgs = (c.args ?? []).join('\n');
-    formUrl = c.url ?? '';
-    formEnabled = true;
-    // envHint:stdio 预填 env 键名,http 预填 header 键名;值留空由用户填
-    if (c.kind === 'stdio') {
-      formEnv = (c.envHint ?? []).map((key) => ({ key, value: '' }));
-      formHeaders = [];
-    } else {
-      formHeaders = (c.envHint ?? []).map((key) => ({ key, value: '' }));
-      formEnv = [];
-    }
-    jsonText = '';
-    catalogHint = c.envHint ?? [];
   }
 
   function openEdit(name: string) {
@@ -521,32 +576,6 @@
   <div class="editor-panel glass-card">
     <h3>{editingName === null ? $_('mcp.addServer') : $_('mcp.editServer')}</h3>
 
-    <!-- 精选目录:仅添加模式;点卡片一键预填,已配置同名的置灰 -->
-    {#if editingName === null}
-      <div class="featured-row">
-        {#each MCP_CATALOG as c (c.id)}
-          {@const added = !!servers[c.id]}
-          <button
-            type="button"
-            class="source-card"
-            class:sel={!added && formName === c.id}
-            disabled={added}
-            title={c.docsUrl}
-            onclick={() => pickCatalog(c)}
-          >
-            <span class="source-name">
-              {c.name}
-              {#if added}<span class="added-badge">{$_('mcp.form.catalogAdded')}</span>{/if}
-            </span>
-            <span class="source-desc">{localize(c.description, $locale)}</span>
-          </button>
-        {/each}
-      </div>
-      {#if catalogHint.length > 0}
-        <p class="catalog-hint">{$_('mcp.form.catalogEnvHint', { values: { keys: catalogHint.join(', ') } })}</p>
-      {/if}
-    {/if}
-
     <div class="form-row">
       <div class="kind-switch" role="tablist">
         <button class="chip" class:active={editorMode === 'form'} onclick={() => switchMode('form')}>
@@ -846,6 +875,91 @@
     </div>
   {/if}
 
+  <!-- 市场 / 已配置 Tab 栏 -->
+  <div class="tabs" role="tablist">
+    <button class="tab" class:active={activeTab === 'market'} role="tab" onclick={() => (activeTab = 'market')}>
+      {$_('mcp.tabs.market')}
+    </button>
+    <button class="tab" class:active={activeTab === 'mine'} role="tab" onclick={() => (activeTab = 'mine')}>
+      {$_('mcp.tabs.mine')}<span class="tab-count">{serverNames.length}</span>
+    </button>
+  </div>
+
+  {#if activeTab === 'market'}
+    <!-- 市场:分类 chip + 搜索 + 目录卡片网格 -->
+    <div class="filter-row">
+      <button class="chip" class:active={marketCat === 'all'} onclick={() => (marketCat = 'all')}>
+        {$_('mcp.market.all')}
+      </button>
+      {#each MCP_CATEGORIES as cat (cat.id)}
+        <button class="chip" class:active={marketCat === cat.id} onclick={() => (marketCat = cat.id)}>
+          {localize(cat.label, $locale)}
+        </button>
+      {/each}
+      <input
+        class="market-search"
+        type="text"
+        bind:value={marketQuery}
+        placeholder={$_('mcp.market.search')}
+      />
+    </div>
+
+    <div class="server-grid">
+      {#if marketEntries.length === 0}
+        <div class="grid-span glass-card empty"><p>{$_('mcp.market.empty')}</p></div>
+      {:else}
+        {#each marketEntries as c (c.id)}
+          {@const added = !!servers[c.id]}
+          <div class="glass-card market-card" class:param-open={paramOpenId === c.id}>
+            <div class="server-title">
+              <span class="server-name">{c.name}</span>
+              <span class="kind-badge kind-{c.kind}">{c.kind}</span>
+              <a
+                class="docs-link"
+                href={c.docsUrl}
+                target="_blank"
+                rel="noreferrer"
+                title={c.docsUrl}
+              >↗ docs</a>
+            </div>
+            <p class="market-desc">{localize(c.description, $locale)}</p>
+            {#if paramOpenId === c.id && !added}
+              <!-- 补参迷你表单:只列必填键 -->
+              <div class="mini-form">
+                <span class="mini-hint">{$_('mcp.market.paramsHint', { values: { keys: (c.envHint ?? []).join(', ') } })}</span>
+                {#each c.envHint ?? [] as key (key)}
+                  <input type="text" placeholder={key} bind:value={paramValues[key]} />
+                {/each}
+                {#if cardError[c.id]}<span class="error-text">{cardError[c.id]}</span>{/if}
+                <div class="mini-actions">
+                  <button class="btn small" onclick={() => (paramOpenId = null)}>{$_('mcp.cancel')}</button>
+                  <button class="btn primary small" onclick={() => marketAddWithParams(c)} disabled={cardBusy[c.id]}>
+                    {#if cardBusy[c.id]}<span class="spinner small"></span>{/if}
+                    {$_('mcp.market.confirmAdd')}
+                  </button>
+                </div>
+              </div>
+            {:else}
+              <div class="server-actions">
+                {#if added}
+                  <span class="added-badge">✓ {$_('mcp.market.added')}</span>
+                  <span class="spacer"></span>
+                  <button class="manage-link" onclick={() => (activeTab = 'mine')}>{$_('mcp.market.manage')}</button>
+                {:else}
+                  <button class="btn primary small" onclick={() => marketAdd(c)} disabled={cardBusy[c.id]}>
+                    {#if cardBusy[c.id]}<span class="spinner small"></span>{/if}
+                    + {$_('mcp.market.add')}
+                  </button>
+                  {#if cardError[c.id]}<span class="error-text">{cardError[c.id]}</span>{/if}
+                {/if}
+              </div>
+            {/if}
+          </div>
+        {/each}
+      {/if}
+    </div>
+  {:else}
+
   <!-- 新增表单:列表顶部展开 -->
   {#if editorOpen && editingName === null}
     {@render editorPanel()}
@@ -898,6 +1012,7 @@
       {/each}
     {/if}
   </div>
+  {/if}
 </div>
 
 <style>
@@ -995,23 +1110,62 @@
   .form-row input:focus, .form-row textarea:focus { border-color: var(--neon-cyan); }
   .form-row input:disabled { opacity: 0.5; }
 
-  /* 精选目录卡片行(同技能安装区精选源样式) */
-  .featured-row { display: flex; gap: 0.5rem; flex-wrap: wrap; }
-  .source-card {
-    flex: 1; min-width: 170px; max-width: 300px; text-align: left; cursor: pointer;
-    display: flex; flex-direction: column; gap: 0.2rem;
-    background: var(--bg-tertiary); border: 1px solid rgba(255,255,255,0.1);
-    border-radius: 0.5rem; padding: 0.55rem 0.7rem; color: var(--text-primary);
+  /* 市场 / 已配置 Tab 栏 */
+  .tabs { display: flex; gap: 0.3rem; border-bottom: 1px solid rgba(255,255,255,0.08); }
+  .tab {
+    padding: 0.5rem 1.1rem; font-size: 0.88rem; cursor: pointer;
+    background: transparent; border: none; color: var(--text-secondary);
+    border-bottom: 2px solid transparent; margin-bottom: -1px;
   }
-  .source-card:hover { border-color: rgba(0,245,255,0.4); }
-  .source-card.sel { border-color: var(--neon-cyan); background: rgba(0,245,255,0.06); }
-  .source-card:disabled { opacity: 0.5; cursor: default; }
-  .source-card:disabled:hover { border-color: rgba(255,255,255,0.1); }
-  .source-name { font-weight: 600; font-size: 0.8rem; display: flex; align-items: center; gap: 0.4rem; }
-  .source-desc { font-size: 0.7rem; color: var(--text-muted); }
+  .tab:hover { color: var(--text-primary); }
+  .tab.active { color: var(--neon-cyan); border-bottom-color: var(--neon-cyan); }
+  .tab-count {
+    font-size: 0.68rem; padding: 0.05rem 0.5rem; margin-left: 0.35rem;
+    border-radius: 999px; background: rgba(255,255,255,0.08);
+  }
+
+  /* 市场过滤行 */
+  .filter-row { display: flex; gap: 0.45rem; align-items: center; flex-wrap: wrap; }
+  .market-search {
+    margin-left: auto; width: 200px;
+    background: var(--bg-tertiary); border: 1px solid rgba(255,255,255,0.1); border-radius: 0.4rem;
+    padding: 0.35rem 0.7rem; color: var(--text-primary); font-size: 0.8rem; outline: none;
+  }
+  .market-search:focus { border-color: var(--neon-cyan); }
+
+  /* 市场卡片 */
+  .market-card {
+    padding: 0.9rem 1rem; display: flex; flex-direction: column; gap: 0.5rem;
+    transition: border-color 0.2s ease;
+  }
+  .market-card:hover { border-color: rgba(0,245,255,0.35); }
+  .market-card.param-open { border-color: rgba(0,245,255,0.5); }
+  .market-desc { margin: 0; font-size: 0.74rem; color: var(--text-secondary); flex: 1; }
+  .docs-link { margin-left: auto; font-size: 0.72rem; color: var(--text-muted); text-decoration: none; white-space: nowrap; }
+  .docs-link:hover { color: var(--neon-cyan); }
+  .manage-link {
+    background: transparent; border: none; cursor: pointer; padding: 0;
+    font-size: 0.74rem; color: var(--text-muted); text-decoration: underline;
+  }
+  .manage-link:hover { color: var(--neon-cyan); }
+
+  /* 补参迷你表单(卡片内展开) */
+  .mini-form {
+    border-top: 1px dashed rgba(255,255,255,0.15); padding-top: 0.55rem;
+    display: flex; flex-direction: column; gap: 0.45rem;
+  }
+  .mini-hint { font-size: 0.7rem; color: #fbbf24; }
+  .mini-form input {
+    background: var(--bg-tertiary); border: 1px solid rgba(255,255,255,0.1); border-radius: 0.4rem;
+    padding: 0.35rem 0.6rem; color: var(--text-primary); font-size: 0.76rem; outline: none;
+    font-family: monospace; width: 100%; box-sizing: border-box;
+  }
+  .mini-form input:focus { border-color: var(--neon-cyan); }
+  .mini-actions { display: flex; gap: 0.4rem; justify-content: flex-end; }
+
   .added-badge {
-    font-size: 0.62rem; padding: 0.05rem 0.45rem; border-radius: 999px; white-space: nowrap;
-    background: rgba(74,222,128,0.15); color: #4ade80; font-weight: 400;
+    font-size: 0.72rem; padding: 0.1rem 0.55rem; border-radius: 999px; white-space: nowrap;
+    background: rgba(74,222,128,0.15); color: #4ade80;
   }
   .catalog-hint { margin: 0; font-size: 0.75rem; color: #fbbf24; }
 
