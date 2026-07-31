@@ -1,5 +1,6 @@
 <script lang="ts">
   import { _ } from 'svelte-i18n';
+  import logoUrl from '../../assets/logo.png';
   import { open } from '@tauri-apps/plugin-shell';
   import { themeChoice, setTheme, type ThemeChoice } from '$lib/theme';
 
@@ -89,7 +90,7 @@
 
 <div class="about-page">
   <div class="about-header">
-    <div class="logo-large">🎮</div>
+    <img class="logo-large" src={logoUrl} alt="ClawBox" />
     <h1>ClawBox</h1>
     <p class="tagline">{$_('about.tagline')}</p>
   </div>
@@ -245,7 +246,9 @@
   }
   
   .logo-large {
-    font-size: 4rem;
+    width: 96px;
+    height: 96px;
+    border-radius: 22px;
     margin-bottom: 1rem;
   }
   
