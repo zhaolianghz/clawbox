@@ -392,6 +392,12 @@
     hermes: 'Hermes',
     kimi: 'Kimi CLI',
     qodercli: 'Qoder CLI',
+    gemini: 'Gemini CLI',
+    cline: 'Cline',
+    pi: 'Pi',
+    'qwen-code': 'Qwen Code',
+    'copilot-cli': 'Copilot CLI',
+    'trae-agent': 'Trae Agent',
   };
   let agentLabels = $state<Record<string, string>>({});
 
