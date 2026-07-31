@@ -894,6 +894,74 @@ impl ProviderAdapter for OpencodeProviderAdapter {
 
 pub struct HermesProviderAdapter;
 
+/// .env 内容里 `KEY=value` 行的值(取第一条命中;剥掉两侧成对引号)。
+fn env_line_value(content: &str, key: &str) -> Option<String> {
+    for line in content.lines() {
+        let trimmed = line.trim_start();
+        if let Some(rest) = trimmed.strip_prefix(key) {
+            if let Some(v) = rest.strip_prefix('=') {
+                let v = v.trim();
+                let v = v
+                    .strip_prefix('"')
+                    .and_then(|s| s.strip_suffix('"'))
+                    .or_else(|| v.strip_prefix('\'').and_then(|s| s.strip_suffix('\'')))
+                    .unwrap_or(v);
+                return Some(v.to_string());
+            }
+        }
+    }
+    None
+}
+
+/// 行级 merge:`KEY=` 行存在则整行替换,否则追加;其余行一字不动。
+fn merge_env_line(content: &str, key: &str, value: &str) -> String {
+    let new_line = format!("{}={}", key, value);
+    let mut replaced = false;
+    let mut lines: Vec<String> = content
+        .lines()
+        .map(|line| {
+            let is_ours = line
+                .trim_start()
+                .strip_prefix(key)
+                .map(|rest| rest.starts_with('='))
+                .unwrap_or(false);
+            if is_ours && !replaced {
+                replaced = true;
+                new_line.clone()
+            } else {
+                line.to_string()
+            }
+        })
+        .collect();
+    if !replaced {
+        lines.push(new_line);
+    }
+    let mut out = lines.join("\n");
+    out.push('\n');
+    out
+}
+
+/// 行级删除:去掉所有 `KEY=` 行,其余行一字不动。全删空后返回空串。
+fn remove_env_line(content: &str, key: &str) -> String {
+    let lines: Vec<&str> = content
+        .lines()
+        .filter(|line| {
+            !line
+                .trim_start()
+                .strip_prefix(key)
+                .map(|rest| rest.starts_with('='))
+                .unwrap_or(false)
+        })
+        .collect();
+    if lines.is_empty() {
+        String::new()
+    } else {
+        let mut out = lines.join("\n");
+        out.push('\n');
+        out
+    }
+}
+
 /// hermes 端点偏好:Anthropic 优先、OpenAI 兜底(它按 URL 自检协议,见上)。
 const HERMES_SLOTS: [Slot; 2] = [Slot::Anthropic, Slot::Openai];
 const HERMES_MISSING: &str = "No endpoint configured";
@@ -937,52 +1005,8 @@ impl HermesProviderAdapter {
         Self::model_keys(&text)
     }
 
-    /// .env 内容里 `KEY=value` 行的值(取第一条命中;剥掉两侧成对引号)。
-    fn env_line_value(content: &str, key: &str) -> Option<String> {
-        for line in content.lines() {
-            let trimmed = line.trim_start();
-            if let Some(rest) = trimmed.strip_prefix(key) {
-                if let Some(v) = rest.strip_prefix('=') {
-                    let v = v.trim();
-                    let v = v
-                        .strip_prefix('"')
-                        .and_then(|s| s.strip_suffix('"'))
-                        .or_else(|| v.strip_prefix('\'').and_then(|s| s.strip_suffix('\'')))
-                        .unwrap_or(v);
-                    return Some(v.to_string());
-                }
-            }
-        }
-        None
-    }
-
-    /// 行级 merge:`KEY=` 行存在则整行替换,否则追加;其余行一字不动。
-    fn merge_env_line(content: &str, key: &str, value: &str) -> String {
-        let new_line = format!("{}={}", key, value);
-        let mut replaced = false;
-        let mut lines: Vec<String> = content
-            .lines()
-            .map(|line| {
-                let is_ours = line
-                    .trim_start()
-                    .strip_prefix(key)
-                    .map(|rest| rest.starts_with('='))
-                    .unwrap_or(false);
-                if is_ours && !replaced {
-                    replaced = true;
-                    new_line.clone()
-                } else {
-                    line.to_string()
-                }
-            })
-            .collect();
-        if !replaced {
-            lines.push(new_line);
-        }
-        let mut out = lines.join("\n");
-        out.push('\n');
-        out
-    }
+    /// .env 内容里 `KEY=value` 行的值 → 模块级 env_line_value(gemini 复用)。
+    /// 行级 merge → 模块级 merge_env_line。
 
     /// apply 的 CLI 段:`hermes config set <key> <value>` 参数组(纯函数,
     /// 可测)。`url` = 选中的端点槽;defaultModel 为空时不下发 model.default
@@ -1075,7 +1099,7 @@ impl ProviderAdapter for HermesProviderAdapter {
         let mut changes = Vec::new();
         match resolve_single_active(providers, active_id, &HERMES_SLOTS, HERMES_MISSING) {
             Target::Deploy { spec, url } => {
-                let env_value = Self::env_line_value(&env, &Self::env_key(&spec.id));
+                let env_value = env_line_value(&env, &Self::env_key(&spec.id));
                 let action = if Self::is_unchanged(spec, url, &current, env_value.as_deref()) {
                     "unchanged"
                 } else if current.1.is_none() && env_value.is_none() {
@@ -1115,7 +1139,7 @@ impl ProviderAdapter for HermesProviderAdapter {
         let current = self.read_model_keys(home)?;
         let env = self.read_env(home)?;
         let key = Self::env_key(&spec.id);
-        if Self::is_unchanged(spec, url, &current, Self::env_line_value(&env, &key).as_deref()) {
+        if Self::is_unchanged(spec, url, &current, env_line_value(&env, &key).as_deref()) {
             return Ok(0);
         }
         // config.yaml 三键走 hermes 自己的 CLI(生产路径;hermes 保证原子
@@ -1125,7 +1149,7 @@ impl ProviderAdapter for HermesProviderAdapter {
             Self::run_cli(&args)?;
         }
         // .env 的 key 行:行级文本 merge 直接写文件。
-        let merged = Self::merge_env_line(&env, &key, spec.api_key.trim());
+        let merged = merge_env_line(&env, &key, spec.api_key.trim());
         let env_path = Self::env_path(home);
         if let Some(dir) = env_path.parent() {
             std::fs::create_dir_all(dir)
@@ -1139,6 +1163,537 @@ impl ProviderAdapter for HermesProviderAdapter {
     fn deployed_names(&self, providers: &[ProviderSpec], active_id: Option<&str>) -> Vec<String> {
         match resolve_single_active(providers, active_id, &HERMES_SLOTS, HERMES_MISSING) {
             Target::Deploy { spec, .. } => vec![Self::env_key(&spec.id)],
+            Target::Skip { .. } => vec![],
+        }
+    }
+}
+
+// ---- gemini:~/.gemini/.env 三键(单激活) ----------------------------------
+//
+// gemini-cli 官方支持 env 覆盖端点(联网核实 2026-07-31,geminicli.com 配置
+// 文档 + LiteLLM 教程):GOOGLE_GEMINI_BASE_URL(要求 Gemini 协议端点,
+// new-api 系网关的根地址即是;仅 gemini-api-key 认证下生效)+
+// GEMINI_API_KEY + GEMINI_MODEL。~/.gemini/.env 自动加载(项目级 .env 优先
+// 命中则整文件独占,家目录兜底 —— 我们只管家目录层)。
+//
+// 端点取 Anthropic 槽:网关根 URL 惯例上配在该槽;OpenAI 槽带 /v1 后缀,
+// 对 Gemini 协议(路径 /v1beta/...)是错误前缀。auth 选择不代管:用户在
+// CLI 内 /auth 自选;env key 在场时 gemini-api-key 即可用。
+
+pub struct GeminiProviderAdapter;
+
+const GEMINI_SLOTS: [Slot; 1] = [Slot::Anthropic];
+const GEMINI_MISSING: &str = "Anthropic-slot (gateway root) endpoint not configured";
+/// ~/.gemini/.env 里我们管理的三键;providers_managed 标记 ENV_MANAGED_MARK。
+const GEMINI_ENV_KEYS: [&str; 3] = ["GOOGLE_GEMINI_BASE_URL", "GEMINI_API_KEY", "GEMINI_MODEL"];
+
+impl GeminiProviderAdapter {
+    /// 期望写入的键值(defaultModel 为空则不含 GEMINI_MODEL)。
+    fn desired(spec: &ProviderSpec, url: &str) -> BTreeMap<&'static str, String> {
+        let mut m = BTreeMap::new();
+        m.insert(GEMINI_ENV_KEYS[0], url.to_string());
+        m.insert(GEMINI_ENV_KEYS[1], spec.api_key.trim().to_string());
+        let model = spec.default_model.trim();
+        if !model.is_empty() {
+            m.insert(GEMINI_ENV_KEYS[2], model.to_string());
+        }
+        m
+    }
+
+    fn read_env(&self, home: &Path) -> Result<String, String> {
+        let path = self.config_path(home);
+        if !path.exists() {
+            return Ok(String::new());
+        }
+        std::fs::read_to_string(&path).map_err(|e| format!("failed to read {}: {}", path.display(), e))
+    }
+
+    /// 当前 .env 里三个管理键的投影(其它行忽略)。
+    fn current(content: &str) -> BTreeMap<&'static str, String> {
+        let mut m = BTreeMap::new();
+        for key in GEMINI_ENV_KEYS {
+            if let Some(v) = env_line_value(content, key) {
+                m.insert(key, v);
+            }
+        }
+        m
+    }
+
+    fn write_env(&self, home: &Path, content: &str) -> Result<(), String> {
+        let path = self.config_path(home);
+        if let Some(dir) = path.parent() {
+            std::fs::create_dir_all(dir).map_err(|e| format!("failed to create {}: {}", dir.display(), e))?;
+        }
+        std::fs::write(&path, content).map_err(|e| format!("failed to write {}: {}", path.display(), e))
+    }
+}
+
+impl ProviderAdapter for GeminiProviderAdapter {
+    fn agent_id(&self) -> &'static str {
+        "gemini"
+    }
+
+    fn config_path(&self, home: &Path) -> PathBuf {
+        home.join(".gemini").join(".env")
+    }
+
+    fn plan(
+        &self,
+        home: &Path,
+        providers: &[ProviderSpec],
+        active_id: Option<&str>,
+        managed: &[String],
+    ) -> Result<Vec<ChangeItem>, String> {
+        let env = self.read_env(home)?;
+        let current = Self::current(&env);
+        let mut changes = Vec::new();
+        match resolve_single_active(providers, active_id, &GEMINI_SLOTS, GEMINI_MISSING) {
+            Target::Deploy { spec, url } => {
+                let desired = Self::desired(spec, url);
+                let action = if current == desired {
+                    "unchanged"
+                } else if current.is_empty() {
+                    "add"
+                } else {
+                    "update"
+                };
+                let model = spec.default_model.trim();
+                changes.push(ChangeItem {
+                    name: spec.name.clone(),
+                    action: action.into(),
+                    detail: if action == "unchanged" {
+                        String::new()
+                    } else {
+                        format!(
+                            "GOOGLE_GEMINI_BASE_URL={} · model={}",
+                            url,
+                            if model.is_empty() { "(not set)" } else { model }
+                        )
+                    },
+                });
+            }
+            Target::Skip { name, reason } => {
+                changes.push(ChangeItem { name, action: "skip".into(), detail: reason });
+                if managed.iter().any(|m| m == ENV_MANAGED_MARK) && !current.is_empty() {
+                    changes.push(ChangeItem {
+                        name: "GEMINI_*".into(),
+                        action: "remove".into(),
+                        detail: "no longer managed by ClawBox".into(),
+                    });
+                }
+            }
+        }
+        Ok(changes)
+    }
+
+    fn apply(
+        &self,
+        home: &Path,
+        providers: &[ProviderSpec],
+        active_id: Option<&str>,
+        managed: &[String],
+    ) -> Result<usize, String> {
+        let env = self.read_env(home)?;
+        let current = Self::current(&env);
+        match resolve_single_active(providers, active_id, &GEMINI_SLOTS, GEMINI_MISSING) {
+            Target::Deploy { spec, url } => {
+                let desired = Self::desired(spec, url);
+                if current == desired {
+                    return Ok(0);
+                }
+                let mut content = env;
+                for key in GEMINI_ENV_KEYS {
+                    content = match desired.get(key) {
+                        Some(v) => merge_env_line(&content, key, v),
+                        None => remove_env_line(&content, key),
+                    };
+                }
+                self.write_env(home, &content)?;
+                Ok(1)
+            }
+            Target::Skip { .. } => {
+                // 无可下发目标:只有曾管理过才清理我们的三行,其余行不动。
+                if !managed.iter().any(|m| m == ENV_MANAGED_MARK) || current.is_empty() {
+                    return Ok(0);
+                }
+                let mut content = env;
+                for key in GEMINI_ENV_KEYS {
+                    content = remove_env_line(&content, key);
+                }
+                self.write_env(home, &content)?;
+                Ok(1)
+            }
+        }
+    }
+
+    fn deployed_names(&self, providers: &[ProviderSpec], active_id: Option<&str>) -> Vec<String> {
+        match resolve_single_active(providers, active_id, &GEMINI_SLOTS, GEMINI_MISSING) {
+            Target::Deploy { .. } => vec![ENV_MANAGED_MARK.to_string()],
+            Target::Skip { .. } => vec![],
+        }
+    }
+}
+
+// ---- cline:providers.json 经 cline auth CLI(单激活) ----------------------
+//
+// cline 的 ~/.cline/data/settings/providers.json 由其 ProviderSettingsManager
+// 维护(version/tokenSource 等内部字段),schema 未公开 —— 不盲写文件,改走
+// 官方非交互 CLI(cline 3.0.15 `auth --help` 本机核实):
+//   cline auth -p anthropic -k <key> -b <url> [-m <model>]
+// 端点取 Anthropic 槽(cline 的 anthropic provider 支持自定义 base URL;
+// Messages 协议 base 不带 /v1)。unchanged 检测对 providers.json 做宽松投影
+// (键名容错),读不出就重跑 auth(幂等)。无 remove 语义:cline 总需要一个
+// 可用 provider,解绑保留现值。CLI 固定写真实 ~/.cline,同 hermes 铁律:
+// 测试只测纯函数与文件投影,不跑 CLI。
+
+pub struct ClineProviderAdapter;
+
+const CLINE_SLOTS: [Slot; 1] = [Slot::Anthropic];
+const CLINE_MISSING: &str = "Anthropic endpoint not configured";
+/// providers_managed 标记:表示我们经 cline auth 配过。
+const CLINE_MANAGED_MARK: &str = "auth";
+
+impl ClineProviderAdapter {
+    /// `cline auth` 参数组(纯函数,可测)。
+    fn auth_args(spec: &ProviderSpec, url: &str) -> Vec<String> {
+        let mut args: Vec<String> = vec![
+            "auth".into(),
+            "-p".into(),
+            "anthropic".into(),
+            "-k".into(),
+            spec.api_key.trim().into(),
+            "-b".into(),
+            url.into(),
+        ];
+        let model = spec.default_model.trim();
+        if !model.is_empty() {
+            args.push("-m".into());
+            args.push(model.into());
+        }
+        args
+    }
+
+    /// providers.json 里 anthropic 条目的 (apiKey, model, baseUrl) 宽松投影;
+    /// 文件/条目缺失 = 全 None。
+    fn current(&self, home: &Path) -> (Option<String>, Option<String>, Option<String>) {
+        let path = self.config_path(home);
+        let Ok(text) = std::fs::read_to_string(&path) else {
+            return (None, None, None);
+        };
+        let Ok(doc) = serde_json::from_str::<Value>(&text) else {
+            return (None, None, None);
+        };
+        let settings = doc
+            .get("providers")
+            .and_then(|p| p.get("anthropic"))
+            .and_then(|e| e.get("settings"));
+        let get = |keys: &[&str]| -> Option<String> {
+            let s = settings?;
+            keys.iter()
+                .find_map(|k| s.get(*k).and_then(|v| v.as_str()).map(|v| v.to_string()))
+        };
+        (
+            get(&["apiKey"]),
+            get(&["model", "modelId"]),
+            get(&["baseUrl", "anthropicBaseUrl", "baseURL"]),
+        )
+    }
+
+    fn is_unchanged(
+        spec: &ProviderSpec,
+        url: &str,
+        cur: &(Option<String>, Option<String>, Option<String>),
+    ) -> bool {
+        let model = spec.default_model.trim();
+        let model_ok = model.is_empty() || cur.1.as_deref() == Some(model);
+        cur.0.as_deref() == Some(spec.api_key.trim()) && model_ok && cur.2.as_deref() == Some(url)
+    }
+
+    fn run_cli(args: &[String]) -> Result<(), String> {
+        let output = std::process::Command::new("cline")
+            .args(args)
+            .output()
+            .map_err(|e| format!("failed to run cline CLI: {}", e))?;
+        if !output.status.success() {
+            return Err(format!(
+                "cline auth failed: {}",
+                String::from_utf8_lossy(&output.stderr).trim()
+            ));
+        }
+        Ok(())
+    }
+}
+
+impl ProviderAdapter for ClineProviderAdapter {
+    fn agent_id(&self) -> &'static str {
+        "cline"
+    }
+
+    fn config_path(&self, home: &Path) -> PathBuf {
+        home.join(".cline").join("data").join("settings").join("providers.json")
+    }
+
+    fn plan(
+        &self,
+        home: &Path,
+        providers: &[ProviderSpec],
+        active_id: Option<&str>,
+        _managed: &[String],
+    ) -> Result<Vec<ChangeItem>, String> {
+        let mut changes = Vec::new();
+        match resolve_single_active(providers, active_id, &CLINE_SLOTS, CLINE_MISSING) {
+            Target::Deploy { spec, url } => {
+                let cur = self.current(home);
+                let action = if Self::is_unchanged(spec, url, &cur) {
+                    "unchanged"
+                } else if cur.0.is_none() {
+                    "add"
+                } else {
+                    "update"
+                };
+                let model = spec.default_model.trim();
+                changes.push(ChangeItem {
+                    name: spec.name.clone(),
+                    action: action.into(),
+                    detail: if action == "unchanged" {
+                        String::new()
+                    } else {
+                        format!(
+                            "via `cline auth` · base={} · model={}",
+                            url,
+                            if model.is_empty() { "(keep)" } else { model }
+                        )
+                    },
+                });
+            }
+            Target::Skip { name, reason } => {
+                changes.push(ChangeItem { name, action: "skip".into(), detail: reason });
+            }
+        }
+        Ok(changes)
+    }
+
+    fn apply(
+        &self,
+        home: &Path,
+        providers: &[ProviderSpec],
+        active_id: Option<&str>,
+        _managed: &[String],
+    ) -> Result<usize, String> {
+        let (spec, url) = match resolve_single_active(providers, active_id, &CLINE_SLOTS, CLINE_MISSING) {
+            Target::Deploy { spec, url } => (spec, url),
+            Target::Skip { .. } => return Ok(0),
+        };
+        if Self::is_unchanged(spec, url, &self.current(home)) {
+            return Ok(0);
+        }
+        Self::run_cli(&Self::auth_args(spec, url))?;
+        Ok(1)
+    }
+
+    fn deployed_names(&self, providers: &[ProviderSpec], active_id: Option<&str>) -> Vec<String> {
+        match resolve_single_active(providers, active_id, &CLINE_SLOTS, CLINE_MISSING) {
+            Target::Deploy { .. } => vec![CLINE_MANAGED_MARK.to_string()],
+            Target::Skip { .. } => vec![],
+        }
+    }
+}
+
+// ---- pi:~/.pi/agent/models.json provider 节点 + settings.json 默认两键 ----
+//
+// pi(badlogic/pi-coding-agent)自定义服务商走 models.json(docs/models.md,
+// 联网核实 2026-07-31):providers.<id> = { baseUrl, api, apiKey,
+// models: [{id}] }。api 按命中槽定协议:Anthropic 槽 → anthropic-messages,
+// OpenAI 槽 → openai-completions(Anthropic 优先)。默认模型写 settings.json
+// 的 defaultProvider/defaultModel 两键(本机 pi 0.83 核实存在)。解绑:删
+// models.json 里我们的节点;settings 两键保留(pi 总要有默认可用)。
+
+pub struct PiProviderAdapter;
+
+const PI_SLOTS: [Slot; 2] = [Slot::Anthropic, Slot::Openai];
+const PI_MISSING: &str = "No endpoint configured";
+
+impl PiProviderAdapter {
+    fn agent_dir(home: &Path) -> PathBuf {
+        home.join(".pi").join("agent")
+    }
+
+    fn settings_path(home: &Path) -> PathBuf {
+        Self::agent_dir(home).join("settings.json")
+    }
+
+    /// 期望的 models.json provider 节点。
+    fn desired_node(spec: &ProviderSpec, url: &str, slot: Slot) -> Value {
+        let api = match slot {
+            Slot::Anthropic => "anthropic-messages",
+            Slot::Openai => "openai-completions",
+        };
+        let mut models: Vec<String> = spec
+            .models
+            .iter()
+            .map(|m| m.trim().to_string())
+            .filter(|m| !m.is_empty())
+            .collect();
+        let default_model = spec.default_model.trim();
+        if models.is_empty() && !default_model.is_empty() {
+            models.push(default_model.to_string());
+        }
+        json!({
+            "baseUrl": url,
+            "api": api,
+            "apiKey": spec.api_key.trim(),
+            "models": models.iter().map(|m| json!({"id": m})).collect::<Vec<_>>(),
+        })
+    }
+
+    /// settings.json 期望的两键(defaultModel 为空则只下 defaultProvider)。
+    fn desired_settings(spec: &ProviderSpec) -> Vec<(&'static str, String)> {
+        let mut kv = vec![("defaultProvider", spec.id.clone())];
+        let model = spec.default_model.trim();
+        if !model.is_empty() {
+            kv.push(("defaultModel", model.to_string()));
+        }
+        kv
+    }
+
+    fn settings_unchanged(doc: &Value, kv: &[(&'static str, String)]) -> bool {
+        kv.iter()
+            .all(|(k, v)| doc.get(*k).and_then(|x| x.as_str()) == Some(v.as_str()))
+    }
+}
+
+impl ProviderAdapter for PiProviderAdapter {
+    fn agent_id(&self) -> &'static str {
+        "pi"
+    }
+
+    fn config_path(&self, home: &Path) -> PathBuf {
+        Self::agent_dir(home).join("models.json")
+    }
+
+    fn plan(
+        &self,
+        home: &Path,
+        providers: &[ProviderSpec],
+        active_id: Option<&str>,
+        managed: &[String],
+    ) -> Result<Vec<ChangeItem>, String> {
+        let models_doc = load_json(&self.config_path(home))?;
+        let node_of = |id: &str| models_doc.get("providers").and_then(|p| p.get(id)).cloned();
+        let mut changes = Vec::new();
+        match resolve_single_active(providers, active_id, &PI_SLOTS, PI_MISSING) {
+            Target::Deploy { spec, url } => {
+                let (_, slot) = pick_endpoint(spec, &PI_SLOTS).expect("Deploy implies a slot");
+                let desired = Self::desired_node(spec, url, slot);
+                let settings_doc = load_json(&Self::settings_path(home))?;
+                let settings_ok = Self::settings_unchanged(&settings_doc, &Self::desired_settings(spec));
+                let action = match node_of(&spec.id) {
+                    Some(existing) if existing == desired && settings_ok => "unchanged",
+                    Some(_) => "update",
+                    None => "add",
+                };
+                let model = spec.default_model.trim();
+                changes.push(ChangeItem {
+                    name: spec.name.clone(),
+                    action: action.into(),
+                    detail: if action == "unchanged" {
+                        String::new()
+                    } else {
+                        format!(
+                            "models.json providers.{} · base={} · model={}",
+                            spec.id,
+                            url,
+                            if model.is_empty() { "(not set)" } else { model }
+                        )
+                    },
+                });
+            }
+            Target::Skip { name, reason } => {
+                changes.push(ChangeItem { name, action: "skip".into(), detail: reason });
+                for id in managed {
+                    if node_of(id).is_some() {
+                        changes.push(ChangeItem {
+                            name: id.clone(),
+                            action: "remove".into(),
+                            detail: "no longer managed by ClawBox".into(),
+                        });
+                    }
+                }
+            }
+        }
+        Ok(changes)
+    }
+
+    fn apply(
+        &self,
+        home: &Path,
+        providers: &[ProviderSpec],
+        active_id: Option<&str>,
+        managed: &[String],
+    ) -> Result<usize, String> {
+        let models_path = self.config_path(home);
+        let mut models_doc = load_json(&models_path)?;
+        match resolve_single_active(providers, active_id, &PI_SLOTS, PI_MISSING) {
+            Target::Deploy { spec, url } => {
+                let (_, slot) = pick_endpoint(spec, &PI_SLOTS).expect("Deploy implies a slot");
+                let desired = Self::desired_node(spec, url, slot);
+                let mut applied = 0;
+
+                let root = models_doc.as_object_mut().unwrap();
+                let nodes = root
+                    .entry("providers".to_string())
+                    .or_insert_with(|| Value::Object(Map::new()))
+                    .as_object_mut()
+                    .ok_or_else(|| "\"providers\" is not a JSON object".to_string())?;
+                if nodes.get(&spec.id) != Some(&desired) {
+                    nodes.insert(spec.id.clone(), desired);
+                    applied += 1;
+                }
+                // 曾管理、现不再下发的节点(换绑了别的服务商)一并清掉。
+                for id in managed {
+                    if id != &spec.id && nodes.remove(id).is_some() {
+                        applied += 1;
+                    }
+                }
+                if applied > 0 {
+                    write_json(&models_path, &models_doc)?;
+                }
+
+                let settings_path = Self::settings_path(home);
+                let mut settings_doc = load_json(&settings_path)?;
+                let kv = Self::desired_settings(spec);
+                if !Self::settings_unchanged(&settings_doc, &kv) {
+                    let obj = settings_doc.as_object_mut().unwrap();
+                    for (k, v) in &kv {
+                        obj.insert((*k).to_string(), json!(v));
+                    }
+                    write_json(&settings_path, &settings_doc)?;
+                    applied += 1;
+                }
+                Ok(applied)
+            }
+            Target::Skip { .. } => {
+                // 解绑清理:只删我们写过的 models.json 节点,settings 两键保留。
+                let Some(nodes) = models_doc.get_mut("providers").and_then(|p| p.as_object_mut()) else {
+                    return Ok(0);
+                };
+                let mut applied = 0;
+                for id in managed {
+                    if nodes.remove(id).is_some() {
+                        applied += 1;
+                    }
+                }
+                if applied > 0 {
+                    write_json(&models_path, &models_doc)?;
+                }
+                Ok(applied)
+            }
+        }
+    }
+
+    fn deployed_names(&self, providers: &[ProviderSpec], active_id: Option<&str>) -> Vec<String> {
+        match resolve_single_active(providers, active_id, &PI_SLOTS, PI_MISSING) {
+            Target::Deploy { spec, .. } => vec![spec.id.clone()],
             Target::Skip { .. } => vec![],
         }
     }
@@ -1486,12 +2041,21 @@ impl KimiProviderAdapter {
 
     /// 期望投影:{"provider": {...}, "model": {...}|null}(model = defaultModel
     /// 非空时的 [models.<名>] 条目)。Err(reason) 变成 skip 项。
-    fn render(spec: &ProviderSpec) -> Result<Value, String> {
+    /// `new_format` = 目标是 ~/.kimi-code(Kimi Code 0.31+ schema,kimi
+    /// doctor 核实 2026-07-31):openai_legacy 更名 openai,models 条目必须带
+    /// max_context_size(数字)。旧 ~/.kimi 保持旧 schema。
+    fn render(spec: &ProviderSpec, new_format: bool) -> Result<Value, String> {
         let Some((url, slot)) = pick_endpoint(spec, &KIMI_SLOTS) else {
             return Err("No endpoint configured".to_string());
         };
         let kind = match slot {
-            Slot::Openai => "openai_legacy",
+            Slot::Openai => {
+                if new_format {
+                    "openai"
+                } else {
+                    "openai_legacy"
+                }
+            }
             Slot::Anthropic => "anthropic",
         };
         let name = Self::entry_name(&spec.id);
@@ -1500,6 +2064,9 @@ impl KimiProviderAdapter {
             "provider": {"type": kind, "base_url": url, "api_key": spec.api_key.trim()},
             "model": if model.is_empty() {
                 Value::Null
+            } else if new_format {
+                // max_context_size 必填;取 128k 保守通用值(主流模型下限)。
+                json!({"provider": name, "model": model, "max_context_size": 128000})
             } else {
                 json!({"provider": name, "model": model})
             },
@@ -1507,12 +2074,17 @@ impl KimiProviderAdapter {
     }
 
     /// 全部 enabled 服务商按条目名(clawbox-<id>)渲染。
-    fn mapped(providers: &[ProviderSpec]) -> BTreeMap<String, Result<Value, String>> {
+    fn mapped(providers: &[ProviderSpec], new_format: bool) -> BTreeMap<String, Result<Value, String>> {
         providers
             .iter()
             .filter(|p| p.enabled)
-            .map(|p| (Self::entry_name(&p.id), Self::render(p)))
+            .map(|p| (Self::entry_name(&p.id), Self::render(p, new_format)))
             .collect()
+    }
+
+    /// 目标是否新数据根(~/.kimi-code);同时决定 config_path 与 schema。
+    fn uses_new_root(home: &Path) -> bool {
+        home.join(".kimi-code").exists()
     }
 
     /// 现状投影,与 render 同构;两张表都无此条目 → None。
@@ -1564,8 +2136,16 @@ impl ProviderAdapter for KimiProviderAdapter {
         "kimi"
     }
 
+    /// Kimi CLI 改名 Kimi Code 后数据根从 ~/.kimi 迁至 ~/.kimi-code(config
+    /// 结构不变;官方 config-files 文档核实 2026-07-31)。新目录存在即优先,
+    /// 否则回落旧目录(老版本 CLI 仍读 ~/.kimi)。
     fn config_path(&self, home: &Path) -> PathBuf {
-        home.join(".kimi").join("config.toml")
+        let new_root = home.join(".kimi-code");
+        if new_root.exists() {
+            new_root.join("config.toml")
+        } else {
+            home.join(".kimi").join("config.toml")
+        }
     }
 
     fn plan(
@@ -1577,7 +2157,7 @@ impl ProviderAdapter for KimiProviderAdapter {
     ) -> Result<Vec<ChangeItem>, String> {
         let doc = self.load_toml(home)?;
         Self::check_shape(&doc)?;
-        let mapped = Self::mapped(providers);
+        let mapped = Self::mapped(providers, Self::uses_new_root(home));
         // 条目名(clawbox-<id>)→ 服务商显示名;已消失的 id 保留原名。
         let name_of = |entry: &str| {
             entry
@@ -1630,7 +2210,7 @@ impl ProviderAdapter for KimiProviderAdapter {
     ) -> Result<usize, String> {
         let mut doc = self.load_toml(home)?;
         Self::check_shape(&doc)?;
-        let mapped = Self::mapped(providers);
+        let mapped = Self::mapped(providers, Self::uses_new_root(home));
         let mut applied = 0;
 
         for (name, rendered) in &mapped {
@@ -1654,6 +2234,9 @@ impl ProviderAdapter for KimiProviderAdapter {
                 let mut m = Table::new();
                 m["provider"] = value(desired["model"]["provider"].as_str().unwrap());
                 m["model"] = value(desired["model"]["model"].as_str().unwrap());
+                if let Some(mcs) = desired["model"]["max_context_size"].as_i64() {
+                    m["max_context_size"] = value(mcs);
+                }
                 doc["models"][name] = Item::Table(m);
             }
             applied += 1;
@@ -1710,7 +2293,8 @@ impl ProviderAdapter for KimiProviderAdapter {
     }
 
     fn deployed_names(&self, providers: &[ProviderSpec], _active_id: Option<&str>) -> Vec<String> {
-        Self::mapped(providers)
+        // 只取条目名集合,新旧 schema 的 Ok/Err 判定一致,格式随便取。
+        Self::mapped(providers, false)
             .into_iter()
             .filter(|(_, r)| r.is_ok())
             .map(|(name, _)| name)
@@ -1773,6 +2357,13 @@ pub fn adapters() -> &'static [Box<dyn ProviderAdapter>] {
                 Box::new(KimiProviderAdapter),
                 Box::new(UnsupportedProviderAdapter { id: "qodercli" }),
                 Box::new(HermesProviderAdapter),
+                // 其余新增 CLI 走自家登录(GitHub OAuth / qwen OAuth),占位。
+                Box::new(GeminiProviderAdapter),
+                Box::new(ClineProviderAdapter),
+                Box::new(PiProviderAdapter),
+                Box::new(UnsupportedProviderAdapter { id: "qwen-code" }),
+                Box::new(UnsupportedProviderAdapter { id: "copilot-cli" }),
+                Box::new(UnsupportedProviderAdapter { id: "trae-agent" }),
             ]
         })
         .as_slice()
@@ -1886,6 +2477,165 @@ mod tests {
             enabled: true,
             flavor: None,
         }
+    }
+
+    // ---- gemini(~/.gemini/.env 三键) ----------------------------------
+
+    #[test]
+    fn gemini_plan_add_then_apply_writes_env_and_unchanged() {
+        let home = TempHome::new();
+        let providers = vec![provider("gw", "Gateway", "https://gw.example.com/", "")];
+        let a = GeminiProviderAdapter;
+
+        let changes = a.plan(home.path(), &providers, Some("gw"), &[]).unwrap();
+        assert_eq!(changes[0].action, "add");
+
+        assert_eq!(a.apply(home.path(), &providers, Some("gw"), &[]).unwrap(), 1);
+        let env = std::fs::read_to_string(home.path().join(".gemini").join(".env")).unwrap();
+        assert!(env.contains("GOOGLE_GEMINI_BASE_URL=https://gw.example.com/"), "{}", env);
+        assert!(env.contains("GEMINI_API_KEY=sk-secret-123"), "{}", env);
+        assert!(env.contains("GEMINI_MODEL=model-a"), "{}", env);
+
+        let changes = a.plan(home.path(), &providers, Some("gw"), &["env".into()]).unwrap();
+        assert_eq!(changes[0].action, "unchanged");
+        assert_eq!(a.deployed_names(&providers, Some("gw")), vec!["env".to_string()]);
+    }
+
+    #[test]
+    fn gemini_skips_provider_without_anthropic_slot() {
+        let home = TempHome::new();
+        let providers = vec![provider("oa", "OpenAI-only", "", "https://x.example.com/v1")];
+        let a = GeminiProviderAdapter;
+        let changes = a.plan(home.path(), &providers, Some("oa"), &[]).unwrap();
+        assert_eq!(changes[0].action, "skip");
+        assert_eq!(a.apply(home.path(), &providers, Some("oa"), &[]).unwrap(), 0);
+        assert!(a.deployed_names(&providers, Some("oa")).is_empty());
+    }
+
+    #[test]
+    fn gemini_unbind_cleanup_removes_only_managed_lines() {
+        let home = TempHome::new();
+        let providers = vec![provider("gw", "Gateway", "https://gw.example.com/", "")];
+        let a = GeminiProviderAdapter;
+        // 用户自有行必须原样保留
+        std::fs::create_dir_all(home.path().join(".gemini")).unwrap();
+        std::fs::write(home.path().join(".gemini").join(".env"), "OTHER=keep\n").unwrap();
+        a.apply(home.path(), &providers, Some("gw"), &[]).unwrap();
+
+        // 解绑(无 active):曾管理 → 清三行;OTHER 行不动
+        assert_eq!(a.apply(home.path(), &providers, None, &["env".into()]).unwrap(), 1);
+        let env = std::fs::read_to_string(home.path().join(".gemini").join(".env")).unwrap();
+        assert_eq!(env, "OTHER=keep\n");
+    }
+
+    // ---- cline(providers.json 经 cline auth,纯函数/文件投影) ----------
+
+    #[test]
+    fn cline_auth_args_include_base_url_and_optional_model() {
+        let spec = provider("gw", "Gateway", "https://gw.example.com/", "");
+        let args = ClineProviderAdapter::auth_args(&spec, "https://gw.example.com/");
+        assert_eq!(
+            args,
+            vec!["auth", "-p", "anthropic", "-k", "sk-secret-123", "-b", "https://gw.example.com/", "-m", "model-a"]
+        );
+        let mut no_model = spec.clone();
+        no_model.default_model = String::new();
+        let args = ClineProviderAdapter::auth_args(&no_model, "https://gw.example.com/");
+        assert!(!args.contains(&"-m".to_string()));
+    }
+
+    #[test]
+    fn cline_plan_reads_current_projection_and_skips_openai_only() {
+        let home = TempHome::new();
+        let a = ClineProviderAdapter;
+        // 已是期望状态 → unchanged(不会去跑 CLI)
+        let dir = home.path().join(".cline").join("data").join("settings");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(
+            dir.join("providers.json"),
+            r#"{"version":1,"providers":{"anthropic":{"settings":{"provider":"anthropic","apiKey":"sk-secret-123","model":"model-a","baseUrl":"https://gw.example.com/"}}}}"#,
+        )
+        .unwrap();
+        let providers = vec![provider("gw", "Gateway", "https://gw.example.com/", "")];
+        let changes = a.plan(home.path(), &providers, Some("gw"), &[]).unwrap();
+        assert_eq!(changes[0].action, "unchanged");
+        assert_eq!(a.apply(home.path(), &providers, Some("gw"), &[]).unwrap(), 0);
+
+        // OpenAI-only 服务商 → skip
+        let oa = vec![provider("oa", "OpenAI-only", "", "https://x.example.com/v1")];
+        let changes = a.plan(home.path(), &oa, Some("oa"), &[]).unwrap();
+        assert_eq!(changes[0].action, "skip");
+    }
+
+    // ---- pi(models.json 节点 + settings.json 两键) ---------------------
+
+    #[test]
+    fn pi_apply_writes_node_and_settings_then_unchanged() {
+        let home = TempHome::new();
+        let providers = vec![provider("gw", "Gateway", "https://gw.example.com/", "")];
+        let a = PiProviderAdapter;
+
+        let changes = a.plan(home.path(), &providers, Some("gw"), &[]).unwrap();
+        assert_eq!(changes[0].action, "add");
+        assert!(a.apply(home.path(), &providers, Some("gw"), &[]).unwrap() >= 1);
+
+        let models: serde_json::Value = serde_json::from_str(
+            &std::fs::read_to_string(home.path().join(".pi").join("agent").join("models.json")).unwrap(),
+        )
+        .unwrap();
+        let node = &models["providers"]["gw"];
+        assert_eq!(node["api"], "anthropic-messages");
+        assert_eq!(node["baseUrl"], "https://gw.example.com/");
+        assert_eq!(node["models"].as_array().unwrap().len(), 2);
+        let settings: serde_json::Value = serde_json::from_str(
+            &std::fs::read_to_string(home.path().join(".pi").join("agent").join("settings.json")).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(settings["defaultProvider"], "gw");
+        assert_eq!(settings["defaultModel"], "model-a");
+
+        let changes = a.plan(home.path(), &providers, Some("gw"), &["gw".into()]).unwrap();
+        assert_eq!(changes[0].action, "unchanged");
+        assert_eq!(a.deployed_names(&providers, Some("gw")), vec!["gw".to_string()]);
+    }
+
+    #[test]
+    fn pi_openai_only_provider_uses_openai_completions() {
+        let home = TempHome::new();
+        let providers = vec![provider("oa", "OpenAI-only", "", "https://x.example.com/v1")];
+        let a = PiProviderAdapter;
+        a.apply(home.path(), &providers, Some("oa"), &[]).unwrap();
+        let models: serde_json::Value = serde_json::from_str(
+            &std::fs::read_to_string(home.path().join(".pi").join("agent").join("models.json")).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(models["providers"]["oa"]["api"], "openai-completions");
+    }
+
+    #[test]
+    fn pi_unbind_removes_managed_node_keeps_others_and_settings() {
+        let home = TempHome::new();
+        let providers = vec![provider("gw", "Gateway", "https://gw.example.com/", "")];
+        let a = PiProviderAdapter;
+        // 预置用户自有节点
+        let dir = home.path().join(".pi").join("agent");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(
+            dir.join("models.json"),
+            r#"{"providers":{"mine":{"baseUrl":"http://localhost:11434/v1","api":"openai-completions","apiKey":"x","models":[]}}}"#,
+        )
+        .unwrap();
+        a.apply(home.path(), &providers, Some("gw"), &[]).unwrap();
+
+        // 解绑:删我们的 gw 节点;mine 与 settings 两键保留
+        assert_eq!(a.apply(home.path(), &providers, None, &["gw".into()]).unwrap(), 1);
+        let models: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(dir.join("models.json")).unwrap()).unwrap();
+        assert!(models["providers"].get("gw").is_none());
+        assert!(models["providers"].get("mine").is_some());
+        let settings: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(dir.join("settings.json")).unwrap()).unwrap();
+        assert_eq!(settings["defaultProvider"], "gw"); // 保留历史值
     }
 
     /// 只有 Anthropic 端点。
@@ -2510,29 +3260,29 @@ mod tests {
         let key = "CUSTOM_PROVIDER_P_ANTH_KEY";
         // 已存在 → 整行替换,其余行一字不动
         let content = "A=1\nCUSTOM_PROVIDER_P_ANTH_KEY=old\nB=2 # keep\n";
-        let merged = HermesProviderAdapter::merge_env_line(content, key, "new-key");
+        let merged = merge_env_line(content, key, "new-key");
         assert_eq!(merged, "A=1\nCUSTOM_PROVIDER_P_ANTH_KEY=new-key\nB=2 # keep\n");
         // 不存在 → 追加(含无尾换行的输入)
-        let merged = HermesProviderAdapter::merge_env_line("A=1", key, "v");
+        let merged = merge_env_line("A=1", key, "v");
         assert_eq!(merged, "A=1\nCUSTOM_PROVIDER_P_ANTH_KEY=v\n");
         // 空文件 → 单行
-        let merged = HermesProviderAdapter::merge_env_line("", key, "v");
+        let merged = merge_env_line("", key, "v");
         assert_eq!(merged, "CUSTOM_PROVIDER_P_ANTH_KEY=v\n");
         // 前缀相同的其它键(…_KEY_BACKUP)不受影响
         let content = "CUSTOM_PROVIDER_P_ANTH_KEY_BACKUP=x\n";
-        let merged = HermesProviderAdapter::merge_env_line(content, key, "v");
+        let merged = merge_env_line(content, key, "v");
         assert_eq!(merged, "CUSTOM_PROVIDER_P_ANTH_KEY_BACKUP=x\nCUSTOM_PROVIDER_P_ANTH_KEY=v\n");
     }
 
     #[test]
     fn hermes_env_line_value_parses_plain_and_quoted() {
-        let v = HermesProviderAdapter::env_line_value("K=abc\nX=1\n", "K");
+        let v = env_line_value("K=abc\nX=1\n", "K");
         assert_eq!(v.as_deref(), Some("abc"));
-        let v = HermesProviderAdapter::env_line_value("K=\"abc\"\n", "K");
+        let v = env_line_value("K=\"abc\"\n", "K");
         assert_eq!(v.as_deref(), Some("abc"));
-        assert!(HermesProviderAdapter::env_line_value("K2=abc\n", "K").is_none());
+        assert!(env_line_value("K2=abc\n", "K").is_none());
         // 前缀相同的长键不误配
-        assert!(HermesProviderAdapter::env_line_value("K_LONG=abc\n", "K").is_none());
+        assert!(env_line_value("K_LONG=abc\n", "K").is_none());
     }
 
     #[test]
@@ -2917,6 +3667,35 @@ mod tests {
     }
 
     #[test]
+    fn kimi_prefers_new_kimi_code_root_when_present() {
+        let home = TempHome::new();
+        let a = KimiProviderAdapter;
+        // 无 ~/.kimi-code → 旧路径
+        assert_eq!(a.config_path(home.path()), home.path().join(kimi_rel()));
+        // 有 ~/.kimi-code → 新路径(即便旧目录也在)
+        std::fs::create_dir_all(home.path().join(".kimi")).unwrap();
+        std::fs::create_dir_all(home.path().join(".kimi-code")).unwrap();
+        assert_eq!(
+            a.config_path(home.path()),
+            home.path().join(".kimi-code").join("config.toml")
+        );
+    }
+
+    #[test]
+    fn kimi_new_root_uses_openai_type_and_max_context_size() {
+        let home = TempHome::new();
+        std::fs::create_dir_all(home.path().join(".kimi-code")).unwrap();
+        let providers = vec![provider("gw", "Gateway", "", "https://x.example.com/v1")];
+        KimiProviderAdapter.apply(home.path(), &providers, Some("gw"), &[]).unwrap();
+        let text =
+            std::fs::read_to_string(home.path().join(".kimi-code").join("config.toml")).unwrap();
+        // Kimi Code 0.31 schema:openai_legacy 已废弃,models 条目必须带 max_context_size
+        assert!(text.contains("type = \"openai\""), "{}", text);
+        assert!(!text.contains("openai_legacy"), "{}", text);
+        assert!(text.contains("max_context_size = 128000"), "{}", text);
+    }
+
+    #[test]
     fn kimi_writes_providers_models_and_default_model() {
         let home = TempHome::new();
         let mut disabled = provider("p-off", "Off", "", "https://off.example.com");
@@ -3056,7 +3835,7 @@ mod tests {
             );
         }
         assert!(find_adapter("node").is_none());
-        assert_eq!(adapters().len(), 9);
+        assert_eq!(adapters().len(), 15);
         let supported: Vec<&str> = adapters()
             .iter()
             .filter(|a| a.supported())
@@ -3064,7 +3843,7 @@ mod tests {
             .collect();
         assert_eq!(
             supported,
-            vec!["claude-code", "codex", "openclaw", "opencode", "codebuddy", "kimi", "hermes"]
+            vec!["claude-code", "codex", "openclaw", "opencode", "codebuddy", "kimi", "hermes", "gemini", "cline", "pi"]
         );
     }
 
@@ -3081,7 +3860,7 @@ mod tests {
         let bindings =
             std::collections::HashMap::from([("claude-code".to_string(), "p-anth".to_string())]);
         let plans = plan_all(home.path(), &providers, &bindings, &Default::default());
-        assert_eq!(plans.len(), 9);
+        assert_eq!(plans.len(), 15);
         let cc = plans.iter().find(|p| p.agent_id == "claude-code").unwrap();
         assert!(cc.error.is_some());
         let oc = plans.iter().find(|p| p.agent_id == "opencode").unwrap();

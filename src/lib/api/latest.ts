@@ -46,6 +46,15 @@ export function extractSemver(version: string | null): string | null {
   return version?.match(/\d+\.\d+\.\d+(?:[-.][\w.]+)?/)?.[0] ?? null;
 }
 
+/** a 是否严格新于 b(仅比 x.y.z 三段;预发布后缀忽略)。格式异常返回 false。 */
+export function semverGt(a: string, b: string): boolean {
+  const num = (s: string, i: number) => parseInt(s.split('.')[i] ?? '0', 10) || 0;
+  for (let i = 0; i < 3; i++) {
+    if (num(a, i) !== num(b, i)) return num(a, i) > num(b, i);
+  }
+  return false;
+}
+
 async function fetchLatest(pkg: string, timeoutMs = 5000): Promise<string | null> {
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), timeoutMs);
@@ -94,7 +103,8 @@ export async function checkLatestVersions(
     const installed = extractSemver(a.version);
     out[a.id] = {
       latest,
-      hasUpdate: latest !== null && installed !== null && latest !== installed,
+      // 严格「线上比本地新」才算有更新;字符串不等会把本地更新版/格式差异误报成升级
+      hasUpdate: latest !== null && installed !== null && semverGt(latest, installed),
     };
   }
   return out;
