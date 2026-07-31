@@ -11,7 +11,7 @@
     type RepoDiscovery, type InstallOutcome, type SkillUpdateInfo,
     type AgentPlan, type ApplyResult, type ChangeItem,
   } from '$lib/api/skillsSync';
-  import { SKILL_SOURCES } from '$lib/data/skillSources';
+  import { SKILL_SOURCES, SKILL_CATEGORIES } from '$lib/data/skillSources';
   import { localize } from '$lib/data/localized';
   import {
     memory_read, memory_write, memory_targets, memory_target_content,
@@ -328,6 +328,12 @@
     hermes: 'Hermes',
     kimi: 'Kimi CLI',
     qodercli: 'Qoder CLI',
+    gemini: 'Gemini CLI',
+    cline: 'Cline',
+    pi: 'Pi',
+    'qwen-code': 'Qwen Code',
+    'copilot-cli': 'Copilot CLI',
+    'trae-agent': 'Trae Agent',
   };
   let agentLabels = $state<Record<string, string>>({});
 
@@ -749,21 +755,29 @@
         <!-- 从 Git 仓库安装(内联展开:精选源卡片 + repo 输入 + 发现列表 + 安全提示) -->
         {#if installOpen}
           <div class="scan-panel">
-            <div class="featured-row">
-              {#each SKILL_SOURCES as src (src.id)}
-                <button
-                  type="button"
-                  class="source-card"
-                  class:sel={repoInput.trim() === src.repo}
-                  onclick={() => pickSource(src.repo)}
-                  disabled={discovering || installingSkills}
-                >
-                  <span class="source-name">{src.name}</span>
-                  <span class="source-repo">{src.repo}</span>
-                  <span class="source-desc">{localize(src.description, $locale)}</span>
-                </button>
-              {/each}
-            </div>
+            {#each SKILL_CATEGORIES as cat (cat)}
+              {@const sources = SKILL_SOURCES.filter((s) => s.category === cat)}
+              {#if sources.length > 0}
+                <div class="source-group">
+                  <span class="source-group-label">{$_(`capabilities.skillsSync.categories.${cat}`)}</span>
+                  <div class="featured-row">
+                    {#each sources as src (src.id)}
+                      <button
+                        type="button"
+                        class="source-card"
+                        class:sel={repoInput.trim() === src.repo}
+                        onclick={() => pickSource(src.repo)}
+                        disabled={discovering || installingSkills}
+                      >
+                        <span class="source-name">{src.name}</span>
+                        <span class="source-repo">{src.repo}</span>
+                        <span class="source-desc">{localize(src.description, $locale)}</span>
+                      </button>
+                    {/each}
+                  </div>
+                </div>
+              {/if}
+            {/each}
             <div class="repo-row">
               <input
                 class="text-input repo-input"
@@ -1718,7 +1732,12 @@
   .adopt-fail { font-size: 0.72rem; color: #f87171; }
   .scan-foot { display: flex; justify-content: flex-end; }
 
-  /* 从仓库安装:精选源卡片 + repo 输入行 + 安全提示 */
+  /* 从仓库安装:分类分组 + 精选源卡片 + repo 输入行 + 安全提示 */
+  .source-group { display: flex; flex-direction: column; gap: 0.35rem; }
+  .source-group-label {
+    font-size: 0.68rem; font-weight: 600; letter-spacing: 0.06em;
+    text-transform: uppercase; color: var(--text-muted);
+  }
   .featured-row { display: flex; gap: 0.5rem; flex-wrap: wrap; }
   .source-card {
     flex: 1; min-width: 180px; max-width: 320px; text-align: left; cursor: pointer;
