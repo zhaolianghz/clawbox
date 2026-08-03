@@ -853,46 +853,63 @@ impl ProviderAdapter for OpencodeProviderAdapter {
     }
 }
 
-// ---- hermes:~/.hermes/config.yaml model 三键 + ~/.hermes/.env(单激活) -----
+// ---- hermes:~/.hermes/config.yaml custom_providers + model(单激活) -------
 //
-// 源码验证结论(hermes-agent 0.8.0,本机 ~/.hermes/hermes-agent 可编辑安装):
+// 源码验证结论(hermes-agent 0.18.2,本机 ~/.hermes/hermes-agent 可编辑安装):
 //
-// * 协议:hermes 同时支持 anthropic 与 openai 协议。custom provider 的
-//   api_mode ∈ {chat_completions, codex_responses, anthropic_messages}
-//   (hermes_cli/main.py:3640-3676 交互选项);api_mode 未配置时按 URL 自动
-//   检测 —— path 以 /anthropic(/v1) 结尾或 api.anthropic.com →
-//   anthropic_messages,否则默认 chat_completions
-//   (hermes_cli/runtime_provider.py:95-134 `_detect_api_mode_for_url`、
-//   136-157 `_resolve_plain_custom_api_mode`)。base_url 语义 = 完整端点
-//   前缀(如 https://api.minimaxi.com/anthropic),协议由后缀推断。
-//   因此取槽策略:Anthropic 优先、OpenAI 兜底 —— 写哪个 URL,hermes 就按
-//   该 URL 自检出对应协议。
+// * provider 解析:hermes 的 model.provider 必须是内置 provider 名
+//   (anthropic/openai/...)或能路由到 custom_providers / providers 节里
+//   某条命名条目 —— 写一个 ClawBox 内部 UUID 会让 hermes 启动即报
+//   "Unknown provider"(auth.py resolve_provider)。因此我们下发一个
+//   custom_providers 命名条目,并把 model.provider 设成 custom:<name>
+//   显式路由(runtime_provider.py `_get_named_custom_provider`:按 name 归一
+//   匹配;`custom:` 前缀绕过内置 provider 阴影检查)。
 //
-// * 写入路径:`hermes config set model.provider <v>` 非交互写 config.yaml
-//   嵌套键并原子写回(hermes_cli/config.py:8027 `set_config_value` →
-//   atomic_yaml_write)。以 _API_KEY/_TOKEN 结尾的键会被 config set 改道
-//   .env(config.py:8061);CUSTOM_PROVIDER_*_KEY 仅以 _KEY 结尾、不会被
-//   改道,故 .env 由我们直接行级 merge(存在则替换该行,否则追加,其余行
-//   一字不动)。
+// * custom_providers 条目字段(name/base_url/api_key/api_mode/model/models)
+//   取自 hermes 自身归一器与用户既有手建条目(config.py
+//   `_normalize_custom_provider_entry` 的 _KNOWN_KEYS;`_get_named_custom_
+//   provider` 解析 base_url/api_key/key_env/api_mode/model)。api_mode 由
+//   端点槽决定:Anthropic 槽 → anthropic_messages,OpenAI 槽 →
+//   chat_completions。内联 api_key 与本机既有手建条目同形(用户原
+//   config.yaml 里 minimax-sky 等即内联 key)。
 //
-// * CUSTOM_PROVIDER_{ID大写、非字母数字换_}_KEY 命名:hermes 0.8.0 源码不
-//   自动推导该名(全源码二进制检索仅命中 config.py:5195/5205 的无关常量
-//   _VALID_CUSTOM_PROVIDER_FIELDS/_CUSTOM_PROVIDER_LIKE_FIELDS);它是本机
-//   ~/.hermes/.env 既有的 key_env 约定。hermes 消费该 env 的两条途径:
-//   custom_providers[].key_env 指向它(hermes_cli/providers.py:658-661
-//   `resolve_custom_provider`;runtime_provider.py:1007 key 解析链),或
-//   config 值内 ${VAR} 展开(hermes_cli/config.py:6264 `_expand_env_vars`)。
-//   我们写该行以保持本机既有约定下的 key 新鲜;hermes 侧 custom_providers
-//   条目若用内联 api_key,则该行只作镜像,无副作用。
+// * 写入方式:直接 YAML 读改写 ~/.hermes/config.yaml(serde_yaml)。
+//   `hermes config set` 无法新增列表条目(`_set_nested` 不扩展列表),且
+//   键名以 _API_KEY/_TOKEN 结尾会被改道 .env —— 故 custom_providers 条目
+//   与内联 api_key 都只能直写文件。本机 config.yaml 无注释,serde_yaml 重排
+//   格式无损。落盘用 temp+rename 原子写,避免半写损坏 hermes 配置。
 //
-// * 无 remove 语义:model.{default,provider,base_url} 被清空会破坏 hermes
-//   自身运行(它总需要一个模型配置),取消激活时保留历史值,只产出 skip。
-//
-// * 测试铁律:`hermes config set` 固定读写真实 ~/.hermes(CLI 不吃 home
-//   参数),所以 CLI 段只测参数构造(`cli_sets` 纯函数),文件段
-//   (yaml 读取 diff、.env 行级 merge)全部 home 参数化 + TempHome。
+// * managed 语义:deployed_names 记录本次下发的 custom_providers 条目名。
+//   重绑到另一家时,按 managed 差集清掉旧条目再写新的(只动我们写过的条目;
+//   用户手建同名条目会被接管为规范形)。取消激活(model.* / 条目)会破坏
+//   hermes 自身运行(它总需要一个模型),故 Skip 只产出 skip、不清理 ——
+//   与原实现一致。
 
 pub struct HermesProviderAdapter;
+
+/// serde_yaml 字符串值的小工具(hermes 段专用)。
+fn ystr(s: &str) -> serde_yaml::Value {
+    serde_yaml::Value::String(s.to_string())
+}
+
+/// custom_providers 条目里 ClawBox 关心的字段投影(忽略额外字段,保证用户
+/// 加的 extra_body 等不触发反复重写;用 BTreeMap 比较,与字段顺序无关)。
+#[derive(Clone, Debug, PartialEq)]
+struct HermesEntry {
+    base_url: String,
+    api_key: String,
+    api_mode: String,
+    model: Option<String>,
+    models: BTreeMap<String, String>,
+}
+
+/// hermes 当前落盘状态投影(plan/apply diff 用)。
+struct HermesState {
+    provider: Option<String>,
+    base_url: Option<String>,
+    default: Option<String>,
+    entry: Option<HermesEntry>,
+}
 
 /// .env 内容里 `KEY=value` 行的值(取第一条命中;剥掉两侧成对引号)。
 fn env_line_value(content: &str, key: &str) -> Option<String> {
@@ -967,114 +984,165 @@ const HERMES_SLOTS: [Slot; 2] = [Slot::Anthropic, Slot::Openai];
 const HERMES_MISSING: &str = "No endpoint configured";
 
 impl HermesProviderAdapter {
-    fn env_path(home: &Path) -> PathBuf {
-        home.join(".hermes").join(".env")
+    /// custom_providers 条目名 = 服务商显示名(人类可读,与用户手建条目同形)。
+    fn entry_name(spec: &ProviderSpec) -> &str {
+        spec.name.trim()
     }
 
-    /// 服务商 id → .env 键名:CUSTOM_PROVIDER_{ID 大写、非字母数字换 _}_KEY。
-    fn env_key(id: &str) -> String {
-        let sanitized: String = id
-            .chars()
-            .map(|c| if c.is_ascii_alphanumeric() { c.to_ascii_uppercase() } else { '_' })
-            .collect();
-        format!("CUSTOM_PROVIDER_{}_KEY", sanitized)
+    /// model.provider 值:`custom:<name>` 显式路由到命名 custom provider,
+    /// 绕过 hermes 对裸名的内置 provider 阴影检查(见模块注释)。
+    fn provider_ref(spec: &ProviderSpec) -> String {
+        format!("custom:{}", Self::entry_name(spec))
     }
 
-    /// config.yaml 文本 → (model.default, model.provider, model.base_url)。
-    fn model_keys(yaml_text: &str) -> Result<(Option<String>, Option<String>, Option<String>), String> {
-        let doc: serde_yaml::Value = serde_yaml::from_str(yaml_text)
-            .map_err(|e| format!("failed to parse config.yaml: {}", e))?;
+    /// 端点槽 → hermes api_mode。
+    fn api_mode(slot: Slot) -> &'static str {
+        match slot {
+            Slot::Anthropic => "anthropic_messages",
+            Slot::Openai => "chat_completions",
+        }
+    }
+
+    /// 渲染 custom_providers 条目(内联 api_key,与用户手建条目同形)。
+    fn render_entry(spec: &ProviderSpec, url: &str, slot: Slot) -> serde_yaml::Value {
+        let mut m = serde_yaml::Mapping::new();
+        m.insert(ystr("name"), ystr(Self::entry_name(spec)));
+        m.insert(ystr("base_url"), ystr(url));
+        m.insert(ystr("api_key"), ystr(spec.api_key.trim()));
+        m.insert(ystr("api_mode"), ystr(Self::api_mode(slot)));
+        let model = spec.default_model.trim();
+        if !model.is_empty() {
+            m.insert(ystr("model"), ystr(model));
+        }
+        if !spec.models.is_empty() {
+            let mut models = serde_yaml::Mapping::new();
+            for mid in &spec.models {
+                let mid = mid.trim();
+                if mid.is_empty() {
+                    continue;
+                }
+                let mut inner = serde_yaml::Mapping::new();
+                inner.insert(ystr("name"), ystr(mid));
+                models.insert(ystr(mid), serde_yaml::Value::Mapping(inner));
+            }
+            m.insert(ystr("models"), serde_yaml::Value::Mapping(models));
+        }
+        serde_yaml::Value::Mapping(m)
+    }
+
+    fn desired_entry(spec: &ProviderSpec, url: &str, slot: Slot) -> HermesEntry {
+        let model = spec.default_model.trim();
+        let mut models = BTreeMap::new();
+        for m in &spec.models {
+            let m = m.trim();
+            if !m.is_empty() {
+                models.insert(m.to_string(), m.to_string());
+            }
+        }
+        HermesEntry {
+            base_url: url.to_string(),
+            api_key: spec.api_key.trim().to_string(),
+            api_mode: Self::api_mode(slot).to_string(),
+            model: if model.is_empty() { None } else { Some(model.to_string()) },
+            models,
+        }
+    }
+
+    fn project_entry(v: &serde_yaml::Value) -> Option<HermesEntry> {
+        let base_url = v.get("base_url")?.as_str()?.trim().to_string();
+        let api_key = v
+            .get("api_key")
+            .and_then(|x| x.as_str())
+            .unwrap_or("")
+            .trim()
+            .to_string();
+        let api_mode = v
+            .get("api_mode")
+            .and_then(|x| x.as_str())
+            .unwrap_or("")
+            .trim()
+            .to_string();
+        let model = v.get("model").and_then(|x| x.as_str()).map(|s| s.trim().to_string());
+        let mut models = BTreeMap::new();
+        if let Some(mm) = v.get("models").and_then(|x| x.as_mapping()) {
+            for (k, val) in mm.iter() {
+                if let (Some(id), Some(name)) =
+                    (k.as_str(), val.get("name").and_then(|n| n.as_str()))
+                {
+                    models.insert(id.trim().to_string(), name.trim().to_string());
+                }
+            }
+        }
+        Some(HermesEntry { base_url, api_key, api_mode, model, models })
+    }
+
+    /// 当前落盘投影:model.{provider,base_url,default} + 同名 custom_providers 条目。
+    fn current_state(&self, home: &Path, name: &str) -> Result<HermesState, String> {
+        let doc = self.read_yaml(home)?;
         let model = doc.get("model");
-        let get = |key: &str| -> Option<String> {
-            model?
-                .get(key)
+        let g = |k: &str| {
+            model
+                .and_then(|m| m.get(k))
                 .and_then(|v| v.as_str())
-                .map(|s| s.to_string())
+                .map(|s| s.trim().to_string())
         };
-        Ok((get("default"), get("provider"), get("base_url")))
+        let entry = doc
+            .get("custom_providers")
+            .and_then(|v| v.as_sequence())
+            .and_then(|seq| {
+                seq.iter()
+                    .find(|e| {
+                        e.get("name")
+                            .and_then(|n| n.as_str())
+                            .map(|n| n.trim() == name)
+                            .unwrap_or(false)
+                    })
+                    .and_then(Self::project_entry)
+            });
+        Ok(HermesState { provider: g("provider"), base_url: g("base_url"), default: g("default"), entry })
     }
 
-    /// 读 <home>/.hermes/config.yaml 的三个管理键;文件不存在 = 全 None。
-    fn read_model_keys(&self, home: &Path) -> Result<(Option<String>, Option<String>, Option<String>), String> {
+    fn read_yaml(&self, home: &Path) -> Result<serde_yaml::Value, String> {
         let path = self.config_path(home);
         if !path.exists() {
-            return Ok((None, None, None));
+            return Ok(serde_yaml::Value::Mapping(serde_yaml::Mapping::new()));
         }
         let text = std::fs::read_to_string(&path)
             .map_err(|e| format!("failed to read {}: {}", path.display(), e))?;
-        Self::model_keys(&text)
-    }
-
-    /// .env 内容里 `KEY=value` 行的值 → 模块级 env_line_value(gemini 复用)。
-    /// 行级 merge → 模块级 merge_env_line。
-
-    /// apply 的 CLI 段:`hermes config set <key> <value>` 参数组(纯函数,
-    /// 可测)。`url` = 选中的端点槽;defaultModel 为空时不下发 model.default
-    /// (沿用现值)。
-    fn cli_sets(spec: &ProviderSpec, url: &str) -> Vec<Vec<String>> {
-        let set = |key: &str, value: &str| -> Vec<String> {
-            vec!["config".into(), "set".into(), key.into(), value.into()]
-        };
-        let mut cmds = vec![
-            set("model.provider", &spec.id),
-            set("model.base_url", url),
-        ];
-        let model = spec.default_model.trim();
-        if !model.is_empty() {
-            cmds.push(set("model.default", model));
+        if text.trim().is_empty() {
+            return Ok(serde_yaml::Value::Mapping(serde_yaml::Mapping::new()));
         }
-        cmds
+        serde_yaml::from_str(&text)
+            .map_err(|e| format!("failed to parse {}: {}", path.display(), e))
     }
 
-    /// 期望状态是否已落盘(config.yaml 三键 + .env key 行)。
-    fn is_unchanged(
-        spec: &ProviderSpec,
-        url: &str,
-        current: &(Option<String>, Option<String>, Option<String>),
-        env_value: Option<&str>,
-    ) -> bool {
-        let (cur_default, cur_provider, cur_base) = current;
-        let model = spec.default_model.trim();
-        cur_provider.as_deref() == Some(spec.id.as_str())
-            && cur_base.as_deref() == Some(url)
-            && (model.is_empty() || cur_default.as_deref() == Some(model))
-            && env_value == Some(spec.api_key.trim())
-    }
-
-    fn read_env(&self, home: &Path) -> Result<String, String> {
-        let path = Self::env_path(home);
-        if !path.exists() {
-            return Ok(String::new());
+    /// 原子写(temp+rename),避免半写损坏 hermes 配置。
+    fn write_yaml(&self, home: &Path, doc: &serde_yaml::Value) -> Result<(), String> {
+        let path = self.config_path(home);
+        if let Some(dir) = path.parent() {
+            std::fs::create_dir_all(dir)
+                .map_err(|e| format!("failed to create {}: {}", dir.display(), e))?;
         }
-        std::fs::read_to_string(&path)
-            .map_err(|e| format!("failed to read {}: {}", path.display(), e))
+        let mut out = serde_yaml::to_string(doc)
+            .map_err(|e| format!("failed to serialize {}: {}", path.display(), e))?;
+        if !out.ends_with('\n') {
+            out.push('\n');
+        }
+        let tmp = path.with_extension("yaml.tmp");
+        std::fs::write(&tmp, &out).map_err(|e| format!("failed to write {}: {}", tmp.display(), e))?;
+        std::fs::rename(&tmp, &path)
+            .map_err(|e| format!("failed to rename {} -> {}: {}", tmp.display(), path.display(), e))
     }
 
     /// 不含敏感值的变更摘要。
     fn detail(spec: &ProviderSpec, url: &str) -> String {
         let model = spec.default_model.trim();
         format!(
-            "model.provider={} · base_url={} · model={} · env {}",
-            spec.id,
+            "provider={} · base_url={} · model={}",
+            Self::provider_ref(spec),
             url,
-            if model.is_empty() { "(not set)" } else { model },
-            Self::env_key(&spec.id)
+            if model.is_empty() { "(not set)" } else { model }
         )
-    }
-
-    fn run_cli(args: &[String]) -> Result<(), String> {
-        let output = std::process::Command::new("hermes")
-            .args(args)
-            .output()
-            .map_err(|e| format!("failed to run hermes CLI: {}", e))?;
-        if !output.status.success() {
-            return Err(format!(
-                "hermes {} failed: {}",
-                args.join(" "),
-                String::from_utf8_lossy(&output.stderr).trim()
-            ));
-        }
-        Ok(())
     }
 }
 
@@ -1094,15 +1162,23 @@ impl ProviderAdapter for HermesProviderAdapter {
         active_id: Option<&str>,
         _managed: &[String],
     ) -> Result<Vec<ChangeItem>, String> {
-        let current = self.read_model_keys(home)?;
-        let env = self.read_env(home)?;
         let mut changes = Vec::new();
         match resolve_single_active(providers, active_id, &HERMES_SLOTS, HERMES_MISSING) {
             Target::Deploy { spec, url } => {
-                let env_value = env_line_value(&env, &Self::env_key(&spec.id));
-                let action = if Self::is_unchanged(spec, url, &current, env_value.as_deref()) {
+                let slot =
+                    pick_endpoint(spec, &HERMES_SLOTS).map(|(_, s)| s).unwrap_or(Slot::Openai);
+                let name = Self::entry_name(spec);
+                let st = self.current_state(home, name)?;
+                let desired = Self::desired_entry(spec, url, slot);
+                let pref = Self::provider_ref(spec);
+                let model = spec.default_model.trim();
+                let unchanged = st.provider.as_deref() == Some(pref.as_str())
+                    && st.base_url.as_deref() == Some(url)
+                    && (model.is_empty() || st.default.as_deref() == Some(model))
+                    && st.entry.as_ref() == Some(&desired);
+                let action = if unchanged {
                     "unchanged"
-                } else if current.1.is_none() && env_value.is_none() {
+                } else if st.provider.is_none() && st.entry.is_none() {
                     "add"
                 } else {
                     "update"
@@ -1110,16 +1186,12 @@ impl ProviderAdapter for HermesProviderAdapter {
                 changes.push(ChangeItem {
                     name: spec.name.clone(),
                     action: action.into(),
-                    detail: if action == "unchanged" { String::new() } else { Self::detail(spec, url) },
+                    detail: if unchanged { String::new() } else { Self::detail(spec, url) },
                 });
             }
             Target::Skip { name, reason } => {
-                // 无 remove:清空 model.* 会破坏 hermes 自身运行(见模块注释)。
-                changes.push(ChangeItem {
-                    name,
-                    action: "skip".into(),
-                    detail: reason,
-                });
+                // 无 remove:清空 model.* / 删条目会破坏 hermes 自身运行(见模块注释)。
+                changes.push(ChangeItem { name, action: "skip".into(), detail: reason });
             }
         }
         Ok(changes)
@@ -1130,39 +1202,79 @@ impl ProviderAdapter for HermesProviderAdapter {
         home: &Path,
         providers: &[ProviderSpec],
         active_id: Option<&str>,
-        _managed: &[String],
+        managed: &[String],
     ) -> Result<usize, String> {
         let (spec, url) = match resolve_single_active(providers, active_id, &HERMES_SLOTS, HERMES_MISSING) {
             Target::Deploy { spec, url } => (spec, url),
             Target::Skip { .. } => return Ok(0),
         };
-        let current = self.read_model_keys(home)?;
-        let env = self.read_env(home)?;
-        let key = Self::env_key(&spec.id);
-        if Self::is_unchanged(spec, url, &current, env_line_value(&env, &key).as_deref()) {
+        let slot = pick_endpoint(spec, &HERMES_SLOTS).map(|(_, s)| s).unwrap_or(Slot::Openai);
+        let name = Self::entry_name(spec);
+        let st = self.current_state(home, name)?;
+        let desired = Self::desired_entry(spec, url, slot);
+        let pref = Self::provider_ref(spec);
+        let model = spec.default_model.trim();
+        if st.provider.as_deref() == Some(pref.as_str())
+            && st.base_url.as_deref() == Some(url)
+            && (model.is_empty() || st.default.as_deref() == Some(model))
+            && st.entry.as_ref() == Some(&desired)
+        {
             return Ok(0);
         }
-        // config.yaml 三键走 hermes 自己的 CLI(生产路径;hermes 保证原子
-        // 性与校验)。注意:CLI 固定写真实 ~/.hermes,不吃 home 参数 ——
-        // 调用方(commands/sync.rs)只以 real_home() 调 apply。
-        for args in Self::cli_sets(spec, url) {
-            Self::run_cli(&args)?;
+        let mut doc = self.read_yaml(home)?;
+        if !doc.is_mapping() {
+            doc = serde_yaml::Value::Mapping(serde_yaml::Mapping::new());
         }
-        // .env 的 key 行:行级文本 merge 直接写文件。
-        let merged = merge_env_line(&env, &key, spec.api_key.trim());
-        let env_path = Self::env_path(home);
-        if let Some(dir) = env_path.parent() {
-            std::fs::create_dir_all(dir)
-                .map_err(|e| format!("failed to create {}: {}", dir.display(), e))?;
+        // 先以不可变读取出要保留的部分(owned),再取 root 可变引用改写。
+        let kept: Vec<serde_yaml::Value> = doc
+            .get("custom_providers")
+            .and_then(|v| v.as_sequence())
+            .map(|seq| {
+                seq.iter()
+                    .filter(|e| {
+                        let ename =
+                            e.get("name").and_then(|n| n.as_str()).map(|s| s.trim()).unwrap_or("");
+                        if ename == name {
+                            return false; // 同名:我们重写规范形
+                        }
+                        // managed 差集:我们曾以该名下发、现已不激活 → 丢弃
+                        !managed.iter().any(|m| m == ename)
+                    })
+                    .cloned()
+                    .collect()
+            })
+            .unwrap_or_default();
+        let mut model_node = doc
+            .get("model")
+            .filter(|v| v.is_mapping())
+            .cloned()
+            .unwrap_or_else(|| serde_yaml::Value::Mapping(serde_yaml::Mapping::new()));
+
+        let root = doc.as_mapping_mut().unwrap();
+        let mut new_list = kept;
+        new_list.push(Self::render_entry(spec, url, slot));
+        root.insert(ystr("custom_providers"), serde_yaml::Value::Sequence(new_list));
+
+        {
+            let mm = model_node.as_mapping_mut().unwrap();
+            mm.insert(ystr("provider"), ystr(&pref));
+            mm.insert(ystr("base_url"), ystr(url));
+            if model.is_empty() {
+                let dk = ystr("default");
+                mm.remove(&dk);
+            } else {
+                mm.insert(ystr("default"), ystr(model));
+            }
         }
-        std::fs::write(&env_path, merged)
-            .map_err(|e| format!("failed to write {}: {}", env_path.display(), e))?;
+        root.insert(ystr("model"), model_node);
+
+        self.write_yaml(home, &doc)?;
         Ok(1)
     }
 
     fn deployed_names(&self, providers: &[ProviderSpec], active_id: Option<&str>) -> Vec<String> {
         match resolve_single_active(providers, active_id, &HERMES_SLOTS, HERMES_MISSING) {
-            Target::Deploy { spec, .. } => vec![Self::env_key(&spec.id)],
+            Target::Deploy { spec, .. } => vec![Self::entry_name(spec).to_string()],
             Target::Skip { .. } => vec![],
         }
     }
@@ -3211,48 +3323,13 @@ mod tests {
     }
 
     // ---- hermes ----
-    // 注意:hermes 的 CLI 段绝不在测试中运行(hermes 固定读写真实
-    // ~/.hermes)。这里只测纯函数(env_key/cli_sets/merge_env_line/
-    // env_line_value/model_keys)与 home 参数化的 plan/deployed_names。
+    // hermes 下发走直接 YAML 读改写(无 CLI 依赖),plan/apply 全程 home
+    // 参数化 + TempHome,可安全真跑 apply 并读回断言。env_line_value /
+    // merge_env_line 是 gemini 仍用的模块级工具,这里一并覆盖。
 
-    #[test]
-    fn hermes_env_key_uppercases_and_replaces_non_alnum() {
-        assert_eq!(
-            HermesProviderAdapter::env_key("minimax-sky"),
-            "CUSTOM_PROVIDER_MINIMAX_SKY_KEY"
-        );
-        assert_eq!(
-            HermesProviderAdapter::env_key("glm.logan_2"),
-            "CUSTOM_PROVIDER_GLM_LOGAN_2_KEY"
-        );
-    }
-
-    #[test]
-    fn hermes_cli_sets_builds_three_key_commands() {
-        let spec = anthropic_provider();
-        let url = "https://relay.example.com/anthropic";
-        let cmds = HermesProviderAdapter::cli_sets(&spec, url);
-        assert_eq!(
-            cmds,
-            vec![
-                vec!["config", "set", "model.provider", "p-anth"],
-                vec!["config", "set", "model.base_url", "https://relay.example.com/anthropic"],
-                vec!["config", "set", "model.default", "model-a"],
-            ]
-            .into_iter()
-            .map(|v| v.into_iter().map(String::from).collect::<Vec<_>>())
-            .collect::<Vec<_>>()
-        );
-        // defaultModel 为空 → 不下发 model.default,沿用现值
-        let mut no_model = anthropic_provider();
-        no_model.default_model = String::new();
-        let cmds = HermesProviderAdapter::cli_sets(&no_model, url);
-        assert_eq!(cmds.len(), 2);
-        assert!(!cmds.iter().any(|c| c.contains(&"model.default".to_string())));
-        // 参数里绝不出现 apiKey
-        for c in HermesProviderAdapter::cli_sets(&spec, url) {
-            assert!(!c.iter().any(|a| a.contains("sk-secret")));
-        }
+    fn read_hermes_yaml(home: &Path) -> serde_yaml::Value {
+        let p = home.join(".hermes").join("config.yaml");
+        serde_yaml::from_str(&std::fs::read_to_string(&p).unwrap()).unwrap()
     }
 
     #[test]
@@ -3276,82 +3353,135 @@ mod tests {
 
     #[test]
     fn hermes_env_line_value_parses_plain_and_quoted() {
-        let v = env_line_value("K=abc\nX=1\n", "K");
-        assert_eq!(v.as_deref(), Some("abc"));
-        let v = env_line_value("K=\"abc\"\n", "K");
-        assert_eq!(v.as_deref(), Some("abc"));
+        assert_eq!(env_line_value("K=abc\nX=1\n", "K").as_deref(), Some("abc"));
+        assert_eq!(env_line_value("K=\"abc\"\n", "K").as_deref(), Some("abc"));
         assert!(env_line_value("K2=abc\n", "K").is_none());
         // 前缀相同的长键不误配
         assert!(env_line_value("K_LONG=abc\n", "K").is_none());
     }
 
     #[test]
-    fn hermes_model_keys_reads_yaml_projection() {
-        let (default, provider, base_url) = HermesProviderAdapter::model_keys(
-            "model:\n  default: MiniMax-M3\n  provider: minimax-sky\n  base_url: https://api.minimaxi.com/anthropic\nagent:\n  max_turns: 90\n",
-        )
-        .unwrap();
-        assert_eq!(default.as_deref(), Some("MiniMax-M3"));
-        assert_eq!(provider.as_deref(), Some("minimax-sky"));
-        assert_eq!(base_url.as_deref(), Some("https://api.minimaxi.com/anthropic"));
-        // model 节缺失 → 全 None
-        let keys = HermesProviderAdapter::model_keys("agent:\n  verbose: false\n").unwrap();
-        assert_eq!(keys, (None, None, None));
-        // 坏 YAML → 错误而非 panic
-        let err = HermesProviderAdapter::model_keys("model: [unclosed").unwrap_err();
-        assert!(err.contains("parse"), "{}", err);
+    fn hermes_api_mode_provider_ref_and_entry_name() {
+        assert_eq!(HermesProviderAdapter::api_mode(Slot::Anthropic), "anthropic_messages");
+        assert_eq!(HermesProviderAdapter::api_mode(Slot::Openai), "chat_completions");
+        let spec = anthropic_provider();
+        assert_eq!(HermesProviderAdapter::entry_name(&spec), "Anthro Relay");
+        assert_eq!(HermesProviderAdapter::provider_ref(&spec), "custom:Anthro Relay");
     }
 
     #[test]
-    fn hermes_plan_add_update_unchanged_and_no_key_leak() {
+    fn hermes_render_and_project_entry_roundtrip() {
+        let spec = anthropic_provider();
+        let url = "https://relay.example.com/anthropic";
+        let entry = HermesProviderAdapter::render_entry(&spec, url, Slot::Anthropic);
+        // 必备字段齐
+        assert_eq!(entry.get("name").and_then(|v| v.as_str()), Some("Anthro Relay"));
+        assert_eq!(entry.get("base_url").and_then(|v| v.as_str()), Some(url));
+        assert_eq!(entry.get("api_mode").and_then(|v| v.as_str()), Some("anthropic_messages"));
+        assert_eq!(entry.get("model").and_then(|v| v.as_str()), Some("model-a"));
+        assert!(entry.get("models").unwrap().get("model-a").is_some());
+        assert!(entry.get("models").unwrap().get("model-b").is_some());
+        // project(读回)与 desired(目标)等价 → 落盘后不会反复重写
+        let proj = HermesProviderAdapter::project_entry(&entry).unwrap();
+        let desired = HermesProviderAdapter::desired_entry(&spec, url, Slot::Anthropic);
+        assert_eq!(proj, desired);
+    }
+
+    #[test]
+    fn hermes_plan_add_then_apply_then_unchanged_and_no_key_leak() {
         let home = TempHome::new();
         let providers = vec![anthropic_provider()];
         let a = HermesProviderAdapter;
-        // 文件不存在 → add
+
+        // 文件不存在 → add;detail 绝不含 apiKey
         let changes = a.plan(home.path(), &providers, Some("p-anth"), &[]).unwrap();
         assert_eq!(changes[0].action, "add");
         assert!(!changes[0].detail.contains("sk-secret"), "detail must not leak apiKey");
 
-        // 模拟已下发状态(config.yaml + .env)→ unchanged
-        write_file(
-            home.path(),
-            &PathBuf::from(".hermes").join("config.yaml"),
-            "model:\n  default: model-a\n  provider: p-anth\n  base_url: https://relay.example.com/anthropic\n",
+        // apply → 写 custom_providers 命名条目 + model 节
+        assert_eq!(a.apply(home.path(), &providers, Some("p-anth"), &[]).unwrap(), 1);
+        let doc = read_hermes_yaml(home.path());
+        assert_eq!(
+            doc.get("model").and_then(|m| m.get("provider")).and_then(|v| v.as_str()),
+            Some("custom:Anthro Relay")
         );
-        write_file(
-            home.path(),
-            &PathBuf::from(".hermes").join(".env"),
-            "OTHER=1\nCUSTOM_PROVIDER_P_ANTH_KEY=sk-secret-123\n",
+        assert_eq!(
+            doc.get("model").and_then(|m| m.get("base_url")).and_then(|v| v.as_str()),
+            Some("https://relay.example.com/anthropic")
         );
+        assert_eq!(
+            doc.get("model").and_then(|m| m.get("default")).and_then(|v| v.as_str()),
+            Some("model-a")
+        );
+        let seq = doc.get("custom_providers").and_then(|v| v.as_sequence()).unwrap();
+        assert_eq!(seq.len(), 1);
+        assert_eq!(seq[0].get("name").and_then(|v| v.as_str()), Some("Anthro Relay"));
+        assert_eq!(seq[0].get("api_mode").and_then(|v| v.as_str()), Some("anthropic_messages"));
+
+        // 再 plan → unchanged;再 apply → 短路 0(不重写)
         let changes = a.plan(home.path(), &providers, Some("p-anth"), &[]).unwrap();
         assert_eq!(changes[0].action, "unchanged");
+        assert_eq!(a.apply(home.path(), &providers, Some("p-anth"), &[]).unwrap(), 0);
 
         // 端点变更 → update
         let mut moved = anthropic_provider();
         moved.anthropic_base_url = "https://relay2.example.com/anthropic".into();
         let changes = a.plan(home.path(), &[moved], Some("p-anth"), &[]).unwrap();
         assert_eq!(changes[0].action, "update");
-
-        // .env key 过期 → update
-        write_file(
-            home.path(),
-            &PathBuf::from(".hermes").join(".env"),
-            "OTHER=1\nCUSTOM_PROVIDER_P_ANTH_KEY=stale\n",
-        );
-        let changes = a.plan(home.path(), &providers, Some("p-anth"), &[]).unwrap();
-        assert_eq!(changes[0].action, "update");
     }
 
     #[test]
-    fn hermes_slot_fallback_and_skip_cases() {
+    fn hermes_apply_preserves_user_entries_top_keys_and_drops_managed() {
         let home = TempHome::new();
         let a = HermesProviderAdapter;
-        // 只有 OpenAI 端点 → 兜底槽同样可下发(hermes 支持双协议)
+        // 既有:用户手建条目 + 顶层 agent 节 + 我们曾以 "old-name" 下发(managed)
+        write_file(
+            home.path(),
+            &PathBuf::from(".hermes").join("config.yaml"),
+            "agent:\n  max_turns: 90\ncustom_providers:\n  - name: user-own\n    base_url: https://u.example.com/v1\n    api_key: user-key\n    api_mode: chat_completions\n  - name: old-name\n    base_url: https://old.example.com/anthropic\n    api_key: old-key\n    api_mode: anthropic_messages\nmodel:\n  provider: custom:old-name\n  default: old-model\n",
+        );
+        let providers = vec![anthropic_provider()];
+        let managed = vec!["old-name".to_string()];
+
+        assert_eq!(a.apply(home.path(), &providers, Some("p-anth"), &managed).unwrap(), 1);
+        let doc = read_hermes_yaml(home.path());
+
+        // 顶层 agent 节原样保留
+        assert_eq!(
+            doc.get("agent").and_then(|a| a.get("max_turns")).and_then(|v| v.as_i64()),
+            Some(90)
+        );
+        // 用户手建条目保留;old-name(managed 差集)被丢弃;新条目已写
+        let seq = doc.get("custom_providers").and_then(|v| v.as_sequence()).unwrap();
+        let names: Vec<&str> = seq
+            .iter()
+            .filter_map(|e| e.get("name").and_then(|v| v.as_str()))
+            .collect();
+        assert!(names.contains(&"user-own"), "user entry must be preserved");
+        assert!(!names.contains(&"old-name"), "stale managed entry must be dropped");
+        assert!(names.contains(&"Anthro Relay"), "new entry must be written");
+        // model.provider 指向新条目
+        assert_eq!(
+            doc.get("model").and_then(|m| m.get("provider")).and_then(|v| v.as_str()),
+            Some("custom:Anthro Relay")
+        );
+    }
+
+    #[test]
+    fn hermes_slot_fallback_skip_and_deployed_names() {
+        let home = TempHome::new();
+        let a = HermesProviderAdapter;
+        // 只有 OpenAI 端点 → 可下发;api_mode 由 OpenAI 槽决定(chat_completions)
         let providers = vec![openai_provider()];
         let changes = a.plan(home.path(), &providers, Some("p-oa"), &[]).unwrap();
         assert_eq!(changes[0].action, "add");
         assert!(changes[0].detail.contains("https://api.oa.example.com/v1"), "{}", changes[0].detail);
-        assert_eq!(a.deployed_names(&providers, Some("p-oa")), vec!["CUSTOM_PROVIDER_P_OA_KEY"]);
+        assert_eq!(a.deployed_names(&providers, Some("p-oa")), vec!["OA Relay"]);
+        a.apply(home.path(), &providers, Some("p-oa"), &[]).unwrap();
+        let doc = read_hermes_yaml(home.path());
+        let seq = doc.get("custom_providers").and_then(|v| v.as_sequence()).unwrap();
+        assert_eq!(seq[0].get("api_mode").and_then(|v| v.as_str()), Some("chat_completions"));
+
         // 双端点 → Anthropic 槽优先
         let dual = vec![dual_provider()];
         let changes = a.plan(home.path(), &dual, Some("p-dual"), &[]).unwrap();
@@ -3365,36 +3495,14 @@ mod tests {
         let changes = a.plan(home.path(), &none, Some("p-none"), &[]).unwrap();
         assert_eq!(changes[0].action, "skip");
         assert!(changes[0].detail.contains("No endpoint configured"), "{}", changes[0].detail);
-        // 未选择激活 → skip,无 remove(hermes 无 remove 语义)
+        // 未选择激活 → skip,apply 不做任何事(不写文件)
         let changes = a.plan(home.path(), &providers, None, &[]).unwrap();
         assert_eq!(changes.len(), 1);
         assert_eq!(changes[0].action, "skip");
         assert!(a.deployed_names(&providers, None).is_empty());
-        // apply 在 skip 下不做任何事(不触 CLI、不写文件)
-        assert_eq!(a.apply(home.path(), &providers, None, &[]).unwrap(), 0);
-        assert!(!home.path().join(".hermes").exists());
-    }
-
-    #[test]
-    fn hermes_apply_unchanged_short_circuits_without_cli() {
-        // 已落盘状态下 apply 必须在 CLI 段之前短路返回 0 —— 这也是该
-        // 测试能安全运行的原因(绝不真正执行 hermes CLI)。
-        let home = TempHome::new();
-        let providers = vec![anthropic_provider()];
-        write_file(
-            home.path(),
-            &PathBuf::from(".hermes").join("config.yaml"),
-            "model:\n  default: model-a\n  provider: p-anth\n  base_url: https://relay.example.com/anthropic\n",
-        );
-        write_file(
-            home.path(),
-            &PathBuf::from(".hermes").join(".env"),
-            "CUSTOM_PROVIDER_P_ANTH_KEY=sk-secret-123\n",
-        );
-        assert_eq!(
-            HermesProviderAdapter.apply(home.path(), &providers, Some("p-anth"), &[]).unwrap(),
-            0
-        );
+        let fresh = TempHome::new();
+        assert_eq!(a.apply(fresh.path(), &providers, None, &[]).unwrap(), 0);
+        assert!(!fresh.path().join(".hermes").exists());
     }
 
     #[test]

@@ -1,5 +1,7 @@
 <script lang="ts">
+  import { onMount } from 'svelte';
   import { _ } from 'svelte-i18n';
+  import { getVersion } from '@tauri-apps/api/app';
   import logoUrl from '../../assets/logo.png';
   import { open } from '@tauri-apps/plugin-shell';
   import { themeChoice, setTheme, type ThemeChoice } from '$lib/theme';
@@ -13,7 +15,7 @@
     other: 'question',
   };
 
-  let appVersion = $state('0.1.0');
+  let appVersion = $state('');
   let checking = $state(false);
   let updateAvailable = $state(false);
   let updateMessage = $state('');
@@ -85,6 +87,14 @@
       feedbackSubmitting = false;
     }
   }
+
+  onMount(async () => {
+    try {
+      appVersion = await getVersion();
+    } catch {
+      appVersion = 'unknown';
+    }
+  });
 </script>
 
 
@@ -241,6 +251,9 @@
   }
   
   .about-header {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
     text-align: center;
     margin-bottom: 2rem;
   }
