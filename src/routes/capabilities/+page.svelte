@@ -46,7 +46,8 @@
   let memoryByBackend = $state<Record<BackendId, MemoryStatus | null>>({ openclaw: null, hermes: null });
   let memoryErrors = $state<BackendError[]>([]);
 
-  let isLoading = $state(true);
+  let isLoading = $state(false);
+  let nativeLoaded = false; // 原生记忆区已加载过(懒加载:点开折叠区才跑 CLI 探测)
   let busyKey = $state<string | null>(null);
 
   async function load() {
@@ -60,6 +61,13 @@
     memoryByBackend = memMap;
 
     isLoading = false;
+  }
+
+  /** 折叠区首次展开才探测(hermes/openclaw 的 memory 状态要跑真实 CLI,数秒) */
+  function onNativeToggle(e: Event) {
+    if (!(e.currentTarget as HTMLDetailsElement).open || nativeLoaded) return;
+    nativeLoaded = true;
+    void load();
   }
 
   // ---------- 技能库(真源 ~/.agents/skills/,软链下发) ----------
@@ -681,7 +689,7 @@
       const all = await agents_list();
       agentLabels = Object.fromEntries(all.map((a) => [a.id, a.label]));
     } catch { /* 回退本地映射即可 */ }
-    await load();
+    // 原生记忆区改为折叠区展开时懒加载(见 onNativeToggle),不再阻塞全页
   });
 </script>
 
@@ -706,9 +714,7 @@
   {/if}
 
   <div class="tab-content glass-card">
-    {#if isLoading}
-      <div class="loading"><div class="spinner"></div></div>
-    {:else if activeTab === 'skills'}
+    {#if activeTab === 'skills'}
       <div class="skills-sync">
         <!-- 工具条:导入 / 扫描收编 / 同步到 Agent -->
         <div class="skills-toolbar">
@@ -1372,10 +1378,13 @@
           {/if}
         </div>
 
-        <!-- Agent 原生记忆(旧 per-backend 状态,降权:默认收起) -->
-        <details class="native-memory">
+        <!-- Agent 原生记忆(旧 per-backend 状态,降权:默认收起,展开才探测) -->
+        <details class="native-memory" ontoggle={onNativeToggle}>
           <summary>{$_('capabilities.memorySync.nativeTitle')}</summary>
           <div class="backend-panels">
+            {#if isLoading}
+              <div class="sync-loading"><span class="spinner small"></span></div>
+            {/if}
             {#each backends as backend (backend.id)}
               <section class="backend-section">
                 <header class="backend-header">
