@@ -20,7 +20,8 @@
         "fullscreen": false,
         "backgroundColor": "#0a0a0f",
         "titleBarStyle": "Transparent",
-        "hiddenTitle": true
+        "hiddenTitle": true,
+        "visible": false
       }
     ],
     "security": {

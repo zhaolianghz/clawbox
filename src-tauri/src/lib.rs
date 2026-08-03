@@ -16,6 +16,13 @@ pub fn run() {
             commands::sync::reconcile_bindings_on_startup();
             Ok(())
         })
+        // 窗口 visible:false 创建;页面加载完成(index.html 内联主题已生效)
+        // 再显示,消除 WKWebView 默认白底的启动闪烁。必须在 Rust 侧做:
+        // 隐藏窗口的 WebView 被 macOS 挂起,前端 JS 定时器/rAF 都不执行。
+        .on_page_load(|window, _payload| {
+            let _ = window.window().show();
+            let _ = window.window().set_focus();
+        })
         .invoke_handler(tauri::generate_handler![
             commands::aggregate::list_backends,
             commands::aggregate::gateway_status_all,
