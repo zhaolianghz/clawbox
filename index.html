@@ -4,6 +4,22 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>ClawBox</title>
+    <style>
+      /* 首帧关键背景:JS 加载前按主题上色,消除启动白闪 */
+      html { background: #0a0a0f; }
+      html[data-theme="light"] { background: #f6f7f9; }
+      html[data-theme="minimal"] { background: #ffffff; }
+    </style>
+    <script>
+      // 首帧主题预应用(与 src/lib/theme.ts 的 resolve 一致;mount 前 initTheme 会全量接管)
+      try {
+        var t = localStorage.getItem('clawbox.theme') || 'system';
+        if (['system','light','dark','cyberpunk','minimal','liquid-glass'].indexOf(t) < 0) t = 'system';
+        var dark = t === 'light' ? false : t === 'system' ? matchMedia('(prefers-color-scheme: dark)').matches : true;
+        document.documentElement.setAttribute('data-theme', t === 'system' ? (dark ? 'dark' : 'light') : t);
+        document.documentElement.style.colorScheme = dark ? 'dark' : 'light';
+      } catch (e) { /* localStorage/matchMedia 不可用时保持默认深色 */ }
+    </script>
   </head>
   <body>
     <div id="app"></div>

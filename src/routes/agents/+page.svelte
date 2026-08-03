@@ -61,22 +61,23 @@
     }
   }
 
-  onMount(async () => {
+  onMount(() => {
     // 秒开:先渲染上次探测结果,真实探测后台进行
     const cached = readStatusCache();
     if (cached) {
       agents = cached;
       isLoading = false;
     }
-    await refresh();
-    // 页面加载时只消费缓存(1h TTL 内零请求);强制刷新走「检查更新」按钮
-    checkUpdates(false);
+    // 服务商列表/绑定与 agent 探测互不依赖:并行启动,不让 2s+ 的探测
+    // 拖住服务商选择器的首次渲染
     void loadProviders();
-    try {
-      bindings = await agent_providers_get();
-    } catch (e) {
-      console.warn('agent_providers_get failed', e);
-    }
+    agent_providers_get()
+      .then((b) => (bindings = b))
+      .catch((e) => console.warn('agent_providers_get failed', e));
+    void refresh().then(() => {
+      // 版本徽章依赖探测结果;页面加载时只消费缓存(1h TTL 内零请求)
+      checkUpdates(false);
+    });
   });
 
   // ---------- 服务商绑定(选中即生效) ----------
