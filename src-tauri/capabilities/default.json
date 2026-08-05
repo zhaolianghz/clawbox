@@ -12,6 +12,7 @@
     "core:window:allow-show",
     "shell:allow-open",
     "dialog:allow-open",
+    "dialog:allow-save",
     {
       "identifier": "shell:allow-execute",
       "allow": [

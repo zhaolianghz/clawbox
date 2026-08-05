@@ -119,6 +119,15 @@ pub struct Config {
     /// 见 sync::providers 各适配器)。驱动 remove 检测:只删我们写过的。
     #[serde(default)]
     pub providers_managed: HashMap<String, Vec<String>>,
+    /// agent_id -> 有序 fallback 服务商 id 链(primary 之外的兜底,按序尝试)。
+    /// 仅对原生支持 fallback 的 agent(目前仅 hermes)生效;其它 agent 忽略。
+    #[serde(default)]
+    pub agent_fallbacks: HashMap<String, Vec<String>>,
+    /// agent_id -> 上次 fallback 同步成功后我们写入的 custom_providers 条目名
+    /// (驱动 fallback 链变更/移除时的清理)。与 providers_managed 分离:主 apply
+    /// 只看 providers_managed、不会误删 fallback 条目,反之亦然。
+    #[serde(default)]
+    pub providers_fallback_managed: HashMap<String, Vec<String>>,
     /// agent_id -> 上次技能同步成功后我们建链的技能名(见 sync::skills)。
     /// remove 只删我们建的、仍指向库内的软链。
     #[serde(default)]
@@ -283,6 +292,10 @@ pub fn providers_set_at(
     let old = std::mem::replace(&mut config.providers, providers);
     let ids: HashSet<String> = config.providers.iter().map(|p| p.id.clone()).collect();
     config.agent_providers.retain(|_, pid| ids.contains(pid));
+    // 删除服务商时同步清掉引用它的 fallback 链条目(保留顺序,去重)。
+    for fb_ids in config.agent_fallbacks.values_mut() {
+        fb_ids.retain(|fid| ids.contains(fid));
+    }
 
     // 变更集:新列表里与旧条目不等(含新增)的服务商 id
     let changed: HashSet<String> = config
@@ -297,12 +310,31 @@ pub fn providers_set_at(
         .filter(|(_, pid)| changed.contains(*pid))
         .map(|(a, p)| (a.clone(), p.clone()))
         .collect();
+    // fallback 重推:链里含变更服务商的 agent,整链重推一次。
+    let to_repush_fb: Vec<(String, Vec<String>)> = config
+        .agent_fallbacks
+        .iter()
+        .filter(|(_, chain)| chain.iter().any(|fid| changed.contains(fid)))
+        .map(|(a, c)| (a.clone(), c.clone()))
+        .collect();
     save_config(home, &config)?;
 
     // 重推 = 对该 agent 重新绑定一次(bind_at 自己 load/save,故先落盘上面的状态)
     let mut results = Vec::new();
     for (agent_id, pid) in to_repush {
         match crate::commands::sync::agent_provider_bind_at(home, &agent_id, Some(pid)) {
+            Ok(r) => results.push(r),
+            Err(e) => results.push(ApplyResult {
+                agent_id,
+                ok: false,
+                backup_path: None,
+                applied: 0,
+                error: Some(e),
+            }),
+        }
+    }
+    for (agent_id, chain) in to_repush_fb {
+        match crate::commands::sync::agent_fallbacks_set_at(home, &agent_id, chain) {
             Ok(r) => results.push(r),
             Err(e) => results.push(ApplyResult {
                 agent_id,

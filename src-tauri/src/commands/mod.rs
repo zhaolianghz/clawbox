@@ -5,3 +5,4 @@ pub mod config;
 pub mod install;
 pub mod provider_test;
 pub mod sync;
+pub mod transfer;

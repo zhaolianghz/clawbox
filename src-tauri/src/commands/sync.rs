@@ -2,7 +2,7 @@
 //! lives in `crate::sync` / `crate::commands::config` so it stays testable
 //! against a tempdir home.
 
-use crate::commands::config::{load_config, real_home, save_config, Config, McpServerSpec};
+use crate::commands::config::{load_config, real_home, save_config, Config, McpServerSpec, ProviderSpec};
 use crate::sync::{self, providers, AgentPlan, ApplyResult};
 use serde::Serialize;
 use std::collections::{BTreeMap, HashMap};
@@ -155,6 +155,88 @@ pub async fn agent_providers_get() -> Result<HashMap<String, String>, String> {
     Ok(load_config(&real_home())?.agent_providers)
 }
 
+/// fallback 链设置核心(同步、home 参数化)。空链 = 清空该 agent 的 fallback。
+/// 不支持 fallback 的 agent 返 Err;逐家校验可下发性(端点槽 + key + model)。
+pub fn agent_fallbacks_set_at(
+    home: &Path,
+    agent_id: &str,
+    fallback_ids: Vec<String>,
+) -> Result<ApplyResult, String> {
+    let mut config = load_config(home)?;
+    let Some(adapter) = providers::find_adapter(agent_id) else {
+        return Err(format!("unknown agent: {}", agent_id));
+    };
+    if !adapter.supports_fallback() {
+        return Err(format!("{} does not support a fallback chain", agent_id));
+    }
+    // 去重保序(同名 fallback 只取首次),primary 不允许同时当 fallback。
+    let primary = config.agent_providers.get(agent_id);
+    let mut seen = std::collections::HashSet::new();
+    let mut chain: Vec<String> = Vec::new();
+    for fid in &fallback_ids {
+        if primary == Some(fid) {
+            continue; // primary 已是激活,fallback 链里不重复
+        }
+        if !seen.insert(fid.clone()) {
+            continue;
+        }
+        chain.push(fid.clone());
+    }
+    let mut fb_specs: Vec<ProviderSpec> = Vec::new();
+    for fid in &chain {
+        let Some(spec) = config.providers.iter().find(|p| &p.id == fid) else {
+            return Err(format!("unknown provider id: {}", fid));
+        };
+        if !spec.enabled {
+            return Err(format!("provider {} is disabled", spec.name));
+        }
+        if !adapter.fallback_deployable(spec) {
+            return Err(format!(
+                "provider {} cannot be a fallback for {} (configure its endpoint, API key, and default model first)",
+                spec.name, agent_id
+            ));
+        }
+        fb_specs.push(spec.clone());
+    }
+    let fb_managed = config
+        .providers_fallback_managed
+        .get(agent_id)
+        .cloned()
+        .unwrap_or_default();
+    let result = providers::apply_fallbacks_one(home, adapter, &fb_specs, &fb_managed);
+    if result.ok {
+        if chain.is_empty() {
+            config.agent_fallbacks.remove(agent_id);
+            config.providers_fallback_managed.remove(agent_id);
+        } else {
+            let deployed = adapter.deployed_fallback_names(&fb_specs);
+            config.agent_fallbacks.insert(agent_id.to_string(), chain);
+            config
+                .providers_fallback_managed
+                .insert(agent_id.to_string(), deployed);
+        }
+        save_config(home, &config)?;
+    }
+    Ok(result)
+}
+
+#[tauri::command]
+pub async fn agent_fallbacks_set(
+    agent_id: String,
+    fallback_ids: Vec<String>,
+) -> Result<ApplyResult, String> {
+    let _guard = crate::commands::config::CONFIG_LOCK
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+    agent_fallbacks_set_at(&real_home(), &agent_id, fallback_ids)
+}
+
+/// fallback 链只读快照(agent_id -> 有序 provider id 链)。
+#[tauri::command]
+pub async fn agent_fallbacks_get() -> Result<HashMap<String, Vec<String>>, String> {
+    Ok(load_config(&real_home())?.agent_fallbacks)
+}
+
 /// 启动对账:对每个已绑定 agent 跑 plan,有漂移(ClawBox 升级改了下发格式、
 /// 或用户手改过 agent 配置文件)才按当前绑定重推。无漂移零写入——不产生
 /// 备份、不碰任何文件。静默执行:失败不打断启动,下次启动或用户在
@@ -187,6 +269,44 @@ pub fn reconcile_bindings_at(home: &Path) -> Vec<ApplyResult> {
             continue;
         }
         match agent_provider_bind_at(home, agent_id, Some(pid.clone())) {
+            Ok(r) => results.push(r),
+            Err(e) => results.push(ApplyResult {
+                agent_id: agent_id.clone(),
+                ok: false,
+                backup_path: None,
+                applied: 0,
+                error: Some(e),
+            }),
+        }
+    }
+    // fallback 链漂移:对每个有 fallback 绑定的 agent,若 plan_fallbacks 报漂移
+    // 就重推。不支持 fallback 的 agent plan 返回空 → 跳过。
+    for (agent_id, chain) in &config.agent_fallbacks {
+        let Some(adapter) = providers::find_adapter(agent_id) else {
+            continue;
+        };
+        if !adapter.supports_fallback() {
+            continue;
+        }
+        let fb_specs: Vec<ProviderSpec> = chain
+            .iter()
+            .filter_map(|fid| config.providers.iter().find(|p| &p.id == fid))
+            .filter(|p| p.enabled)
+            .cloned()
+            .collect();
+        let fb_managed = config
+            .providers_fallback_managed
+            .get(agent_id)
+            .cloned()
+            .unwrap_or_default();
+        let drifted = match adapter.plan_fallbacks(home, &fb_specs, &fb_managed) {
+            Ok(changes) => !changes.is_empty(),
+            Err(_) => false,
+        };
+        if !drifted {
+            continue;
+        }
+        match agent_fallbacks_set_at(home, agent_id, chain.clone()) {
             Ok(r) => results.push(r),
             Err(e) => results.push(ApplyResult {
                 agent_id: agent_id.clone(),
@@ -997,5 +1117,69 @@ mod tests {
         let cfg = load_config(home.path()).unwrap();
         assert!(cfg.agent_providers.is_empty());
         assert!(!home.path().join(".codex").exists());
+    }
+
+    // ---- fallback 链端到端(agent_fallbacks_set_at)----
+
+    /// 造一个带两家服务商、primary 已绑定到 hermes 的 home。返回 (home, p1, p2)。
+    fn fallback_home() -> (TempHome, ProviderSpec, ProviderSpec) {
+        let home = TempHome::new();
+        let p1 = pspec("p1", "MiniMax", "https://api.minimaxi.com/anthropic", "");
+        let p2 = pspec("p2", "DeepSeek", "", "https://api.deepseek.com/v1");
+        let mut config = Config::default();
+        config.providers = vec![p1.clone(), p2.clone()];
+        save_config(home.path(), &config).unwrap();
+        // primary 绑定到 hermes
+        agent_provider_bind_at(home.path(), "hermes", Some("p1".to_string())).unwrap();
+        (home, p1, p2)
+    }
+
+    #[test]
+    fn fallback_set_writes_chain_and_persists_and_clears() {
+        let (home, _p1, _p2) = fallback_home();
+        // 设 fallback = [p2]
+        let r = agent_fallbacks_set_at(home.path(), "hermes", vec!["p2".to_string()]).unwrap();
+        assert!(r.ok, "{:?}", r.error);
+
+        // config.json 落盘了 agent_fallbacks + providers_fallback_managed
+        let cfg = load_config(home.path()).unwrap();
+        assert_eq!(cfg.agent_fallbacks.get("hermes").map(|v| v.clone()), Some(vec!["p2".to_string()]));
+        assert_eq!(
+            cfg.providers_fallback_managed.get("hermes").map(|v| v.clone()),
+            Some(vec!["DeepSeek".to_string()])
+        );
+
+        // hermes config.yaml:fallback_providers 链 + 两家 custom_providers 条目都在
+        let yaml = std::fs::read_to_string(home.path().join(".hermes").join("config.yaml")).unwrap();
+        assert!(yaml.contains("fallback_providers:"), "{}", yaml);
+        assert!(yaml.contains("provider: custom:DeepSeek"), "{}", yaml);
+        assert!(yaml.contains("name: MiniMax"), "{}", yaml);
+        assert!(yaml.contains("name: DeepSeek"), "{}", yaml);
+        // primary 未被碰
+        assert!(yaml.contains("provider: custom:MiniMax"), "{}", yaml);
+
+        // 清空 fallback 链 → 键删除、条目清掉、config.json 收回
+        agent_fallbacks_set_at(home.path(), "hermes", vec![]).unwrap();
+        let yaml2 = std::fs::read_to_string(home.path().join(".hermes").join("config.yaml")).unwrap();
+        assert!(!yaml2.contains("fallback_providers"), "{}", yaml2);
+        assert!(!yaml2.contains("name: DeepSeek"), "cleared fallback entry removed");
+        assert!(yaml2.contains("name: MiniMax"), "primary intact after clear");
+        let cfg2 = load_config(home.path()).unwrap();
+        assert!(!cfg2.agent_fallbacks.contains_key("hermes"));
+        assert!(!cfg2.providers_fallback_managed.contains_key("hermes"));
+    }
+
+    #[test]
+    fn fallback_rejects_unsupported_agent_and_undeployable_provider() {
+        let (home, _p1, _p2) = fallback_home();
+        // claude-code 不支持 fallback
+        let err = agent_fallbacks_set_at(home.path(), "claude-code", vec!["p2".to_string()]).unwrap_err();
+        assert!(err.contains("does not support a fallback"), "{}", err);
+        // 无端点的服务商不可作 fallback
+        let mut config = load_config(home.path()).unwrap();
+        config.providers.push(pspec("p3", "NoEP", "", ""));
+        save_config(home.path(), &config).unwrap();
+        let err = agent_fallbacks_set_at(home.path(), "hermes", vec!["p3".to_string()]).unwrap_err();
+        assert!(err.contains("cannot be a fallback"), "{}", err);
     }
 }

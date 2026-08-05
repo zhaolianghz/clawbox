@@ -6,7 +6,7 @@
   import { agent_sync_overview, type AgentSyncOverview, type SyncedItem } from '../../lib/api/providerSync';
   import AgentLogo from '../../lib/components/AgentLogo.svelte';
   import { providers, loadProviders } from '../../lib/stores/config';
-  import { agent_provider_bind, agent_providers_get } from '../../lib/api/providerSync';
+  import { agent_provider_bind, agent_providers_get, agent_fallbacks_get, agent_fallbacks_set } from '../../lib/api/providerSync';
   import type { ModelProvider } from '../../lib/api/config';
 
   let agents = $state<AgentStatus[]>([]);
@@ -74,6 +74,9 @@
     agent_providers_get()
       .then((b) => (bindings = b))
       .catch((e) => console.warn('agent_providers_get failed', e));
+    agent_fallbacks_get()
+      .then((f) => (fallbacks = f))
+      .catch((e) => console.warn('agent_fallbacks_get failed', e));
     void refresh().then(() => {
       // 版本徽章依赖探测结果;页面加载时只消费缓存(1h TTL 内零请求)
       checkUpdates(false);
@@ -85,6 +88,88 @@
   let bindApplying = $state<Record<string, boolean>>({});
   let bindErrors = $state<Record<string, string>>({});
   let bindFlash = $state<Record<string, boolean>>({}); // 成功短暂高亮
+
+  // ---------- fallback 链(仅原生支持的 agent;目前仅 hermes)----------
+  let fallbacks = $state<Record<string, string[]>>({});
+  let fbApplying = $state<Record<string, boolean>>({});
+  let fbErrors = $state<Record<string, string>>({});
+  let fbFlash = $state<Record<string, boolean>>({});
+  // 与后端 ProviderAdapter::supports_fallback() 对应;仅这些 agent 渲染 fallback UI。
+  const SUPPORTS_FALLBACK = new Set(['hermes']);
+
+  async function loadFallbacks() {
+    try {
+      fallbacks = await agent_fallbacks_get();
+    } catch (e) {
+      console.warn('agent_fallbacks_get failed', e);
+    }
+  }
+
+  /** 把某 provider 追加到该 agent 的 fallback 链尾(去重;不与 primary 重复) */
+  async function addFallback(agentId: string, providerId: string) {
+    const primary = bindings[agentId];
+    const cur = fallbacks[agentId] ?? [];
+    if (providerId === primary || cur.includes(providerId)) return;
+    await setFallbacks(agentId, [...cur, providerId]);
+  }
+
+  /** 从 fallback 链里移除某 provider */
+  async function removeFallback(agentId: string, providerId: string) {
+    const cur = fallbacks[agentId] ?? [];
+    await setFallbacks(agentId, cur.filter((id) => id !== providerId));
+  }
+
+  // ---- 拖拽排序(原生 HTML5 DnD;无额外依赖)----
+  // {agentId, index} 或 null。跨 agent 的 drop 一律忽略(只同卡内可排)。
+  let dragFb = $state<{ agent: string; from: number } | null>(null);
+  let dropIdx = $state<{ agent: string; to: number } | null>(null);
+
+  function onFbDragStart(agentId: string, i: number, e: DragEvent) {
+    dragFb = { agent: agentId, from: i };
+    if (e.dataTransfer) {
+      e.dataTransfer.effectAllowed = 'move';
+      // Firefox 需设 data 才触发 drag
+      e.dataTransfer.setData('text/plain', String(i));
+    }
+  }
+  function onFbDragOver(agentId: string, i: number, e: DragEvent) {
+    if (dragFb?.agent !== agentId) return;
+    e.preventDefault(); // 允许 drop
+    if (e.dataTransfer) e.dataTransfer.dropEffect = 'move';
+    if (dropIdx?.agent !== agentId || dropIdx?.to !== i) dropIdx = { agent: agentId, to: i };
+  }
+  async function onFbDrop(agentId: string, i: number, e: DragEvent) {
+    e.preventDefault();
+    const from = dragFb;
+    dragFb = null;
+    dropIdx = null;
+    if (!from || from.agent !== agentId || from.from === i) return;
+    const cur = [...(fallbacks[agentId] ?? [])];
+    if (from.from < 0 || from.from >= cur.length || i < 0 || i >= cur.length) return;
+    const [moved] = cur.splice(from.from, 1);
+    cur.splice(i, 0, moved);
+    await setFallbacks(agentId, cur);
+  }
+  function onFbDragEnd() {
+    dragFb = null;
+    dropIdx = null;
+  }
+
+  async function setFallbacks(agentId: string, ids: string[]) {
+    fbApplying = { ...fbApplying, [agentId]: true };
+    fbErrors = { ...fbErrors, [agentId]: '' };
+    try {
+      await agent_fallbacks_set(agentId, ids);
+      fallbacks = { ...fallbacks, [agentId]: ids };
+      fbFlash = { ...fbFlash, [agentId]: true };
+      setTimeout(() => (fbFlash = { ...fbFlash, [agentId]: false }), 2000);
+      if (overview !== null) void loadOverview(true);
+    } catch (e) {
+      fbErrors = { ...fbErrors, [agentId]: String(e) };
+    } finally {
+      fbApplying = { ...fbApplying, [agentId]: false };
+    }
+  }
 
   // 各 agent 的端点槽位偏好(与 src-tauri/src/sync/providers.rs 各适配器一致;
   // 不在表里的 agent 不支持服务商下发,不渲染选择器)
@@ -122,6 +207,8 @@
       bindings = { ...bindings, [agentId]: providerId };
       bindFlash = { ...bindFlash, [agentId]: true };
       setTimeout(() => (bindFlash = { ...bindFlash, [agentId]: false }), 2000);
+      // primary 变了:后端会自动把新 primary 从 fallback 链里剔出,刷新本地状态
+      void loadFallbacks();
       if (overview !== null) void loadOverview(true); // 漂移状态跟着刷新
     } catch (e) {
       bindErrors = { ...bindErrors, [agentId]: String(e) };
@@ -318,6 +405,54 @@
             </div>
             {#if bindErrors[a.id]}
               <pre class="install-error">{bindErrors[a.id]}</pre>
+            {/if}
+            {#if SUPPORTS_FALLBACK.has(a.id)}
+              <div class="provider-bind fallback" class:flash={fbFlash[a.id]}>
+                <span class="bind-label">{$_('agents.fallback.label')}</span>
+                <div class="fallback-chain">
+                  {#each fallbacks[a.id] ?? [] as fid, i (fid)}
+                    {@const p = enabledProviders.find((x) => x.id === fid) ?? $providers.find((x) => x.id === fid)}
+                    <span
+                      class="chip chip-on"
+                      class:dragging={dragFb?.agent === a.id && dragFb?.from === i}
+                      class:drop-target={dropIdx?.agent === a.id && dropIdx?.to === i && dragFb?.from !== i}
+                      draggable={!fbApplying[a.id]}
+                      title={$_('agents.fallback.dragHint')}
+                      ondragstart={(e) => onFbDragStart(a.id, i, e)}
+                      ondragover={(e) => onFbDragOver(a.id, i, e)}
+                      ondrop={(e) => onFbDrop(a.id, i, e)}
+                      ondragend={onFbDragEnd}
+                      role="button"
+                      tabindex="0"
+                    >
+                      <span class="chip-grip" aria-hidden="true">⋮⋮</span>
+                      <span class="chip-idx">{i + 1}</span>
+                      {p?.name ?? fid}
+                      <button
+                        class="chip-x"
+                        title={$_('agents.fallback.remove')}
+                        aria-label={$_('agents.fallback.remove')}
+                        disabled={fbApplying[a.id]}
+                        onclick={() => removeFallback(a.id, fid)}>×</button>
+                    </span>
+                  {/each}
+                  {#each enabledProviders.filter((p) => p.id !== bindings[a.id] && !(fallbacks[a.id] ?? []).includes(p.id) && compatible(a.id, p) && p.defaultModel) as p (p.id)}
+                    <button
+                      class="chip chip-add"
+                      title={$_('agents.fallback.add')}
+                      disabled={fbApplying[a.id]}
+                      onclick={() => addFallback(a.id, p.id)}
+                    >+ {p.name}</button>
+                  {/each}
+                </div>
+                {#if !(fallbacks[a.id]?.length) && !enabledProviders.some((p) => p.id !== bindings[a.id] && compatible(a.id, p) && p.defaultModel)}
+                  <span class="fallback-empty">{$_('agents.fallback.empty')}</span>
+                {/if}
+                {#if fbApplying[a.id]}<span class="spinner small"></span>{/if}
+              </div>
+              {#if fbErrors[a.id]}
+                <pre class="install-error">{fbErrors[a.id]}</pre>
+              {/if}
             {/if}
           {/if}
           <div class="card-actions">
@@ -531,6 +666,27 @@
   .bind-select.empty { color: var(--text-muted); }
   .bind-select:disabled { opacity: 0.5; cursor: default; }
   .provider-bind.flash .bind-select { border-color: #4ade80; transition: border-color 0.3s; }
+  /* fallback 链 */
+  .provider-bind.fallback { align-items: flex-start; flex-wrap: wrap; }
+  .provider-bind.fallback.flash { outline: 1px solid #4ade80; outline-offset: 2px; border-radius: 6px; transition: outline-color 0.3s; }
+  .fallback-chain { display: flex; flex-wrap: wrap; gap: 0.35rem; align-items: center; flex: 1; min-width: 0; }
+  .chip { display: inline-flex; align-items: center; gap: 0.25rem; font-size: 0.72rem;
+    padding: 0.2rem 0.5rem; border-radius: 999px; border: 1px solid var(--border-strong);
+    background-color: var(--bg-tertiary); line-height: 1.2; }
+  .chip-on { border-color: var(--neon-cyan); cursor: grab; }
+  .chip-on:active { cursor: grabbing; }
+  .chip-on.dragging { opacity: 0.4; }
+  .chip-on.drop-target { border-color: var(--accent, #f59e0b); box-shadow: 0 0 0 2px color-mix(in srgb, var(--neon-cyan, #5eead4) 25%, transparent); }
+  .chip-grip { font-size: 0.7rem; opacity: 0.45; letter-spacing: -2px; cursor: inherit; user-select: none; }
+  .chip-idx { font-size: 0.65rem; opacity: 0.7; font-variant-numeric: tabular-nums; }
+  .chip-x { background: none; border: none; color: var(--text-muted); cursor: pointer;
+    padding: 0 0.1rem; font-size: 0.85rem; line-height: 1; }
+  .chip-x:hover:not(:disabled) { color: var(--danger, #f87171); }
+  .chip-x:disabled { opacity: 0.4; cursor: default; }
+  .chip-add { cursor: pointer; border-style: dashed; color: var(--text-muted); }
+  .chip-add:hover:not(:disabled) { border-color: var(--neon-cyan); color: inherit; }
+  .chip-add:disabled { opacity: 0.4; cursor: default; }
+  .fallback-empty { font-size: 0.72rem; opacity: 0.5; }
   .loading { padding: 2rem; display: flex; justify-content: center; gap: 0.5rem; }
   .spinner { width: 16px; height: 16px; border: 2px solid rgba(94,234,212,0.3); border-top-color: var(--accent-teal); border-radius: 50%; animation: spin 0.8s linear infinite; display: inline-block; }
   .spinner.small { width: 12px; height: 12px; }

@@ -53,3 +53,20 @@ export function agent_provider_bind(
 export function agent_providers_get(): Promise<Record<string, string>> {
   return invoke<Record<string, string>>('agent_providers_get');
 }
+
+/**
+ * 设置该 agent 的 fallback 服务商链(有序;空数组 = 清空)。
+ * 仅对原生支持 fallback 的 agent(目前仅 hermes)生效,其它 agent 会报错。
+ * primary 不允许同时出现在 fallback 链里(后端会自动去重)。
+ */
+export function agent_fallbacks_set(
+  agentId: string,
+  fallbackIds: string[]
+): Promise<ApplyResult> {
+  return invoke<ApplyResult>('agent_fallbacks_set', { agentId, fallbackIds });
+}
+
+/** fallback 链快照:agent_id → 有序 provider_id[] */
+export function agent_fallbacks_get(): Promise<Record<string, string[]>> {
+  return invoke<Record<string, string[]>>('agent_fallbacks_get');
+}

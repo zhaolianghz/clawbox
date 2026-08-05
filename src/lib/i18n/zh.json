@@ -210,7 +210,28 @@
     },
     "modelCount": "{count} 个模型",
     "confirmRemove": "确认移除",
-    "freeTier": "免费额度"
+    "freeTier": "免费额度",
+    "transfer": {
+      "importBtn": "导入配置",
+      "exportBtn": "导出配置",
+      "exportTitle": "导出配置(.clawbox.json,可发给朋友导入)",
+      "includeKeys": "包含 API 密钥",
+      "keysWarning": "⚠ 导出文件将包含明文 API 密钥,仅发送给你信任的人",
+      "includeMcp": "包含 MCP 服务器({count})",
+      "includeSkills": "包含技能来源({count})",
+      "confirmExport": "导出({count} 个服务商)",
+      "exported": "已导出到 {path}",
+      "importTitle": "导入配置",
+      "applyImport": "导入勾选({count})",
+      "importDone": "完成:服务商新增 {pa}、合并 {pm};MCP {mc} 项;技能安装 {sk} 个",
+      "empty": "文件里没有可导入的内容",
+      "action": {
+        "add": "新增",
+        "merge": "合并到 →",
+        "overwrite": "覆盖",
+        "skip": "跳过"
+      }
+    }
   },
   "skills": {
     "title": "技能商店",
@@ -309,6 +330,13 @@
       "placeholder": "请选择服务商",
       "incompatible": "端点不兼容",
       "stale": "(已禁用的服务商,请重选)"
+    },
+    "fallback": {
+      "label": "兜底链(Fallback)",
+      "add": "加入兜底链",
+      "remove": "从兜底链移除",
+      "empty": "没有可选的额外服务商 —— 再添加一个服务商即可启用兜底",
+      "dragHint": "拖拽以调整兜底优先级"
     }
   },
   "monitor": {

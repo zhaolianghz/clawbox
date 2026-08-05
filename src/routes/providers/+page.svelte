@@ -12,7 +12,11 @@
   import { agent_providers_get, type ApplyResult } from '$lib/api/providerSync';
   import { agents_list } from '$lib/api/agents';
   import { open } from '@tauri-apps/plugin-dialog';
+  import { save } from '@tauri-apps/plugin-dialog';
   import { cc_switch_import_preview, type ImportCandidate } from '$lib/api/ccSwitch';
+  import { transfer_export, transfer_import_preview, transfer_import_apply, type TransferPreview, type TransferItem, type TransferOutcome } from '$lib/api/transfer';
+  import { config_mcp_list } from '$lib/api/mcpSync';
+  import { skills_library_list } from '$lib/api/skillsSync';
 
   let query = $state('');
   let activeCategory = $state<ProviderCategory | 'all'>('all');
@@ -405,6 +409,142 @@
     return agentLabels[id] ?? FALLBACK_LABELS[id] ?? id;
   }
 
+  // ---------- 配置导入/导出(issue #2:.clawbox.json 熟人分享) ----------
+  type ExportStage = 'closed' | 'open';
+  let exportStage = $state<ExportStage>('closed');
+  let expChecked = $state<Record<string, boolean>>({}); // provider id → 勾选
+  let expIncludeKeys = $state(true);
+  let expIncludeMcp = $state(true);
+  let expIncludeSkills = $state(true);
+  let expMcpCount = $state(0);
+  let expSkillNames = $state<string[]>([]);
+  let exporting = $state(false);
+  let expError = $state('');
+  let expDone = $state(''); // 成功导出的文件路径
+
+  const expPickedIds = $derived($providers.filter((p) => expChecked[p.id]).map((p) => p.id));
+
+  async function openExport() {
+    if (exportStage === 'open') {
+      exportStage = 'closed';
+      return;
+    }
+    expError = '';
+    expDone = '';
+    expChecked = Object.fromEntries($providers.map((p) => [p.id, true]));
+    expIncludeKeys = true;
+    expIncludeMcp = true;
+    expIncludeSkills = true;
+    exportStage = 'open';
+    // 计数仅供展示;取不到就按 0(该 section 复选框自然置灰)
+    try {
+      expMcpCount = Object.keys(await config_mcp_list()).length;
+    } catch {
+      expMcpCount = 0;
+    }
+    try {
+      expSkillNames = (await skills_library_list()).filter((s) => s.source).map((s) => s.name);
+    } catch {
+      expSkillNames = [];
+    }
+  }
+
+  async function doExport() {
+    if (exporting || expPickedIds.length === 0) return;
+    exporting = true;
+    expError = '';
+    expDone = '';
+    try {
+      const path = await save({
+        defaultPath: 'my-config.clawbox.json',
+        filters: [{ name: 'ClawBox', extensions: ['json'] }],
+      });
+      if (!path) return; // 用户取消
+      await transfer_export(
+        path,
+        expPickedIds,
+        expIncludeKeys,
+        expIncludeMcp && expMcpCount > 0,
+        expIncludeSkills ? expSkillNames : []
+      );
+      expDone = path;
+    } catch (e) {
+      expError = String(e);
+    } finally {
+      exporting = false;
+    }
+  }
+
+  // 导入:选文件 → 预览(add/merge/overwrite/skip 逐条勾选) → 应用
+  type TransferStage = 'closed' | 'loading' | 'preview';
+  let tStage = $state<TransferStage>('closed');
+  let tPath = $state('');
+  let tPreview = $state<TransferPreview | null>(null);
+  let tChecked = $state<Record<string, boolean>>({}); // "p:名" / "m:名" / "s:名"
+  let tApplying = $state(false);
+  let tError = $state('');
+  let tOutcome = $state<TransferOutcome | null>(null);
+
+  async function startTransferImport() {
+    if (tStage !== 'closed') {
+      tStage = 'closed';
+      return;
+    }
+    tError = '';
+    tOutcome = null;
+    tPreview = null;
+    let picked: string | string[] | null;
+    try {
+      picked = await open({ multiple: false, filters: [{ name: 'ClawBox', extensions: ['json'] }] });
+    } catch (e) {
+      tError = String(e);
+      tStage = 'preview';
+      return;
+    }
+    if (typeof picked !== 'string' || !picked) return; // 用户取消
+    tPath = picked;
+    tStage = 'loading';
+    try {
+      tPreview = await transfer_import_preview(picked);
+      const init: Record<string, boolean> = {};
+      for (const it of tPreview.providers) init[`p:${it.name}`] = it.action !== 'skip';
+      for (const it of tPreview.mcp) init[`m:${it.name}`] = it.action !== 'skip';
+      for (const it of tPreview.skills) init[`s:${it.name}`] = it.action !== 'skip';
+      tChecked = init;
+      tStage = 'preview';
+    } catch (e) {
+      tError = String(e);
+      tStage = 'preview';
+    }
+  }
+
+  const tPickCount = $derived.by(() => {
+    if (!tPreview) return 0;
+    const live = (sec: 'p' | 'm' | 's', items: TransferItem[]) =>
+      items.filter((i) => i.action !== 'skip' && tChecked[`${sec}:${i.name}`]).length;
+    return live('p', tPreview.providers) + live('m', tPreview.mcp) + live('s', tPreview.skills);
+  });
+
+  async function applyTransferImport() {
+    if (!tPreview || tApplying || tPickCount === 0) return;
+    tApplying = true;
+    tError = '';
+    try {
+      const pick = (sec: 'p' | 'm' | 's', items: TransferItem[]) =>
+        items.filter((i) => i.action !== 'skip' && tChecked[`${sec}:${i.name}`]).map((i) => i.name);
+      tOutcome = await transfer_import_apply(tPath, {
+        providers: pick('p', tPreview.providers),
+        mcp: pick('m', tPreview.mcp),
+        skills: pick('s', tPreview.skills),
+      });
+      await loadProviders();
+    } catch (e) {
+      tError = String(e);
+    } finally {
+      tApplying = false;
+    }
+  }
+
   // ---------- 从 cc-switch 导入(内联预览面板,复用 sync-panel 视觉) ----------
   type ImportStage = 'closed' | 'loading' | 'preview';
   let importStage = $state<ImportStage>('closed');
@@ -567,11 +707,121 @@
       >
         {$_('providers.import.button')}
       </button>
+      <button class="btn" onclick={startTransferImport} class:active={tStage !== 'closed'}>
+        {$_('providers.transfer.importBtn')}
+      </button>
+      <button class="btn" onclick={openExport} class:active={exportStage === 'open'}>
+        {$_('providers.transfer.exportBtn')}
+      </button>
     </div>
   </header>
 
   {#if pageError}
     <pre class="error-text">{pageError}</pre>
+  {/if}
+
+  <!-- 导出面板:勾选服务商 + 三开关,保存为 .clawbox.json -->
+  {#if exportStage === 'open'}
+    <div class="sync-panel glass-card">
+      <h3>{$_('providers.transfer.exportTitle')}</h3>
+      <div class="transfer-picks">
+        {#each $providers as p (p.id)}
+          <label class="check-label">
+            <input type="checkbox" bind:checked={expChecked[p.id]} />
+            <span>{p.name}</span>
+          </label>
+        {/each}
+      </div>
+      <div class="transfer-opts">
+        <label class="check-label">
+          <input type="checkbox" bind:checked={expIncludeKeys} />
+          <span>{$_('providers.transfer.includeKeys')}</span>
+        </label>
+        <label class="check-label">
+          <input type="checkbox" bind:checked={expIncludeMcp} disabled={expMcpCount === 0} />
+          <span>{$_('providers.transfer.includeMcp', { values: { count: expMcpCount } })}</span>
+        </label>
+        <label class="check-label">
+          <input type="checkbox" bind:checked={expIncludeSkills} disabled={expSkillNames.length === 0} />
+          <span>{$_('providers.transfer.includeSkills', { values: { count: expSkillNames.length } })}</span>
+        </label>
+      </div>
+      {#if expIncludeKeys}
+        <p class="keys-warning">{$_('providers.transfer.keysWarning')}</p>
+      {/if}
+      {#if expError}<pre class="error-text">{expError}</pre>{/if}
+      {#if expDone}<p class="export-done">{$_('providers.transfer.exported', { values: { path: expDone } })}</p>{/if}
+      <div class="panel-actions">
+        <button class="btn" onclick={() => (exportStage = 'closed')}>{$_('providers.close')}</button>
+        <button class="btn primary" onclick={doExport} disabled={exporting || expPickedIds.length === 0}>
+          {#if exporting}<span class="spinner small"></span>{/if}
+          {$_('providers.transfer.confirmExport', { values: { count: expPickedIds.length } })}
+        </button>
+      </div>
+    </div>
+  {/if}
+
+  <!-- 导入预览面板:三组逐条勾选(skip 项置灰) -->
+  {#if tStage !== 'closed'}
+    <div class="sync-panel glass-card">
+      {#if tStage === 'loading'}
+        <div class="loading"><span class="spinner"></span></div>
+      {:else}
+        <h3>{$_('providers.transfer.importTitle')}</h3>
+        {#if tError}<pre class="error-text">{tError}</pre>{/if}
+        {#if tOutcome}
+          <p class="export-done">
+            {$_('providers.transfer.importDone', {
+              values: {
+                pa: tOutcome.providersAdded,
+                pm: tOutcome.providersMerged,
+                mc: tOutcome.mcpApplied,
+                sk: tOutcome.skillsInstalled,
+              },
+            })}
+          </p>
+          {#each tOutcome.errors as e (e)}<pre class="error-text">{e}</pre>{/each}
+        {:else if tPreview}
+          {#each [
+            { sec: 'p', title: $_('nav.providers'), items: tPreview.providers },
+            { sec: 'm', title: 'MCP', items: tPreview.mcp },
+            { sec: 's', title: $_('nav.skills'), items: tPreview.skills },
+          ] as group (group.sec)}
+            {#if group.items.length > 0}
+              <div class="transfer-group">
+                <span class="transfer-group-title">{group.title}</span>
+                {#each group.items as it (it.name)}
+                  <label class="check-label" class:muted={it.action === 'skip'}>
+                    <input
+                      type="checkbox"
+                      disabled={it.action === 'skip' || tApplying}
+                      bind:checked={tChecked[`${group.sec}:${it.name}`]}
+                    />
+                    <span>{it.name}</span>
+                    <span class="tag" class:green={it.action === 'add'} class:yellow={it.action === 'merge' || it.action === 'overwrite'} class:gray={it.action === 'skip'}>
+                      {$_(`providers.transfer.action.${it.action}`)}
+                    </span>
+                    {#if it.detail}<span class="transfer-detail">{it.detail}</span>{/if}
+                  </label>
+                {/each}
+              </div>
+            {/if}
+          {/each}
+          {#if tPreview.providers.length + tPreview.mcp.length + tPreview.skills.length === 0}
+            <p class="empty-note">{$_('providers.transfer.empty')}</p>
+          {/if}
+        {/if}
+        <div class="panel-actions">
+          <button class="btn" onclick={() => (tStage = 'closed')} disabled={tApplying}>{$_('providers.close')}</button>
+          {#if !tOutcome && tPreview}
+            <button class="btn primary" onclick={applyTransferImport} disabled={tApplying || tPickCount === 0}>
+              {#if tApplying}<span class="spinner small"></span>{/if}
+              {$_('providers.transfer.applyImport', { values: { count: tPickCount } })}
+            </button>
+          {/if}
+        </div>
+      {/if}
+    </div>
   {/if}
 
   <!-- 编辑保存后的自动重推结果提示(成功条 5s 自隐;失败条手动关) -->
@@ -1181,6 +1431,19 @@
   .tag { font-size: 0.65rem; padding: 0.1rem 0.5rem; border-radius: 999px; white-space: nowrap; }
   .tag.green { background: rgba(74,222,128,0.15); color: #4ade80; }
   .tag.amber { background: rgba(202,164,60,0.12); color: #d0b978; }
+  .tag.yellow { background: rgba(251,191,36,0.15); color: #fbbf24; }
+  .tag.gray { background: rgba(148,163,184,0.15); color: #cbd5e1; }
+
+  /* 配置导入/导出面板 */
+  .transfer-picks { display: flex; gap: 0.4rem 1rem; flex-wrap: wrap; }
+  .transfer-opts { display: flex; gap: 0.4rem 1.2rem; flex-wrap: wrap; padding-top: 0.4rem; border-top: 1px solid rgba(255,255,255,0.08); }
+  .keys-warning { margin: 0; font-size: 0.75rem; color: #f87171; }
+  .export-done { margin: 0; font-size: 0.78rem; color: #4ade80; word-break: break-all; }
+  .transfer-group { display: flex; flex-direction: column; gap: 0.35rem; }
+  .transfer-group-title { font-size: 0.72rem; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.05em; }
+  .transfer-detail { font-size: 0.72rem; color: var(--text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .check-label.muted { opacity: 0.5; cursor: default; }
+  .empty-note { margin: 0; color: var(--text-muted); font-size: 0.82rem; }
 
   /* cc-switch 导入预览:候选行的 meta(key 掩码 / 模型 / 来源) */
   .import-meta { display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; margin-top: 0.15rem; }

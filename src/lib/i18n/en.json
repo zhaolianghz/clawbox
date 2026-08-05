@@ -210,7 +210,28 @@
     },
     "modelCount": "{count} models",
     "confirmRemove": "Confirm Remove",
-    "freeTier": "Free tier"
+    "freeTier": "Free tier",
+    "transfer": {
+      "importBtn": "Import Config",
+      "exportBtn": "Export Config",
+      "exportTitle": "Export config (.clawbox.json — share it with a friend)",
+      "includeKeys": "Include API keys",
+      "keysWarning": "⚠ The exported file will contain plaintext API keys — only send it to people you trust",
+      "includeMcp": "Include MCP servers ({count})",
+      "includeSkills": "Include skill sources ({count})",
+      "confirmExport": "Export ({count} providers)",
+      "exported": "Exported to {path}",
+      "importTitle": "Import config",
+      "applyImport": "Import selected ({count})",
+      "importDone": "Done: {pa} providers added, {pm} merged; {mc} MCP entries; {sk} skills installed",
+      "empty": "Nothing importable in this file",
+      "action": {
+        "add": "Add",
+        "merge": "Merge into →",
+        "overwrite": "Overwrite",
+        "skip": "Skip"
+      }
+    }
   },
   "skills": {
     "title": "Skills Store",
@@ -309,6 +330,13 @@
       "placeholder": "Select a provider",
       "incompatible": "endpoint mismatch",
       "stale": "(disabled provider — pick another)"
+    },
+    "fallback": {
+      "label": "Fallback chain",
+      "add": "Add to fallback chain",
+      "remove": "Remove from fallback chain",
+      "empty": "No extra provider available — add another provider to enable fallback",
+      "dragHint": "Drag to reorder the fallback priority"
     }
   },
   "monitor": {

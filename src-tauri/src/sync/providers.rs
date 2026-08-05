@@ -15,6 +15,7 @@ use super::{backup_target, diff_changes, AgentPlan, ApplyResult, ChangeItem};
 use crate::commands::config::ProviderSpec;
 use serde_json::{json, Map, Value};
 use std::collections::BTreeMap;
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use toml_edit::{value, DocumentMut, Item, Table};
 
@@ -41,6 +42,46 @@ pub trait ProviderAdapter: Send + Sync {
     ) -> Result<usize, String>;
     /// 本次会实际下发的键名 —— apply 成功后写入 providers_managed。
     fn deployed_names(&self, providers: &[ProviderSpec], active_id: Option<&str>) -> Vec<String>;
+
+    // ---- fallback 链(可选;默认不支持)---------------------------------------
+    //
+    // primary 之外的兑底服务商链。只有原生支持 fallback 的 agent(目前仅
+    // hermes:config.yaml 根级 fallback_providers + 每家一条 custom_providers
+    // 条目)覆盖这些方法;其它 agent 用默认 no-op,绑定 fallback 会被
+    // agent_fallbacks_set_at 以「不支持」拒绝、不会产生条目。
+
+    /// 该 agent 是否原生支持 fallback 链。
+    fn supports_fallback(&self) -> bool {
+        false
+    }
+    /// 单个服务商能否作为该 agent 的 fallback 下发(端点槽 + key + model 就绪)。
+    /// 默认 false(不支持 fallback 的 agent 恒不可);支持者覆盖。
+    fn fallback_deployable(&self, _spec: &ProviderSpec) -> bool {
+        false
+    }
+    /// fallback 链的 plan(漂移检测)。默认空 vec = 不支持/无条目。
+    fn plan_fallbacks(
+        &self,
+        _home: &Path,
+        _fallbacks: &[ProviderSpec],
+        _managed: &[String],
+    ) -> Result<Vec<ChangeItem>, String> {
+        Ok(vec![])
+    }
+    /// 应用 fallback 链。默认 Ok(0) = 不支持的 agent no-op。
+    fn apply_fallbacks(
+        &self,
+        _home: &Path,
+        _fallbacks: &[ProviderSpec],
+        _managed: &[String],
+    ) -> Result<usize, String> {
+        Ok(0)
+    }
+    /// 本次会下发的 fallback managed 键名(custom_providers 条目名),成功后
+    /// 写入 providers_fallback_managed。
+    fn deployed_fallback_names(&self, _fallbacks: &[ProviderSpec]) -> Vec<String> {
+        vec![]
+    }
 }
 
 // ---- 端点槽位选择 -----------------------------------------------------------
@@ -911,6 +952,15 @@ struct HermesState {
     entry: Option<HermesEntry>,
 }
 
+/// fallback_providers 列表条目的投影(plan/apply diff 用;忽略额外字段)。
+#[derive(Clone, PartialEq)]
+struct HermesFbEntry {
+    provider: String,
+    model: String,
+    base_url: String,
+    api_mode: String,
+}
+
 /// .env 内容里 `KEY=value` 行的值(取第一条命中;剥掉两侧成对引号)。
 fn env_line_value(content: &str, key: &str) -> Option<String> {
     for line in content.lines() {
@@ -1144,6 +1194,51 @@ impl HermesProviderAdapter {
             if model.is_empty() { "(not set)" } else { model }
         )
     }
+
+    // ---- fallback 链 -------------------------------------------------------
+
+    /// 解析 fallback 列表里每家的端点槽(无法解析 = 该家不可下发,跳过)。
+    fn resolve_fallbacks<'a>(
+        fallbacks: &'a [ProviderSpec],
+    ) -> Vec<(&'a ProviderSpec, &'a str, Slot)> {
+        fallbacks
+            .iter()
+            .filter_map(|s| pick_endpoint(s, &HERMES_SLOTS).map(|(u, sl)| (s, u, sl)))
+            .collect()
+    }
+
+    /// fallback_providers 列表条目:{provider, model, base_url, api_mode}。
+    fn render_fb_entry(spec: &ProviderSpec, url: &str, slot: Slot) -> serde_yaml::Value {
+        let mut m = serde_yaml::Mapping::new();
+        m.insert(ystr("provider"), ystr(&Self::provider_ref(spec)));
+        m.insert(ystr("model"), ystr(spec.default_model.trim()));
+        m.insert(ystr("base_url"), ystr(url));
+        m.insert(ystr("api_mode"), ystr(Self::api_mode(slot)));
+        serde_yaml::Value::Mapping(m)
+    }
+
+    /// 期望的 fallback_providers 投影列表(diff 用)。
+    fn desired_fb_list(resolved: &[(&ProviderSpec, &str, Slot)]) -> Vec<HermesFbEntry> {
+        resolved
+            .iter()
+            .map(|(s, url, slot)| HermesFbEntry {
+                provider: Self::provider_ref(s),
+                model: s.default_model.trim().to_string(),
+                base_url: (*url).to_string(),
+                api_mode: Self::api_mode(*slot).to_string(),
+            })
+            .collect()
+    }
+
+    /// fallback_providers 单条 → 投影。
+    fn project_fb_entry(v: &serde_yaml::Value) -> Option<HermesFbEntry> {
+        Some(HermesFbEntry {
+            provider: v.get("provider")?.as_str()?.trim().to_string(),
+            model: v.get("model")?.as_str()?.trim().to_string(),
+            base_url: v.get("base_url").and_then(|x| x.as_str()).unwrap_or("").trim().to_string(),
+            api_mode: v.get("api_mode").and_then(|x| x.as_str()).unwrap_or("").trim().to_string(),
+        })
+    }
 }
 
 impl ProviderAdapter for HermesProviderAdapter {
@@ -1277,6 +1372,142 @@ impl ProviderAdapter for HermesProviderAdapter {
             Target::Deploy { spec, .. } => vec![Self::entry_name(spec).to_string()],
             Target::Skip { .. } => vec![],
         }
+    }
+
+    // ---- fallback 链(hermes 原生支持)----
+
+    fn supports_fallback(&self) -> bool {
+        true
+    }
+
+    fn fallback_deployable(&self, spec: &ProviderSpec) -> bool {
+        pick_endpoint(spec, &HERMES_SLOTS).is_some()
+            && !spec.api_key.trim().is_empty()
+            && !spec.default_model.trim().is_empty()
+    }
+
+    fn deployed_fallback_names(&self, fallbacks: &[ProviderSpec]) -> Vec<String> {
+        Self::resolve_fallbacks(fallbacks)
+            .iter()
+            .map(|(s, _, _)| Self::entry_name(s).to_string())
+            .collect()
+    }
+
+    fn plan_fallbacks(
+        &self,
+        home: &Path,
+        fallbacks: &[ProviderSpec],
+        managed: &[String],
+    ) -> Result<Vec<ChangeItem>, String> {
+        let resolved = Self::resolve_fallbacks(fallbacks);
+        // 无 fallback 且从未管理 → 不出条目
+        if resolved.is_empty() && managed.is_empty() {
+            return Ok(vec![]);
+        }
+        let desired = Self::desired_fb_list(&resolved);
+        let doc = self.read_yaml(home)?;
+        let cur_fb: Vec<HermesFbEntry> = doc
+            .get("fallback_providers")
+            .and_then(|v| v.as_sequence())
+            .map(|seq| seq.iter().filter_map(Self::project_fb_entry).collect())
+            .unwrap_or_default();
+        // 我们管理的 fallback custom_providers 条目名是否都齐
+        let cur_cp_names: HashSet<String> = doc
+            .get("custom_providers")
+            .and_then(|v| v.as_sequence())
+            .map(|seq| {
+                seq.iter()
+                    .filter_map(|e| e.get("name").and_then(|n| n.as_str()).map(|s| s.trim().to_string()))
+                    .collect()
+            })
+            .unwrap_or_default();
+        let desired_names: HashSet<String> = resolved
+            .iter()
+            .map(|(s, _, _)| Self::entry_name(s).to_string())
+            .collect();
+        let entries_ok = desired_names.iter().all(|n| cur_cp_names.contains(n));
+        if cur_fb == desired && entries_ok {
+            return Ok(vec![]);
+        }
+        let action = if desired.is_empty() {
+            "remove"
+        } else if cur_fb.is_empty() && managed.is_empty() {
+            "add"
+        } else {
+            "update"
+        };
+        Ok(vec![ChangeItem {
+            name: "fallback chain".to_string(),
+            action: action.into(),
+            detail: if desired.is_empty() {
+                "clear fallback chain".to_string()
+            } else {
+                format!(
+                    "{} fallback provider(s): {}",
+                    desired.len(),
+                    desired.iter().map(|f| f.provider.clone()).collect::<Vec<_>>().join(", ")
+                )
+            },
+        }])
+    }
+
+    fn apply_fallbacks(
+        &self,
+        home: &Path,
+        fallbacks: &[ProviderSpec],
+        managed: &[String],
+    ) -> Result<usize, String> {
+        // 无 fallback 且无历史管理 → no-op,不碰文件
+        if fallbacks.is_empty() && managed.is_empty() {
+            return Ok(0);
+        }
+        let resolved = Self::resolve_fallbacks(fallbacks);
+        let cur_names: HashSet<String> = resolved
+            .iter()
+            .map(|(s, _, _)| Self::entry_name(s).to_string())
+            .collect();
+        let mut doc = self.read_yaml(home)?;
+        if !doc.is_mapping() {
+            doc = serde_yaml::Value::Mapping(serde_yaml::Mapping::new());
+        }
+        // custom_providers:同名(当前 fallback)重写规范形;managed 差集(曾下发、
+        // 现不在链)丢弃;其余(含 primary 条目、用户手建条目)一字不动。
+        let kept: Vec<serde_yaml::Value> = doc
+            .get("custom_providers")
+            .and_then(|v| v.as_sequence())
+            .map(|seq| {
+                seq.iter()
+                    .filter(|e| {
+                        let ename =
+                            e.get("name").and_then(|n| n.as_str()).map(|s| s.trim()).unwrap_or("");
+                        if cur_names.contains(ename) {
+                            return false; // 我们重写规范形
+                        }
+                        // managed 里、但不在当前链 → stale,丢弃
+                        !managed.iter().any(|m| m == ename)
+                    })
+                    .cloned()
+                    .collect()
+            })
+            .unwrap_or_default();
+        let mut new_cp = kept;
+        for (s, url, slot) in &resolved {
+            new_cp.push(Self::render_entry(s, url, *slot));
+        }
+
+        let root = doc.as_mapping_mut().unwrap();
+        root.insert(ystr("custom_providers"), serde_yaml::Value::Sequence(new_cp));
+        if resolved.is_empty() {
+            root.remove(&ystr("fallback_providers"));
+        } else {
+            let fb_seq: Vec<serde_yaml::Value> = resolved
+                .iter()
+                .map(|(s, url, slot)| Self::render_fb_entry(s, url, *slot))
+                .collect();
+            root.insert(ystr("fallback_providers"), serde_yaml::Value::Sequence(fb_seq));
+        }
+        self.write_yaml(home, &doc)?;
+        Ok(1)
     }
 }
 
@@ -2521,6 +2752,42 @@ pub fn plan_all(
         .collect()
 }
 
+/// 对单个 agent 应用 fallback 链。与 apply_one 分离:fallback 不走主配置
+/// 备份(同一个 config.yaml 已在主 apply 备份过),只汇报写入条数与错误。
+pub fn apply_fallbacks_one(
+    home: &Path,
+    adapter: &dyn ProviderAdapter,
+    fallbacks: &[ProviderSpec],
+    managed: &[String],
+) -> ApplyResult {
+    let agent_id = adapter.agent_id().to_string();
+    if !adapter.supported() {
+        return ApplyResult {
+            agent_id,
+            ok: false,
+            backup_path: None,
+            applied: 0,
+            error: Some("agent not supported for provider sync".to_string()),
+        };
+    }
+    match adapter.apply_fallbacks(home, fallbacks, managed) {
+        Ok(applied) => ApplyResult {
+            agent_id,
+            ok: true,
+            backup_path: None,
+            applied,
+            error: None,
+        },
+        Err(e) => ApplyResult {
+            agent_id,
+            ok: false,
+            backup_path: None,
+            applied: 0,
+            error: Some(e),
+        },
+    }
+}
+
 /// 对单个 agent 应用:备份主配置文件、写入、汇报。调用方在成功后更新
 /// providers_managed。
 pub fn apply_one(
@@ -3517,6 +3784,141 @@ mod tests {
             .plan(home.path(), &[anthropic_provider()], Some("p-anth"), &[])
             .unwrap_err();
         assert!(err.contains("parse"), "{}", err);
+    }
+
+    // ---- hermes fallback 链 ----
+
+    #[test]
+    fn hermes_fallback_deployable_requires_endpoint_key_model() {
+        let a = HermesProviderAdapter;
+        assert!(a.supports_fallback());
+        assert!(a.fallback_deployable(&anthropic_provider()));
+        // 无端点 → 不可
+        let no_ep = provider("p-x", "X", "", "");
+        assert!(!a.fallback_deployable(&no_ep));
+        // 无 key → 不可
+        let mut no_key = anthropic_provider();
+        no_key.api_key = String::new();
+        assert!(!a.fallback_deployable(&no_key));
+        // 无 default model → 不可(hermes 缺 model 字段会禁用该 fallback)
+        let mut no_model = anthropic_provider();
+        no_model.default_model = String::new();
+        assert!(!a.fallback_deployable(&no_model));
+    }
+
+    #[test]
+    fn hermes_fallback_apply_writes_chain_and_entries_and_keeps_primary() {
+        let home = TempHome::new();
+        let a = HermesProviderAdapter;
+        // primary 先落盘
+        a.apply(home.path(), &[anthropic_provider()], Some("p-anth"), &[]).unwrap();
+        // 加一个 fallback(openai-only 提供商 → chat_completions)
+        let fb = vec![openai_provider()];
+        assert_eq!(a.apply_fallbacks(home.path(), &fb, &[]).unwrap(), 1);
+
+        let doc = read_hermes_yaml(home.path());
+        // custom_providers 同时有 primary 与 fallback 条目
+        let names: Vec<&str> = doc
+            .get("custom_providers").and_then(|v| v.as_sequence()).unwrap()
+            .iter().filter_map(|e| e.get("name").and_then(|v| v.as_str())).collect();
+        assert!(names.contains(&"Anthro Relay"), "primary entry present");
+        assert!(names.contains(&"OA Relay"), "fallback entry present");
+        // fallback_providers 链一条,引用 custom:OA Relay
+        let fbs = doc.get("fallback_providers").and_then(|v| v.as_sequence()).unwrap();
+        assert_eq!(fbs.len(), 1);
+        assert_eq!(fbs[0].get("provider").and_then(|v| v.as_str()), Some("custom:OA Relay"));
+        assert_eq!(fbs[0].get("model").and_then(|v| v.as_str()), Some("model-a"));
+        assert_eq!(fbs[0].get("api_mode").and_then(|v| v.as_str()), Some("chat_completions"));
+        // primary 的 model.provider 未被 fallback apply 碰
+        assert_eq!(
+            doc.get("model").and_then(|m| m.get("provider")).and_then(|v| v.as_str()),
+            Some("custom:Anthro Relay")
+        );
+        assert_eq!(a.deployed_fallback_names(&fb), vec!["OA Relay"]);
+    }
+
+    #[test]
+    fn hermes_fallback_rebind_and_clear_cleanup_and_preserve_primary() {
+        let home = TempHome::new();
+        let a = HermesProviderAdapter;
+        a.apply(home.path(), &[anthropic_provider()], Some("p-anth"), &[]).unwrap();
+        let oa = openai_provider();
+        a.apply_fallbacks(home.path(), &[oa.clone()], &[]).unwrap();
+        let managed = a.deployed_fallback_names(&[oa.clone()]);
+        assert_eq!(managed, vec!["OA Relay"]);
+
+        // 改链 = [Dual Relay](替换 OA);managed=[OA Relay] → OA 条目应被清掉
+        let dual = dual_provider();
+        a.apply_fallbacks(home.path(), &[dual.clone()], &managed).unwrap();
+        let doc = read_hermes_yaml(home.path());
+        let names: Vec<&str> = doc
+            .get("custom_providers").and_then(|v| v.as_sequence()).unwrap()
+            .iter().filter_map(|e| e.get("name").and_then(|v| v.as_str())).collect();
+        assert!(!names.contains(&"OA Relay"), "stale fallback entry must be removed");
+        assert!(names.contains(&"Dual Relay"));
+        assert!(names.contains(&"Anthro Relay"), "primary entry preserved across rebind");
+        let fbs = doc.get("fallback_providers").and_then(|v| v.as_sequence()).unwrap();
+        assert_eq!(fbs[0].get("provider").and_then(|v| v.as_str()), Some("custom:Dual Relay"));
+
+        // 清空链:managed=[Dual Relay] → fallback_providers 键删除,Dual Relay 条目清掉
+        a.apply_fallbacks(home.path(), &[], &["Dual Relay".to_string()]).unwrap();
+        let doc = read_hermes_yaml(home.path());
+        assert!(doc.get("fallback_providers").is_none(), "fallback_providers key removed on clear");
+        let names2: Vec<&str> = doc
+            .get("custom_providers").and_then(|v| v.as_sequence()).unwrap()
+            .iter().filter_map(|e| e.get("name").and_then(|v| v.as_str())).collect();
+        assert!(!names2.contains(&"Dual Relay"), "cleared fallback entry removed");
+        assert!(names2.contains(&"Anthro Relay"), "primary intact after clear");
+    }
+
+    #[test]
+    fn hermes_fallback_chain_order_preserved_and_reorderable() {
+        let home = TempHome::new();
+        let a = HermesProviderAdapter;
+        a.apply(home.path(), &[anthropic_provider()], Some("p-anth"), &[]).unwrap();
+        // 两家 fallback,按 [OA, Dual] 顺序下发
+        a.apply_fallbacks(home.path(), &[openai_provider(), dual_provider()], &[]).unwrap();
+        let doc = read_hermes_yaml(home.path());
+        let fbs = doc.get("fallback_providers").and_then(|v| v.as_sequence()).unwrap();
+        assert_eq!(fbs.len(), 2);
+        assert_eq!(fbs[0].get("provider").and_then(|v| v.as_str()), Some("custom:OA Relay"));
+        assert_eq!(fbs[1].get("provider").and_then(|v| v.as_str()), Some("custom:Dual Relay"));
+
+        // 拖拽换序 → [Dual, OA]:backend 仍按入参顺序写
+        a.apply_fallbacks(
+            home.path(),
+            &[dual_provider(), openai_provider()],
+            &["OA Relay".into(), "Dual Relay".into()],
+        )
+        .unwrap();
+        let doc = read_hermes_yaml(home.path());
+        let fbs = doc.get("fallback_providers").and_then(|v| v.as_sequence()).unwrap();
+        assert_eq!(fbs[0].get("provider").and_then(|v| v.as_str()), Some("custom:Dual Relay"));
+        assert_eq!(fbs[1].get("provider").and_then(|v| v.as_str()), Some("custom:OA Relay"));
+        // custom_providers 三条都在(primary + 两个 fallback)
+        let names: Vec<&str> = doc
+            .get("custom_providers").and_then(|v| v.as_sequence()).unwrap()
+            .iter().filter_map(|e| e.get("name").and_then(|v| v.as_str())).collect();
+        assert!(names.contains(&"Anthro Relay") && names.contains(&"OA Relay") && names.contains(&"Dual Relay"));
+    }
+
+    #[test]
+    fn hermes_fallback_plan_drift_and_unchanged() {
+        let home = TempHome::new();
+        let a = HermesProviderAdapter;
+        let oa = openai_provider();
+        let dual = dual_provider();
+        // 空 + 无 managed → 不出条目
+        assert!(a.plan_fallbacks(home.path(), &[], &[]).unwrap().is_empty());
+        // add
+        assert_eq!(a.plan_fallbacks(home.path(), &[oa.clone()], &[]).unwrap()[0].action, "add");        // apply → plan 无漂移(unchanged 返回空)
+        a.apply_fallbacks(home.path(), &[oa.clone()], &[]).unwrap();
+        let managed = a.deployed_fallback_names(&[oa.clone()]);
+        assert!(a.plan_fallbacks(home.path(), &[oa.clone()], &managed).unwrap().is_empty(), "unchanged");
+        // 换链 → update
+        assert_eq!(a.plan_fallbacks(home.path(), &[dual.clone()], &managed).unwrap()[0].action, "update");
+        // 清空 → remove
+        assert_eq!(a.plan_fallbacks(home.path(), &[], &managed).unwrap()[0].action, "remove");
     }
 
     // ---- openclaw ----
