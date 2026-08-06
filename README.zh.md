@@ -41,19 +41,36 @@ ClawBox 是一款桌面应用（macOS · Windows · Linux），为你的所有 A
 | **记忆** | 编辑统一的 `~/.agents/memory/MEMORY.md`，以托管区块形式注入每个 agent 的指令文件——区块外内容一字不动。 |
 | **Agent 管理** | 在一个界面安装、升级、查看所有 AI CLI agent。 |
 
+## 服务商兑底与漂移处理
+
+**兑底链（Hermes）。** 给 agent 绑定一个主服务商 + 有序的兑底链。主服务商限流或报错时,Hermes 自动切到下一个——不需要网关、不常驻后台进程。拖拽调整优先级。其它 agent 运行时是单端点的;对它们而言“兑底”= 指向一个网关服务商。
+
+**漂移处理（所有 agent）。** 当 agent 的配置文件与 ClawBox 管理的不一致（你手改了、或别的工具改了),ClawBox 绝不无声覆盖。而是用人话提示,给出两个一键动作:
+
+![漂移处理](docs/screenshots/fallback-drift.png)
+
+- **恢复** — 推回 ClawBox 的值（安全默认)。
+- **就用现在的** — 把 agent 当前的值领养进 ClawBox（反向同步)。
+
+没有 diff 表格或字段名——只显示服务商名和两个按钮。顶部还有「全部恢复」一键化解所有漂移 agent。
+
+**从 agent 导入。** 把任意 agent 当前在用的服务商直接抓进 ClawBox（同步详情里的「从 agent 导入」)——适合你手动配过 agent 后想让 ClawBox 接管的场景。
+
 ## 支持的 Agent
 
-| Agent | 服务商 | MCP | 技能 | 记忆 |
-|---|---|---|---|---|
-| Claude Code | ✅ | ✅ | ✅ | ✅ |
-| Codex | ✅ | ✅ | — | ✅ |
-| Hermes | ✅ | ✅ | ✅ | ✅ |
-| OpenCode | ✅ | ✅ | ✅ | ✅ |
-| OpenClaw | ✅ | ✅ | ✅ | ✅ |
-| Kimi | ✅ | — | — | — |
-| CodeBuddy | ✅ | ✅ | — | — |
-| Cursor | — | ✅ | — | — |
-| Qoder | — | — | — | — |
+| Agent | 服务商 | MCP | 技能 | 记忆 | 兑底链 |
+|---|---|---|---|---|---|
+| Claude Code | ✅ | ✅ | ✅ | ✅ | — |
+| Codex | ✅ | ✅ | — | ✅ | — |
+| Hermes | ✅ | ✅ | ✅ | ✅ | ✅ |
+| OpenCode | ✅ | ✅ | ✅ | ✅ | — |
+| OpenClaw | ✅ | ✅ | ✅ | ✅ | — |
+| Kimi | ✅ | — | — | — | — |
+| CodeBuddy | ✅ | ✅ | — | — | — |
+| Cursor | — | ✅ | — | — | — |
+| Qoder | — | — | — | — | — |
+
+*漂移处理（恢复 / 导入)对上表所有 agent 的服务商维度生效;运行时兑底链目前仅 Hermes 支持。*
 
 每项能力具体写哪个文件、适用哪些安全规则,见 **[透明说明](docs/TRANSPARENCY.zh.md)**。
 

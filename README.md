@@ -41,19 +41,36 @@ Instead of editing config files in five different directories, you configure onc
 | **Memory** | Edit a single `~/.agents/memory/MEMORY.md` and inject it as a managed block into every agent's instruction file — without touching anything outside the block. |
 | **Agents** | Install, upgrade, and inspect all your AI CLI agents from one screen. |
 
+## Provider fallback & drift resolution
+
+**Fallback chain (Hermes).** Bind a primary provider plus an ordered list of fallbacks. When the primary rate-limits or errors, Hermes automatically tries the next one — no gateway, no background daemon. Drag chips to reorder priority. Other agents are single-endpoint at runtime; for them, fallback means pointing the agent at a gateway provider.
+
+**Drift resolution (every agent).** When an agent's config file drifts from what ClawBox manages — you hand-edited it, or another tool changed it — ClawBox never silently overwrites it. The drift is surfaced in plain language with two one-click actions:
+
+![Drift resolution](docs/screenshots/fallback-drift.png)
+
+- **Restore** — push ClawBox's value back (the safe default).
+- **Keep current** — adopt the agent's current value into ClawBox (reverse sync).
+
+No diff tables or field names — just provider names and two buttons. A top bar offers **Restore all** to resolve every drifted agent at once.
+
+**Adopt from agent.** Pull any agent's currently-active provider straight into ClawBox (`Adopt from agent` in the sync detail) — handy when you've configured an agent by hand and want ClawBox to take over.
+
 ## Supported Agents
 
-| Agent | Providers | MCP | Skills | Memory |
-|---|---|---|---|---|
-| Claude Code | ✅ | ✅ | ✅ | ✅ |
-| Codex | ✅ | ✅ | — | ✅ |
-| Hermes | ✅ | ✅ | ✅ | ✅ |
-| OpenCode | ✅ | ✅ | ✅ | ✅ |
-| OpenClaw | ✅ | ✅ | ✅ | ✅ |
-| Kimi | ✅ | — | — | — |
-| CodeBuddy | ✅ | ✅ | — | — |
-| Cursor | — | ✅ | — | — |
-| Qoder | — | — | — | — |
+| Agent | Providers | MCP | Skills | Memory | Fallback |
+|---|---|---|---|---|---|
+| Claude Code | ✅ | ✅ | ✅ | ✅ | — |
+| Codex | ✅ | ✅ | — | ✅ | — |
+| Hermes | ✅ | ✅ | ✅ | ✅ | ✅ |
+| OpenCode | ✅ | ✅ | ✅ | ✅ | — |
+| OpenClaw | ✅ | ✅ | ✅ | ✅ | — |
+| Kimi | ✅ | — | — | — | — |
+| CodeBuddy | ✅ | ✅ | — | — | — |
+| Cursor | — | ✅ | — | — | — |
+| Qoder | — | — | — | — | — |
+
+*Drift resolution (restore / adopt) works for the Providers dimension on all agents above. The runtime fallback chain is Hermes-only today.*
 
 For exactly which file each capability writes and the safety rules that apply, see **[Transparency](docs/TRANSPARENCY.md)**.
 
