@@ -6,7 +6,16 @@
   import { agent_sync_overview, type AgentSyncOverview, type SyncedItem } from '../../lib/api/providerSync';
   import AgentLogo from '../../lib/components/AgentLogo.svelte';
   import { providers, loadProviders } from '../../lib/stores/config';
-  import { agent_provider_bind, agent_providers_get, agent_fallbacks_get, agent_fallbacks_set } from '../../lib/api/providerSync';
+  import {
+    agent_provider_bind,
+    agent_providers_get,
+    agent_fallbacks_get,
+    agent_fallbacks_set,
+    agent_provider_resync,
+    agent_provider_adopt,
+    agent_active_providers_get,
+    type ActiveProviderInfo
+  } from '../../lib/api/providerSync';
   import type { ModelProvider } from '../../lib/api/config';
 
   let agents = $state<AgentStatus[]>([]);
@@ -71,6 +80,9 @@
     // 服务商列表/绑定与 agent 探测互不依赖:并行启动,不让 2s+ 的探测
     // 拖住服务商选择器的首次渲染
     void loadProviders();
+    // 漂移检测随页面加载即跑:顶部「全部恢复」条与卡片横幅依赖 overview,
+    // 必须在这里启动,否则漂移要等用户点开「同步详情」才可见(违背傻瓜式设计)。
+    void loadOverview();
     agent_providers_get()
       .then((b) => (bindings = b))
       .catch((e) => console.warn('agent_providers_get failed', e));
@@ -168,6 +180,86 @@
       fbErrors = { ...fbErrors, [agentId]: String(e) };
     } finally {
       fbApplying = { ...fbApplying, [agentId]: false };
+    }
+  }
+
+  // ---------- 手动重推(愈合「已过期」漂移;reconcile 默认不自动覆盖)----------
+  let resyncing = $state<Record<string, boolean>>({});
+  async function resyncProvider(agentId: string) {
+    resyncing = { ...resyncing, [agentId]: true };
+    try {
+      const r = await agent_provider_resync(agentId);
+      if (!r.ok && r.error) bindErrors = { ...bindErrors, [agentId]: r.error };
+      if (overview !== null) void loadOverview(true);
+    } catch (e) {
+      bindErrors = { ...bindErrors, [agentId]: String(e) };
+    } finally {
+      resyncing = { ...resyncing, [agentId]: false };
+    }
+  }
+
+  // ---------- adopt:agent → ClawBox 领养 ----------
+  let adopting = $state<Record<string, boolean>>({});
+  async function adoptFromAgent(agentId: string) {
+    adopting = { ...adopting, [agentId]: true };
+    bindErrors = { ...bindErrors, [agentId]: '' };
+    try {
+      const r = await agent_provider_adopt(agentId);
+      // ClawBox 服务商列表变了(可能新建了一条)→ 重新拉取 store + 绑定
+      await loadProviders();
+      bindings = await agent_providers_get().catch(() => bindings);
+      fallbacks = await agent_fallbacks_get().catch(() => fallbacks);
+      bindFlash = { ...bindFlash, [agentId]: true };
+      setTimeout(() => (bindFlash = { ...bindFlash, [agentId]: false }), 2000);
+      if (overview !== null) void loadOverview(true);
+      // 领养结果在 sync detail 的 provider_error 里不显示;用 bindErrors 反向提示成功
+      // (空串=无错误;flash 高亮已表达成功)。失败走 catch。
+      void r;
+    } catch (e) {
+      bindErrors = { ...bindErrors, [agentId]: String(e) };
+    } finally {
+      adopting = { ...adopting, [agentId]: false };
+    }
+  }
+
+  // ---------- 漂移横幅(三态 resolve 的傻瓜式皮)----------
+  // 每个 agent 当前在用的服务商(只名字+模型;由 loadOverview 随漂移列表一起拉)。
+  let activeProviders = $state<Record<string, ActiveProviderInfo | null>>({});
+  let batchRestoring = $state(false);
+
+  /** 某 agent 是否漂移(provider 维度 outdated/removing)。overview 未加载时返回 false。 */
+  function isDrifted(agentId: string): boolean {
+    if (overview === null) return false;
+    const o = overview[agentId];
+    return !!o && o.provider_supported && o.providers.some((p) => p.state === 'outdated' || p.state === 'removing');
+  }
+
+  /** 所有漂移 agent 的 id(顶部汇总条用)。 */
+  function driftedAgentIds(): string[] {
+    if (overview === null) return [];
+    return Object.values(overview)
+      .filter((o) => o.provider_supported && o.providers.some((p) => p.state === 'outdated' || p.state === 'removing'))
+      .map((o) => o.agent_id);
+  }
+
+  function agentLabel(id: string): string {
+    return agents.find((a) => a.id === id)?.label ?? id;
+  }
+
+  /** 顶部「全部恢复」:对所有漂移 agent 逐个 resync(ClawBox 赢),批量只做恢复。 */
+  async function restoreAll() {
+    const ids = driftedAgentIds();
+    if (ids.length === 0) return;
+    batchRestoring = true;
+    try {
+      for (const id of ids) {
+        await agent_provider_resync(id);
+      }
+      if (overview !== null) await loadOverview(true);
+    } catch (e) {
+      overviewError = String(e);
+    } finally {
+      batchRestoring = false;
     }
   }
 
@@ -300,6 +392,14 @@
     try {
       const list = await agent_sync_overview();
       overview = Object.fromEntries(list.map((o) => [o.agent_id, o]));
+      // 为漂移横幅拉取各 agent 现在在用的服务商名(只对漂移的 agent 取,省请求)
+      const drifted = list
+        .filter((o) => o.provider_supported && o.providers.some((p) => p.state === 'outdated' || p.state === 'removing'))
+        .map((o) => o.agent_id);
+      activeProviders =
+        drifted.length > 0
+          ? await agent_active_providers_get(drifted).catch(() => ({} as Record<string, ActiveProviderInfo | null>))
+          : {};
     } catch (e) {
       // 后端未就绪(命令不存在)或读文件失败:展开区显示红字,不炸页面
       overviewError = String(e);
@@ -350,6 +450,23 @@
   {#if isLoading && agents.length === 0}
     <div class="loading glass-card"><span class="spinner"></span> {$_('agents.loading')}</div>
   {:else}
+    {#if driftedAgentIds().length > 0}
+      <div class="drift-bar glass-card">
+        <span class="drift-bar-icon" aria-hidden="true">⚠</span>
+        <span class="drift-bar-text">
+          {$_('agents.drift.summary', {
+            values: {
+              count: driftedAgentIds().length,
+              names: driftedAgentIds().map(agentLabel).join(' · ')
+            }
+          })}
+        </span>
+        <button class="btn primary" onclick={restoreAll} disabled={batchRestoring}>
+          {#if batchRestoring}<span class="spinner small"></span>{/if}
+          {$_('agents.drift.restoreAll')}
+        </button>
+      </div>
+    {/if}
     <div class="agent-grid" bind:this={gridEl}>
       {#each agents as a, i (a.id)}
         <div class="glass-card agent-card">
@@ -372,6 +489,40 @@
               {/if}
             </div>
           </div>
+          {#if isDrifted(a.id)}
+            {@const boundSpec = bindings[a.id] ? $providers.find((p) => p.id === bindings[a.id]) : null}
+            {@const active = activeProviders[a.id] ?? null}
+            {@const clawboxName = boundSpec?.name ?? ''}
+            <div class="drift-banner">
+              <span class="drift-icon" aria-hidden="true">⚠</span>
+              <span class="drift-text">
+                {#if active}
+                  {$_('agents.drift.card', { values: { agentNow: active.name, clawbox: clawboxName } })}
+                {:else}
+                  {$_('agents.drift.cardUnknown', { values: { clawbox: clawboxName } })}
+                {/if}
+              </span>
+              <div class="drift-actions">
+                <button
+                  class="btn mini primary"
+                  onclick={() => resyncProvider(a.id)}
+                  disabled={resyncing[a.id]}
+                >
+                  {#if resyncing[a.id]}<span class="spinner small"></span>{/if}
+                  {$_('agents.drift.restore', { values: { name: clawboxName } })}
+                </button>
+                {#if active}
+                  <button
+                    class="btn mini"
+                    onclick={() => adoptFromAgent(a.id)}
+                    disabled={adopting[a.id]}
+                  >
+                    {$_('agents.drift.keep', { values: { name: active.name } })}
+                  </button>
+                {/if}
+              </div>
+            </div>
+          {/if}
           <div class="card-body">
             {#if a.install_command}
               <code class="install-cmd" title={a.install_command}>{a.install_command}</code>
@@ -526,7 +677,7 @@
                   <button class="btn" onclick={() => loadOverview(true)}>{$_('agents.syncDetail.refresh')}</button>
                 </div>
               {:else}
-                {@render syncSection($_('agents.syncDetail.providers'), o.provider_supported, o.providers, o.provider_config_path, o.provider_error, false)}
+                {@render syncSection($_('agents.syncDetail.providers'), o.provider_supported, o.providers, o.provider_config_path, o.provider_error, false, $_('agents.syncDetail.resync'), () => resyncProvider(o.agent_id), resyncing[o.agent_id], $_('agents.syncDetail.adopt'), () => adoptFromAgent(o.agent_id), adopting[o.agent_id])}}
                 {@render syncSection($_('agents.syncDetail.mcp'), o.mcp_supported, o.mcp, o.mcp_config_path, o.mcp_error, true)}
                 {@render syncSection($_('agents.syncDetail.skills'), o.skills_supported, o.skills, o.skills_config_path, o.skills_error, false)}
                 {@render syncSection($_('agents.syncDetail.memory'), o.memory_supported, o.memory, o.memory_config_path, o.memory_error, false)}
@@ -549,7 +700,13 @@
   items: SyncedItem[],
   configPath: string,
   err: string | null,
-  cliWhenNoPath: boolean
+  cliWhenNoPath: boolean,
+  resyncLabel = '',
+  onResync: (() => void) | undefined = undefined,
+  resyncing = false,
+  adoptLabel = '',
+  onAdopt: (() => void) | undefined = undefined,
+  adopting = false
 )}
   <div class="sync-section">
     <span class="sync-section-title">{title}</span>
@@ -575,6 +732,16 @@
         <code class="sync-path" title={configPath}>{configPath}</code>
       {:else if cliWhenNoPath}
         <span class="sync-muted">{$_('agents.syncDetail.viaCli')}</span>
+      {/if}
+      {#if onResync && items.some((i) => i.state === 'outdated' || i.state === 'removing')}
+        <button class="btn mini" onclick={onResync} disabled={resyncing}>
+          {#if resyncing}<span class="spinner small"></span>{/if}{resyncLabel}
+        </button>
+      {/if}
+      {#if onAdopt}
+        <button class="btn mini" onclick={onAdopt} disabled={adopting} title={$_('agents.syncDetail.adoptHint')}>
+          {#if adopting}<span class="spinner small"></span>{/if}{adoptLabel}
+        </button>
       {/if}
     {/if}
   </div>
@@ -611,6 +778,24 @@
   .docs-link { font-size: 0.8rem; color: var(--accent-teal); margin-left: auto; }
   .install-error { font-size: 0.75rem; color: #f87171; white-space: pre-wrap; margin: 0; }
   .btn { padding: 0.3rem 0.9rem; border-radius: 6px; border: 1px solid var(--border-strong); background: transparent; color: inherit; cursor: pointer; font-size: 0.75rem; }
+  .btn.mini { padding: 0.2rem 0.6rem; font-size: 0.7rem; }
+  /* 漂移横幅(三态 resolve 的傻瓜式皮)*/
+  .drift-bar {
+    display: flex; align-items: center; gap: 0.7rem; padding: 0.6rem 0.9rem;
+    border: 1px solid rgba(251,146,60,0.4); border-radius: 8px;
+    background: color-mix(in srgb, #fb923c 8%, var(--bg-secondary));
+  }
+  .drift-bar-icon { font-size: 1rem; }
+  .drift-bar-text { flex: 1; font-size: 0.8rem; }
+  .drift-banner {
+    display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap;
+    padding: 0.5rem 0.7rem; border-radius: 7px; margin-bottom: 0.2rem;
+    border: 1px solid rgba(251,146,60,0.4);
+    background: color-mix(in srgb, #fb923c 8%, transparent);
+  }
+  .drift-banner .drift-icon { opacity: 0.9; }
+  .drift-banner .drift-text { flex: 1; min-width: 0; font-size: 0.75rem; }
+  .drift-actions { display: flex; gap: 0.4rem; flex-shrink: 0; }
   /* 页头按钮:无样式定义时会继承根字号显得过大,与 .btn 同基准 */
   .refresh-btn {
     padding: 0.3rem 0.9rem; border-radius: 6px; border: 1px solid var(--border-strong);

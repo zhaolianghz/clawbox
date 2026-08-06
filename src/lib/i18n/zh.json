@@ -210,7 +210,15 @@
     },
     "modelCount": "{count} 个模型",
     "confirmRemove": "确认移除",
-    "freeTier": "免费额度",
+    "free": {
+      "filter": "免费额度({count})",
+      "recurring": "长期免费",
+      "trial": "试用金",
+      "noCard": "注册免绑卡",
+      "noCardShort": "免绑卡",
+      "verified": "{date} 核对",
+      "stale": "最后核对于 {date},信息可能已过期,请以官网为准"
+    },
     "transfer": {
       "importBtn": "导入配置",
       "exportBtn": "导出配置",
@@ -323,7 +331,10 @@
       },
       "defaultModel": "默认模型",
       "skills": "技能",
-      "memory": "记忆"
+      "memory": "记忆",
+      "resync": "重新同步",
+      "adopt": "从 agent 导入",
+      "adoptHint": "读取该 agent 当前在用的服务商并加入 ClawBox(以 agent 现值为准化解漂移)"
     },
     "provider": {
       "label": "服务商",
@@ -337,6 +348,14 @@
       "remove": "从兜底链移除",
       "empty": "没有可选的额外服务商 —— 再添加一个服务商即可启用兜底",
       "dragHint": "拖拽以调整兜底优先级"
+    },
+    "drift": {
+      "summary": "{count} 个 agent 设置不一致({names})",
+      "restoreAll": "全部恢复成 ClawBox",
+      "card": "现在用 {agentNow},ClawBox 记得是 {clawbox}。",
+      "cardUnknown": "设置不一致,ClawBox 记得是 {clawbox}。",
+      "restore": "恢复成 {name}",
+      "keep": "就用 {name}"
     }
   },
   "monitor": {

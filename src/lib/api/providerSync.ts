@@ -70,3 +70,31 @@ export function agent_fallbacks_set(
 export function agent_fallbacks_get(): Promise<Record<string, string[]>> {
   return invoke<Record<string, string[]>>('agent_fallbacks_get');
 }
+
+/** 手动强制重推该 agent 的当前 provider 绑定(愈合「已过期」漂移) */
+export function agent_provider_resync(agentId: string): Promise<ApplyResult> {
+  return invoke<ApplyResult>('agent_provider_resync', { agentId });
+}
+
+/** agent → ClawBox「领养」:读 agent 当前在用的服务商,在 ClawBox 建/更新一条并绑定。 */
+export interface AdoptResult {
+  provider_id: string;
+  provider_name: string;
+  created: boolean;
+}
+export function agent_provider_adopt(agentId: string): Promise<AdoptResult> {
+  return invoke<AdoptResult>('agent_provider_adopt', { agentId });
+}
+
+/** 漂移横幅用:某 agent 当前在用的服务商(只名字+模型,无 key)。null=读不出。 */
+export interface ActiveProviderInfo {
+  name: string;
+  model: string;
+}
+export function agent_active_providers_get(
+  agentIds: string[]
+): Promise<Record<string, ActiveProviderInfo | null>> {
+  return invoke<Record<string, ActiveProviderInfo | null>>('agent_active_providers_get', {
+    agentIds
+  });
+}

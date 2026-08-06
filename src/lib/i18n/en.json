@@ -210,7 +210,15 @@
     },
     "modelCount": "{count} models",
     "confirmRemove": "Confirm Remove",
-    "freeTier": "Free tier",
+    "free": {
+      "filter": "Free ({count})",
+      "recurring": "Free tier",
+      "trial": "Trial credits",
+      "noCard": "No credit card required",
+      "noCardShort": "No card",
+      "verified": "Verified {date}",
+      "stale": "Last verified {date} — may be outdated, check the provider site"
+    },
     "transfer": {
       "importBtn": "Import Config",
       "exportBtn": "Export Config",
@@ -323,7 +331,10 @@
       },
       "defaultModel": "Default model",
       "skills": "Skills",
-      "memory": "Memory"
+      "memory": "Memory",
+      "resync": "Re-sync",
+      "adopt": "Adopt from agent",
+      "adoptHint": "Read this agent's current provider and add it to ClawBox (resolves drift by keeping the agent's value)"
     },
     "provider": {
       "label": "Provider",
@@ -337,6 +348,14 @@
       "remove": "Remove from fallback chain",
       "empty": "No extra provider available — add another provider to enable fallback",
       "dragHint": "Drag to reorder the fallback priority"
+    },
+    "drift": {
+      "summary": "{count} agent(s) out of sync ({names})",
+      "restoreAll": "Restore all to ClawBox",
+      "card": "Now using {agentNow}; ClawBox remembers {clawbox}.",
+      "cardUnknown": "Out of sync; ClawBox remembers {clawbox}.",
+      "restore": "Restore to {name}",
+      "keep": "Keep {name}"
     }
   },
   "monitor": {
