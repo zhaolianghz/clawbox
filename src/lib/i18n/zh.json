@@ -427,7 +427,16 @@
         "ops": "基础设施 / DevOps",
         "content": "内容创作",
         "research": "研究 / 知识管理"
-      }
+      },
+      "viewMarket": "技能市场",
+      "viewMine": "我的技能",
+      "catAll": "全部",
+      "searchPlaceholder": "搜索技能源...",
+      "inLibraryShort": "已收录",
+      "manage": "管理",
+      "customInstall": "从 URL 安装",
+      "customHint": "任意含 SKILL.md 目录的公开 Git 仓库",
+      "close": "关闭"
     },
     "memorySync": {
       "hint": "内容将以托管区块注入各 agent 指令文件(CLAUDE.md / AGENTS.md 等),区块外内容不受影响",

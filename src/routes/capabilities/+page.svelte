@@ -11,7 +11,7 @@
     type RepoDiscovery, type InstallOutcome, type SkillUpdateInfo,
     type AgentPlan, type ApplyResult, type ChangeItem,
   } from '$lib/api/skillsSync';
-  import { SKILL_SOURCES, SKILL_CATEGORIES } from '$lib/data/skillSources';
+  import { SKILL_SOURCES, SKILL_CATEGORIES, type SkillCategory, type SkillSourceEntry } from '$lib/data/skillSources';
   import { localize } from '$lib/data/localized';
   import {
     memory_read, memory_write, memory_targets, memory_target_content,
@@ -133,16 +133,6 @@
   let installingSkills = $state(false);
   let installOutcomes = $state<Record<string, InstallOutcome>>({}); // key = 技能名,就地标注
 
-  function toggleInstallPanel() {
-    installOpen = !installOpen;
-  }
-
-  /** 点精选源卡片 = 填入其 repo 并自动发现 */
-  function pickSource(repo: string) {
-    repoInput = repo;
-    void discoverRepo();
-  }
-
   /** 克隆仓库并解析技能列表(需数秒,spinner 提示) */
   async function discoverRepo() {
     const repo = repoInput.trim();
@@ -184,6 +174,29 @@
   }
 
   // ---------- 检查更新(仅来源追踪的技能;单个更新,不做批量) ----------
+  // ---------- skills 子视图:市场 / 我的(对齐 MCP 的 market/mine)----------
+  let skillsView = $state<'market' | 'mine'>('mine');
+  let skillCat = $state<SkillCategory | 'all'>('all');
+  let skillQuery = $state('');
+  const filteredSkillSources = $derived(
+    SKILL_SOURCES.filter((s) => {
+      if (skillCat !== 'all' && s.category !== skillCat) return false;
+      const q = skillQuery.trim().toLowerCase();
+      if (!q) return true;
+      return (
+        s.name.toLowerCase().includes(q) ||
+        s.repo.toLowerCase().includes(q) ||
+        localize(s.description, $locale).toLowerCase().includes(q)
+      );
+    })
+  );
+  /** 市场卡「安装」:填入 repo + 发现 + 展开发现列表(installOpen 在市场分支渲染) */
+  function installFromMarket(src: SkillSourceEntry) {
+    repoInput = src.repo;
+    installOpen = true;
+    void discoverRepo();
+  }
+
   let checkingUpdates = $state(false);
   let updatesError = $state('');
   let updates = $state<Record<string, SkillUpdateInfo> | null>(null); // null = 未检查过
@@ -715,13 +728,123 @@
 
   <div class="tab-content glass-card">
     {#if activeTab === 'skills'}
+      <div class="subtabs" role="tablist">
+        <button class="tab" class:active={skillsView === 'market'} role="tab" onclick={() => (skillsView = 'market')}>
+          {$_('capabilities.skillsSync.viewMarket')}
+        </button>
+        <button class="tab" class:active={skillsView === 'mine'} role="tab" onclick={() => (skillsView = 'mine')}>
+          {$_('capabilities.skillsSync.viewMine')}<span class="tab-count">{library.length}</span>
+        </button>
+      </div>
+
+      {#if skillsView === 'market'}
+        <div class="skills-sync">
+          <div class="filter-row">
+            <button class="chip" class:active={skillCat === 'all'} onclick={() => (skillCat = 'all')}>
+              {$_('capabilities.skillsSync.catAll')}
+            </button>
+            {#each SKILL_CATEGORIES as cat (cat)}
+              <button class="chip" class:active={skillCat === cat} onclick={() => (skillCat = cat)}>
+                {$_(`capabilities.skillsSync.categories.${cat}`)}
+              </button>
+            {/each}
+            <input class="market-search" type="text" bind:value={skillQuery} placeholder={$_('capabilities.skillsSync.searchPlaceholder')} />
+          </div>
+
+          <div class="skill-grid">
+            {#each filteredSkillSources as src (src.id)}
+              {@const added = library.some((s) => s.source?.repo === src.repo)}
+              <div class="glass-card skill-card market-card">
+                <div class="skill-card-title">
+                  <span class="skill-card-name">{src.name}</span>
+                  <span class="source-badge">{$_(`capabilities.skillsSync.categories.${src.category}`)}</span>
+                  <a class="docs-link" href={`https://github.com/${src.repo}`} target="_blank" rel="noreferrer" title={src.repo}>↗</a>
+                </div>
+                {#if src.repo}<p class="market-desc repo-url">{src.repo}</p>{/if}
+                <p class="skill-card-desc">{localize(src.description, $locale)}</p>
+                <div class="skill-card-actions">
+                  {#if added}
+                    <span class="added-badge">✓ {$_('capabilities.skillsSync.inLibraryShort')}</span>
+                    <span class="spacer"></span>
+                    <button class="manage-link" onclick={() => (skillsView = 'mine')}>{$_('capabilities.skillsSync.manage')}</button>
+                  {:else}
+                    <button class="action-btn wide primary" onclick={() => installFromMarket(src)} disabled={discovering || installingSkills}>
+                      {#if discovering && repoInput.trim() === src.repo}<span class="spinner small"></span>{/if}
+                      + {$_('capabilities.skillsSync.install')}
+                    </button>
+                  {/if}
+                </div>
+              </div>
+            {/each}
+            <!-- 自定义 URL 安装 -->
+            <div class="glass-card skill-card market-card">
+              <div class="skill-card-title">
+                <span class="skill-card-name">{$_('capabilities.skillsSync.customInstall')}</span>
+              </div>
+              <p class="skill-card-desc">{$_('capabilities.skillsSync.customHint')}</p>
+              <div class="repo-row">
+                <input class="text-input repo-input" type="text" placeholder={$_('capabilities.skillsSync.repoPlaceholder')} bind:value={repoInput} onkeydown={(e) => { if (e.key === 'Enter') { e.preventDefault(); installOpen = true; void discoverRepo(); } }} />
+                <button class="action-btn wide primary" onclick={() => { installOpen = true; void discoverRepo(); }} disabled={discovering || installingSkills || !repoInput.trim()}>
+                  {#if discovering}<span class="spinner small"></span>{/if}
+                  {$_('capabilities.skillsSync.discover')}
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <!-- 发现列表(点市场卡或自定义发现后展开) -->
+          {#if installOpen}
+            <div class="scan-panel">
+              <div class="scan-head">
+                <span class="scan-title">{repoInput}</span>
+                <button class="action-btn wide" onclick={() => { installOpen = false; discovery = null; }}>{$_('capabilities.skillsSync.close')}</button>
+              </div>
+              {#if discovering}
+                <div class="sync-loading"><span class="spinner small"></span> {$_('capabilities.skillsSync.discovering')}</div>
+              {/if}
+              {#if discoverError}
+                <p class="error-line">{discoverError}</p>
+              {/if}
+              {#if discovery}
+                {#if discovery.skills.length === 0}
+                  <p class="empty">{$_('capabilities.skillsSync.noSkillsInRepo')}</p>
+                {:else}
+                  {@const selectableSkills = discovery.skills.filter((s) => !s.in_library && !installOutcomes[s.name]?.ok)}
+                  {@const allPicked = selectableSkills.length > 0 && selectableSkills.every((s) => installChecked[s.subdir])}
+                  <label class="scan-row select-all-row">
+                    <input type="checkbox" disabled={installingSkills || selectableSkills.length === 0} checked={allPicked} onchange={() => { const next = { ...installChecked }; for (const s of selectableSkills) next[s.subdir] = !allPicked; installChecked = next; }} />
+                    <span class="scan-name">{$_('capabilities.skillsSync.selectAll')}</span>
+                    <span class="scan-desc">{selectableSkills.length}</span>
+                  </label>
+                  {#each discovery.skills as s (s.subdir)}
+                    {@const outcome = installOutcomes[s.name]}
+                    <label class="scan-row" class:muted-row={s.in_library}>
+                      <input type="checkbox" disabled={s.in_library || installingSkills || outcome?.ok === true} checked={!s.in_library && !outcome?.ok && !!installChecked[s.subdir]} onchange={(e) => (installChecked = { ...installChecked, [s.subdir]: e.currentTarget.checked })} />
+                      <span class="scan-name">{s.name}</span>
+                      {#if s.description}<span class="scan-desc" title={s.description}>{s.description}</span>{/if}
+                      {#if s.in_library}<span class="relink-badge">{$_('capabilities.skillsSync.alreadyInstalled')}</span>{/if}
+                      {#if outcome}
+                        {#if outcome.ok}<span class="adopt-ok">✓ {$_('capabilities.skillsSync.installedOk')}</span>{:else}<span class="adopt-fail">✗ {outcome.detail}</span>{/if}
+                      {/if}
+                    </label>
+                  {/each}
+                  <div class="scan-foot">
+                    <button class="action-btn wide primary" onclick={installSelected} disabled={installCheckedCount === 0 || installingSkills}>
+                      {#if installingSkills}<span class="spinner small"></span>{/if}
+                      {$_('capabilities.skillsSync.installSelected', { values: { count: installCheckedCount } })}
+                    </button>
+                  </div>
+                {/if}
+              {/if}
+              <p class="security-note">{$_('capabilities.skillsSync.securityNote')}</p>
+            </div>
+          {/if}
+        </div>
+      {:else}
       <div class="skills-sync">
         <!-- 工具条:导入 / 扫描收编 / 同步到 Agent -->
         <div class="skills-toolbar">
           <span class="skills-hint">{$_('capabilities.skillsSync.libraryHint')}</span>
-          <button class="action-btn wide" class:on={installOpen} onclick={toggleInstallPanel} disabled={installingSkills}>
-            {$_('capabilities.skillsSync.install')}
-          </button>
           <button class="action-btn wide" onclick={importSkill} disabled={importing}>
             {#if importing}<span class="spinner small"></span>{/if}
             {$_('capabilities.skillsSync.import')}
@@ -755,114 +878,6 @@
               {$_('quickSync.action')}
             </button>
             <button class="qs-close" onclick={() => (quickSync = false)} aria-label={$_('quickSync.dismiss')}>✕</button>
-          </div>
-        {/if}
-
-        <!-- 从 Git 仓库安装(内联展开:精选源卡片 + repo 输入 + 发现列表 + 安全提示) -->
-        {#if installOpen}
-          <div class="scan-panel">
-            {#each SKILL_CATEGORIES as cat (cat)}
-              {@const sources = SKILL_SOURCES.filter((s) => s.category === cat)}
-              {#if sources.length > 0}
-                <div class="source-group">
-                  <span class="source-group-label">{$_(`capabilities.skillsSync.categories.${cat}`)}</span>
-                  <div class="featured-row">
-                    {#each sources as src (src.id)}
-                      <button
-                        type="button"
-                        class="source-card"
-                        class:sel={repoInput.trim() === src.repo}
-                        onclick={() => pickSource(src.repo)}
-                        disabled={discovering || installingSkills}
-                      >
-                        <span class="source-name">{src.name}</span>
-                        <span class="source-repo">{src.repo}</span>
-                        <span class="source-desc">{localize(src.description, $locale)}</span>
-                      </button>
-                    {/each}
-                  </div>
-                </div>
-              {/if}
-            {/each}
-            <div class="repo-row">
-              <input
-                class="text-input repo-input"
-                type="text"
-                placeholder={$_('capabilities.skillsSync.repoPlaceholder')}
-                bind:value={repoInput}
-                onkeydown={(e) => { if (e.key === 'Enter') { e.preventDefault(); discoverRepo(); } }}
-              />
-              <button
-                class="action-btn wide primary"
-                onclick={discoverRepo}
-                disabled={discovering || installingSkills || !repoInput.trim()}
-              >
-                {#if discovering}<span class="spinner small"></span>{/if}
-                {$_('capabilities.skillsSync.discover')}
-              </button>
-            </div>
-            {#if discovering}
-              <div class="sync-loading"><span class="spinner small"></span> {$_('capabilities.skillsSync.discovering')}</div>
-            {/if}
-            {#if discoverError}
-              <p class="error-line">{discoverError}</p>
-            {/if}
-            {#if discovery}
-              {#if discovery.skills.length === 0}
-                <p class="empty">{$_('capabilities.skillsSync.noSkillsInRepo')}</p>
-              {:else}
-                {@const selectableSkills = discovery.skills.filter((s) => !s.in_library && !installOutcomes[s.name]?.ok)}
-                {@const allPicked = selectableSkills.length > 0 && selectableSkills.every((s) => installChecked[s.subdir])}
-                <label class="scan-row select-all-row">
-                  <input
-                    type="checkbox"
-                    disabled={installingSkills || selectableSkills.length === 0}
-                    checked={allPicked}
-                    onchange={() => {
-                      const next = { ...installChecked };
-                      for (const s of selectableSkills) next[s.subdir] = !allPicked;
-                      installChecked = next;
-                    }}
-                  />
-                  <span class="scan-name">{$_('capabilities.skillsSync.selectAll')}</span>
-                  <span class="scan-desc">{selectableSkills.length}</span>
-                </label>
-                {#each discovery.skills as s (s.subdir)}
-                  {@const outcome = installOutcomes[s.name]}
-                  <label class="scan-row" class:muted-row={s.in_library}>
-                    <input
-                      type="checkbox"
-                      disabled={s.in_library || installingSkills || outcome?.ok === true}
-                      checked={!s.in_library && !outcome?.ok && !!installChecked[s.subdir]}
-                      onchange={(e) => (installChecked = { ...installChecked, [s.subdir]: e.currentTarget.checked })}
-                    />
-                    <span class="scan-name">{s.name}</span>
-                    {#if s.description}<span class="scan-desc" title={s.description}>{s.description}</span>{/if}
-                    {#if s.in_library}
-                      <span class="relink-badge">{$_('capabilities.skillsSync.alreadyInstalled')}</span>
-                    {/if}
-                    {#if outcome}
-                      {#if outcome.ok}
-                        <span class="adopt-ok">✓ {$_('capabilities.skillsSync.installedOk')}</span>
-                      {:else}
-                        <span class="adopt-fail">✗ {outcome.detail}</span>
-                      {/if}
-                    {/if}
-                  </label>
-                {/each}
-                <div class="scan-foot">
-                  <button
-                    class="action-btn wide primary"
-                    onclick={installSelected}
-                    disabled={installCheckedCount === 0 || installingSkills}
-                  >
-                    {#if installingSkills}<span class="spinner small"></span>{/if}
-                    {$_('capabilities.skillsSync.installSelected', { values: { count: installCheckedCount } })}
-                  </button>
-                </div>
-              {/if}
-            {/if}
-            <p class="security-note">{$_('capabilities.skillsSync.securityNote')}</p>
           </div>
         {/if}
 
@@ -1136,6 +1151,7 @@
           {/if}
         </div>
       </div>
+      {/if}
     {:else if activeTab === 'memory'}
       <div class="skills-sync">
         <!-- 统一记忆编辑器 -->
@@ -1645,6 +1661,19 @@
   }
   .skill-card-actions { display: flex; align-items: center; gap: 0.4rem; margin-top: auto; flex-wrap: wrap; }
   .skill-card-actions .spacer { flex: 1; }
+  /* skills 市场子视图(对齐 MCP 的 market/mine 视觉)*/
+  .subtabs { display: flex; gap: 0.2rem; border-bottom: 1px solid var(--border-strong); margin-bottom: 0.8rem; }
+  .subtabs .tab { background: none; border: none; border-bottom: 2px solid transparent; padding: 0.4rem 0.7rem; cursor: pointer; color: var(--text-muted); font-size: 0.8rem; display: inline-flex; align-items: center; gap: 0.3rem; }
+  .subtabs .tab.active { color: var(--text-primary); border-bottom-color: var(--neon-cyan, #5eead4); }
+  .tab-count { font-size: 0.65rem; opacity: 0.6; background: var(--bg-tertiary); padding: 0 0.35rem; border-radius: 999px; }
+  .filter-row { display: flex; align-items: center; gap: 0.4rem; flex-wrap: wrap; }
+  .filter-row .chip { padding: 0.25rem 0.6rem; border-radius: 999px; border: 1px solid var(--border-strong); background: var(--bg-tertiary); color: var(--text-muted); font-size: 0.72rem; cursor: pointer; }
+  .filter-row .chip.active { color: var(--text-primary); border-color: var(--neon-cyan, #5eead4); }
+  .market-search { flex: 1; min-width: 120px; max-width: 220px; padding: 0.3rem 0.6rem; border-radius: 6px; border: 1px solid var(--border-strong); background: var(--bg-tertiary); color: inherit; font-size: 0.75rem; }
+  .market-card .repo-url { font-size: 0.68rem; opacity: 0.55; margin: 0.1rem 0 0.4rem; word-break: break-all; }
+  .market-card .docs-link { margin-left: auto; font-size: 0.7rem; opacity: 0.6; text-decoration: none; }
+  .added-badge { color: #4ade80; font-size: 0.72rem; }
+  .manage-link { background: none; border: none; color: var(--neon-cyan, #5eead4); cursor: pointer; font-size: 0.72rem; text-decoration: underline; }
   .update-badge.no-ml { margin-left: 0; }
 
   .sync-loading { display: flex; align-items: center; gap: 0.5rem; font-size: 0.8rem; color: var(--text-secondary); padding: 0.5rem 0; }

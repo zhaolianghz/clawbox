@@ -427,7 +427,16 @@
         "ops": "Infrastructure & DevOps",
         "content": "Content Creation",
         "research": "Research & Knowledge"
-      }
+      },
+      "viewMarket": "Skill Market",
+      "viewMine": "My Skills",
+      "catAll": "All",
+      "searchPlaceholder": "Search skills...",
+      "inLibraryShort": "in library",
+      "manage": "Manage",
+      "customInstall": "Install from URL",
+      "customHint": "Any public Git repo containing SKILL.md folders",
+      "close": "Close"
     },
     "memorySync": {
       "hint": "Injected into each agent instruction file as a managed block; content outside the block is untouched",
