@@ -82,6 +82,22 @@ pub trait ProviderAdapter: Send + Sync {
     fn deployed_fallback_names(&self, _fallbacks: &[ProviderSpec]) -> Vec<String> {
         vec![]
     }
+
+    /// 反向解析 agent 当前在用的服务商(agent → ClawBox「领养」)。默认 None
+    /// (不支持/读不出 = 没东西可领养,不报错)。成功返回的条目用于
+    /// agent_provider_adopt:在 ClawBox 里 upsert 一条同名 ProviderSpec 并绑定。
+    fn extract_active(&self, _home: &Path) -> Result<Option<AdoptedProvider>, String> {
+        Ok(None)
+    }
+
+    /// 写后结构校验:apply/apply_fallbacks 写完后由 apply_one 调用,失败则
+    /// 自动 rollback 到 backup。默认 Ok(成立);各 adapter 覆盖为 agent 启动
+    /// 所需的不变量(如 hermes 的 model.provider 必须能解析到一条
+    /// custom_providers 条目——正是当年的 UUID bug 栽的地方)。只校验「文件
+    /// 语法 + 结构不变量」,不跑 agent 本身(避免副作用/性能)。
+    fn validate(&self, _home: &Path) -> Result<(), String> {
+        Ok(())
+    }
 }
 
 // ---- 端点槽位选择 -----------------------------------------------------------
@@ -95,6 +111,22 @@ pub enum Slot {
     Openai,
 }
 
+/// 从 agent 原生配置里反向解析出的「当前激活服务商」——
+/// 用于 adopt(agent → ClawBox):让 ClawBox 学会 agent 现在用的端点/key/model。
+#[derive(Clone, Debug, PartialEq)]
+pub struct AdoptedProvider {
+    /// 显示名(hermes custom_providers[].name / codex 表名;无则按 host 推导)。
+    pub name: String,
+    pub api_key: String,
+    /// 完整端点 URL。
+    pub base_url: String,
+    /// 该端点应写入 ProviderSpec 的哪个槽。
+    pub slot: Slot,
+    pub default_model: String,
+    /// 额外已知模型(至少含 default_model)。
+    pub models: Vec<String>,
+}
+
 fn slot_url(spec: &ProviderSpec, slot: Slot) -> Option<&str> {
     let url = match slot {
         Slot::Anthropic => spec.anthropic_base_url.trim(),
@@ -106,6 +138,25 @@ fn slot_url(spec: &ProviderSpec, slot: Slot) -> Option<&str> {
 /// 按优先级取第一个已配置的端点槽。
 pub(crate) fn pick_endpoint<'a>(spec: &'a ProviderSpec, order: &[Slot]) -> Option<(&'a str, Slot)> {
     order.iter().find_map(|s| slot_url(spec, *s).map(|u| (u, *s)))
+}
+
+/// 从端点 URL 推导一个人类可读的服务商名(取 host 去掉 api./www.,首字母大写)。
+/// 用于 adopt 时 agent 配置里没有显式名字(claude-code env / codex 表)的场景。
+fn host_label(url: &str) -> String {
+    let host = url
+        .split("://")
+        .nth(1)
+        .unwrap_or(url)
+        .split('/')
+        .next()
+        .unwrap_or(url);
+    let host = host.trim_start_matches("api.").trim_start_matches("www.");
+    let label = host.split('.').next().unwrap_or(host);
+    let mut c = label.chars();
+    match c.next() {
+        Some(f) => f.to_uppercase().collect::<String>() + c.as_str(),
+        None => String::from("Provider"),
+    }
 }
 
 /// 激活服务商:active_id 指向的、且仍启用的条目。
@@ -382,6 +433,58 @@ impl ProviderAdapter for EnvSettingsProviderAdapter {
             Target::Deploy { .. } => vec![ENV_MANAGED_MARK.to_string()],
             Target::Skip { .. } => vec![],
         }
+    }
+
+    fn validate(&self, home: &Path) -> Result<(), String> {
+        let path = self.config_path(home);
+        if !path.exists() {
+            return Ok(());
+        }
+        let doc = load_json(&path)?;
+        let Some(env) = doc.get("env").and_then(|v| v.as_object()) else {
+            return Ok(());
+        };
+        // BASE_URL 与 API_KEY 必须同时在场(只写了 URL 没 key,agent 会 401)。
+        let [base_key, api_key, _model_key] = self.keys;
+        let has_base = env.contains_key(base_key);
+        let has_key = env.contains_key(api_key);
+        if has_base != has_key {
+            return Err(format!(
+                "{}: env has {} but not {} (or vice versa); both must be set together",
+                path.display(),
+                base_key,
+                api_key
+            ));
+        }
+        Ok(())
+    }
+
+    fn extract_active(&self, home: &Path) -> Result<Option<AdoptedProvider>, String> {
+        let path = self.config_path(home);
+        if !path.exists() {
+            return Ok(None);
+        }
+        let doc = load_json(&path)?;
+        let Some(env) = doc.get("env").and_then(|v| v.as_object()) else {
+            return Ok(None);
+        };
+        let [base_key, api_key, model_key] = self.keys;
+        let base_url = env.get(base_key).and_then(|v| v.as_str()).unwrap_or("").trim().to_string();
+        let api_key_v = env.get(api_key).and_then(|v| v.as_str()).unwrap_or("").trim().to_string();
+        if base_url.is_empty() || api_key_v.is_empty() {
+            return Ok(None);
+        }
+        let default_model = env.get(model_key).and_then(|v| v.as_str()).unwrap_or("").trim().to_string();
+        // claude-code 只认 anthropic 槽;codebuddy 只认 openai 槽——取适配器的首个槽。
+        let slot = self.slots.first().copied().unwrap_or(Slot::Anthropic);
+        Ok(Some(AdoptedProvider {
+            name: host_label(&base_url),
+            api_key: api_key_v,
+            base_url,
+            slot,
+            default_model: default_model.clone(),
+            models: if default_model.is_empty() { vec![] } else { vec![default_model] },
+        }))
     }
 }
 
@@ -745,6 +848,81 @@ impl ProviderAdapter for CodexProviderAdapter {
             Target::Deploy { .. } => vec![CODEX_PROVIDER_KEY.to_string()],
             Target::Skip { .. } => vec![],
         }
+    }
+
+    fn validate(&self, home: &Path) -> Result<(), String> {
+        let path = self.config_path(home);
+        if !path.exists() {
+            return Ok(());
+        }
+        let doc = self.load_toml(home)?;
+        let mp = doc.get("model_provider").and_then(|i| i.as_str()).unwrap_or("");
+        if mp.is_empty() {
+            return Ok(()); // 未设 model_provider:不是我们管的态,放行
+        }
+        let Some(table) = doc
+            .get("model_providers")
+            .and_then(|i| i.as_table())
+            .and_then(|t| t.get(mp))
+        else {
+            return Err(format!(
+                "{}: model_provider='{}' but no [model_providers.{}] table",
+                path.display(),
+                mp,
+                mp
+            ));
+        };
+        let base = table.get("base_url").and_then(|i| i.as_str()).unwrap_or("");
+        if base.trim().is_empty() {
+            return Err(format!(
+                "{}: [model_providers.{}] has no base_url",
+                path.display(),
+                mp
+            ));
+        }
+        Ok(())
+    }
+
+    fn extract_active(&self, home: &Path) -> Result<Option<AdoptedProvider>, String> {
+        let path = self.config_path(home);
+        if !path.exists() {
+            return Ok(None);
+        }
+        let doc = self.load_toml(home)?;
+        let mp = doc.get("model_provider").and_then(|i| i.as_str()).unwrap_or("");
+        if mp.is_empty() {
+            return Ok(None);
+        }
+        let Some(table) = doc
+            .get("model_providers")
+            .and_then(|i| i.as_table())
+            .and_then(|t| t.get(mp))
+        else {
+            return Ok(None);
+        };
+        let base_url = table.get("base_url").and_then(|i| i.as_str()).unwrap_or("").trim().to_string();
+        if base_url.is_empty() {
+            return Ok(None);
+        }
+        let auth = load_json(&self.auth_path(home))?;
+        let api_key = auth
+            .get("OPENAI_API_KEY")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .trim()
+            .to_string();
+        if api_key.is_empty() {
+            return Ok(None);
+        }
+        let default_model = doc.get("model").and_then(|i| i.as_str()).unwrap_or("").trim().to_string();
+        Ok(Some(AdoptedProvider {
+            name: host_label(&base_url),
+            api_key,
+            base_url,
+            slot: Slot::Openai,
+            default_model: default_model.clone(),
+            models: if default_model.is_empty() { vec![] } else { vec![default_model] },
+        }))
     }
 }
 
@@ -1239,6 +1417,71 @@ impl HermesProviderAdapter {
             api_mode: v.get("api_mode").and_then(|x| x.as_str()).unwrap_or("").trim().to_string(),
         })
     }
+
+    /// 归一化名称(与 hermes `_normalize_custom_provider_name` 一致:小写 + 空格转 -)。
+    fn norm_name(s: &str) -> String {
+        s.trim().to_lowercase().replace(' ', "-")
+    }
+
+    /// 校验 `custom:<name>`(或裸名)引用能解析到一条 base_url+api_key 齐全的
+    /// custom_providers / providers 条目。非 custom: 形式且找不到也不报错
+    /// (可能是内置 provider 名,我们无法穷举;ClawBox 只产 custom: 引用)。
+    fn assert_provider_resolves(
+        doc: &serde_yaml::Value,
+        provider: &str,
+        path: &Path,
+    ) -> Result<(), String> {
+        let provider = provider.trim();
+        let name = provider.strip_prefix("custom:").unwrap_or(provider);
+        let want = Self::norm_name(name);
+        if want.is_empty() {
+            return Ok(());
+        }
+        // custom_providers 列表(旧式,本机主用)
+        let entry = doc
+            .get("custom_providers")
+            .and_then(|v| v.as_sequence())
+            .into_iter()
+            .flatten()
+            .find(|e| {
+                e.get("name")
+                    .and_then(|n| n.as_str())
+                    .map(|n| Self::norm_name(n) == want)
+                    .unwrap_or(false)
+            });
+        if let Some(e) = entry {
+            let base = e.get("base_url").and_then(|v| v.as_str()).unwrap_or("");
+            let key = e.get("api_key").and_then(|v| v.as_str()).unwrap_or("");
+            if base.trim().is_empty() {
+                return Err(format!("{}: custom provider '{}' has no base_url", path.display(), name));
+            }
+            if key.trim().is_empty() {
+                return Err(format!("{}: custom provider '{}' has no api_key", path.display(), name));
+            }
+            return Ok(());
+        }
+        // providers dict(新式)
+        let in_dict = doc
+            .get("providers")
+            .and_then(|v| v.as_mapping())
+            .into_iter()
+            .flat_map(|m| m.iter())
+            .any(|(k, _)| k.as_str().map(|s| Self::norm_name(s) == want).unwrap_or(false));
+        if in_dict {
+            Ok(())
+        } else {
+            // 裸名(非 custom:)且查不到 → 可能是内置 provider,放行,不误报。
+            if provider.starts_with("custom:") {
+                Err(format!(
+                    "{}: provider '{}' has no matching custom_providers/providers entry",
+                    path.display(),
+                    provider
+                ))
+            } else {
+                Ok(())
+            }
+        }
+    }
 }
 
 impl ProviderAdapter for HermesProviderAdapter {
@@ -1508,6 +1751,113 @@ impl ProviderAdapter for HermesProviderAdapter {
         }
         self.write_yaml(home, &doc)?;
         Ok(1)
+    }
+
+    fn validate(&self, home: &Path) -> Result<(), String> {
+        let path = self.config_path(home);
+        let doc = self.read_yaml(home)?;
+        let provider = doc
+            .get("model")
+            .and_then(|m| m.get("provider"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+        if provider.trim().is_empty() {
+            return Err(format!(
+                "{}: model.provider is empty (hermes needs a model provider)",
+                path.display()
+            ));
+        }
+        Self::assert_provider_resolves(&doc, provider, &path)?;
+        // fallback 链里每个 custom: 引用同样要能解析
+        if let Some(seq) = doc.get("fallback_providers").and_then(|v| v.as_sequence()) {
+            for (i, e) in seq.iter().enumerate() {
+                if let Some(p) = e.get("provider").and_then(|v| v.as_str()) {
+                    Self::assert_provider_resolves(&doc, p, &path)
+                        .map_err(|err| format!("fallback_providers[{}]: {}", i, err))?;
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn extract_active(&self, home: &Path) -> Result<Option<AdoptedProvider>, String> {
+        let doc = self.read_yaml(home)?;
+        let provider = doc
+            .get("model")
+            .and_then(|m| m.get("provider"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+        if provider.trim().is_empty() {
+            return Ok(None);
+        }
+        let raw_name = provider.strip_prefix("custom:").unwrap_or(provider);
+        let want = Self::norm_name(raw_name);
+        if want.is_empty() {
+            return Ok(None);
+        }
+        // 先查 custom_providers 列表(本机主用),再查 providers dict(新式)
+        let entry = doc
+            .get("custom_providers")
+            .and_then(|v| v.as_sequence())
+            .into_iter()
+            .flatten()
+            .find(|e| {
+                e.get("name")
+                    .and_then(|n| n.as_str())
+                    .map(|n| Self::norm_name(n) == want)
+                    .unwrap_or(false)
+            })
+            .or_else(|| {
+                doc.get("providers").and_then(|v| v.as_mapping()).and_then(|m| {
+                    m.iter()
+                        .find(|(k, _)| k.as_str().map(|s| Self::norm_name(s) == want).unwrap_or(false))
+                        .map(|(_, v)| v)
+                })
+            });
+        let Some(entry) = entry else { return Ok(None) };
+        let base_url = entry.get("base_url").and_then(|v| v.as_str()).unwrap_or("").trim().to_string();
+        let api_key = entry.get("api_key").and_then(|v| v.as_str()).unwrap_or("").trim().to_string();
+        if base_url.is_empty() || api_key.is_empty() {
+            return Ok(None);
+        }
+        let api_mode = entry.get("api_mode").and_then(|v| v.as_str()).unwrap_or("");
+        let slot = if api_mode.trim() == "anthropic_messages" {
+            Slot::Anthropic
+        } else {
+            Slot::Openai
+        };
+        let default_model = entry
+            .get("model")
+            .and_then(|v| v.as_str())
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .or_else(|| {
+                doc.get("model")
+                    .and_then(|m| m.get("default"))
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.trim().to_string())
+            })
+            .unwrap_or_default();
+        let mut models: Vec<String> = Vec::new();
+        if let Some(mm) = entry.get("models").and_then(|v| v.as_mapping()) {
+            for (k, _) in mm.iter() {
+                if let Some(id) = k.as_str() {
+                    if !id.trim().is_empty() {
+                        models.push(id.trim().to_string());
+                    }
+                }
+            }
+        }
+        if !default_model.is_empty() && !models.contains(&default_model) {
+            models.push(default_model.clone());
+        }
+        let name = entry
+            .get("name")
+            .and_then(|v| v.as_str())
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .unwrap_or_else(|| raw_name.to_string());
+        Ok(Some(AdoptedProvider { name, api_key, base_url, slot, default_model, models }))
     }
 }
 
@@ -2754,6 +3104,45 @@ pub fn plan_all(
 
 /// 对单个 agent 应用 fallback 链。与 apply_one 分离:fallback 不走主配置
 /// 备份(同一个 config.yaml 已在主 apply 备份过),只汇报写入条数与错误。
+/// 把主配置文件回滚到 apply 前的备份。backup=None 表示 apply 前文件不存在 →
+/// 删掉 apply 产物以恢复「不存在」状态。失败只记日志(尽力而为)。
+fn rollback_config(backup: &Option<String>, target: &Path) {
+    match backup {
+        Some(bk) => {
+            if let Err(e) = std::fs::copy(bk, target) {
+                eprintln!(
+                    "[clawbox] rollback: failed to restore {} from {}: {}",
+                    target.display(),
+                    bk,
+                    e
+                );
+            }
+        }
+        None => {
+            let _ = std::fs::remove_file(target);
+        }
+    }
+}
+
+/// 校验刚写入的配置。apply 改了文件(applied>0)才校验;不过则回滚到 backup,
+/// 返回 Err(带原因)。apply 未改文件(applied==0)直接 Ok——原文件此前应是合法的。
+fn validate_or_rollback(
+    home: &Path,
+    adapter: &dyn ProviderAdapter,
+    applied: usize,
+    backup: &Option<String>,
+) -> Result<(), (Option<String>, String)> {
+    if applied == 0 {
+        return Ok(());
+    }
+    if let Err(ve) = adapter.validate(home) {
+        rollback_config(backup, &adapter.config_path(home));
+        return Err((backup.clone(), format!("validation failed after write, rolled back: {}", ve)));
+    }
+    Ok(())
+}
+
+/// 对单个 agent 应用 fallback 链。与 apply_one 同样走 备份→写→校验→(不过)回滚。
 pub fn apply_fallbacks_one(
     home: &Path,
     adapter: &dyn ProviderAdapter,
@@ -2770,26 +3159,50 @@ pub fn apply_fallbacks_one(
             error: Some("agent not supported for provider sync".to_string()),
         };
     }
-    match adapter.apply_fallbacks(home, fallbacks, managed) {
-        Ok(applied) => ApplyResult {
+    let backup_path = match backup_target(home, adapter.agent_id(), &adapter.config_path(home)) {
+        Ok(p) => p,
+        Err(e) => {
+            return ApplyResult {
+                agent_id,
+                ok: false,
+                backup_path: None,
+                applied: 0,
+                error: Some(e),
+            }
+        }
+    };
+    let applied = match adapter.apply_fallbacks(home, fallbacks, managed) {
+        Ok(n) => n,
+        Err(e) => {
+            return ApplyResult {
+                agent_id,
+                ok: false,
+                backup_path,
+                applied: 0,
+                error: Some(e),
+            }
+        }
+    };
+    match validate_or_rollback(home, adapter, applied, &backup_path) {
+        Ok(()) => ApplyResult {
             agent_id,
             ok: true,
-            backup_path: None,
+            backup_path,
             applied,
             error: None,
         },
-        Err(e) => ApplyResult {
+        Err((bk, msg)) => ApplyResult {
             agent_id,
             ok: false,
-            backup_path: None,
+            backup_path: bk,
             applied: 0,
-            error: Some(e),
+            error: Some(msg),
         },
     }
 }
 
-/// 对单个 agent 应用:备份主配置文件、写入、汇报。调用方在成功后更新
-/// providers_managed。
+/// 对单个 agent 应用:备份主配置文件、写入、校验、(不过)回滚。调用方在
+/// 成功后更新 providers_managed。
 pub fn apply_one(
     home: &Path,
     adapter: &dyn ProviderAdapter,
@@ -2819,20 +3232,32 @@ pub fn apply_one(
             }
         }
     };
-    match adapter.apply(home, providers, active_id, managed) {
-        Ok(applied) => ApplyResult {
+    let applied = match adapter.apply(home, providers, active_id, managed) {
+        Ok(n) => n,
+        Err(e) => {
+            return ApplyResult {
+                agent_id,
+                ok: false,
+                backup_path,
+                applied: 0,
+                error: Some(e),
+            }
+        }
+    };
+    match validate_or_rollback(home, adapter, applied, &backup_path) {
+        Ok(()) => ApplyResult {
             agent_id,
             ok: true,
             backup_path,
             applied,
             error: None,
         },
-        Err(e) => ApplyResult {
+        Err((bk, msg)) => ApplyResult {
             agent_id,
             ok: false,
-            backup_path,
+            backup_path: bk,
             applied: 0,
-            error: Some(e),
+            error: Some(msg),
         },
     }
 }
@@ -3919,6 +4344,138 @@ mod tests {
         assert_eq!(a.plan_fallbacks(home.path(), &[dual.clone()], &managed).unwrap()[0].action, "update");
         // 清空 → remove
         assert_eq!(a.plan_fallbacks(home.path(), &[], &managed).unwrap()[0].action, "remove");
+    }
+
+    #[test]
+    fn hermes_validate_rejects_dangling_and_accepts_resolving() {
+        let home = TempHome::new();
+        let a = HermesProviderAdapter;
+        let cfg = PathBuf::from(".hermes").join("config.yaml");
+        // model.provider 指向不存在的 custom 条目 → 拒(正是当年 UUID bug 的形态)
+        write_file(home.path(), &cfg, "model:\n  provider: custom:Ghost\n  default: m\n");
+        let err = a.validate(home.path()).unwrap_err();
+        assert!(err.contains("no matching custom_providers"), "{}", err);
+        // 加上匹配条目(base_url+api_key 齐)→ 过
+        write_file(
+            home.path(),
+            &cfg,
+            "model:\n  provider: custom:MiniMax\n  default: MiniMax-M3\ncustom_providers:\n  - name: MiniMax\n    base_url: https://x/anthropic\n    api_key: k\n",
+        );
+        a.validate(home.path()).unwrap();
+        // 条目缺 api_key → 拒
+        write_file(
+            home.path(),
+            &cfg,
+            "model:\n  provider: custom:MiniMax\ncustom_providers:\n  - name: MiniMax\n    base_url: https://x/anthropic\n",
+        );
+        let err = a.validate(home.path()).unwrap_err();
+        assert!(err.contains("api_key"), "{}", err);
+        // model.provider 为空 → 拒
+        write_file(home.path(), &cfg, "model:\n  default: m\n");
+        let err = a.validate(home.path()).unwrap_err();
+        assert!(err.contains("empty"), "{}", err);
+        // fallback 链里引用缺失条目 → 拒,且提示 fallback_providers[0]
+        write_file(
+            home.path(),
+            &cfg,
+            "model:\n  provider: custom:MiniMax\ncustom_providers:\n  - name: MiniMax\n    base_url: https://x\n    api_key: k\nfallback_providers:\n  - provider: custom:Missing\n    model: m\n",
+        );
+        let err = a.validate(home.path()).unwrap_err();
+        assert!(err.contains("fallback_providers[0]"), "{}", err);
+    }
+
+    #[test]
+    fn hermes_extract_active_reads_resolving_entry() {
+        let home = TempHome::new();
+        let a = HermesProviderAdapter;
+        let cfg = PathBuf::from(".hermes").join("config.yaml");
+        write_file(
+            home.path(),
+            &cfg,
+            "model:\n  provider: custom:MiniMax\n  default: MiniMax-M3\ncustom_providers:\n  - name: MiniMax\n    base_url: https://api.minimaxi.com/anthropic\n    api_key: sk-x\n    api_mode: anthropic_messages\n    model: MiniMax-M3\n    models:\n      MiniMax-M3: {name: MiniMax M3}\n      MiniMax-M2: {name: MiniMax M2}\n",
+        );
+        let adopted = a.extract_active(home.path()).unwrap().unwrap();
+        assert_eq!(adopted.name, "MiniMax");
+        assert_eq!(adopted.base_url, "https://api.minimaxi.com/anthropic");
+        assert_eq!(adopted.api_key, "sk-x");
+        assert_eq!(adopted.slot, Slot::Anthropic);
+        assert_eq!(adopted.default_model, "MiniMax-M3");
+        assert!(adopted.models.contains(&"MiniMax-M3".to_string()));
+        assert!(adopted.models.contains(&"MiniMax-M2".to_string()));
+        // model.provider 为空 → None
+        write_file(home.path(), &cfg, "model:\n  default: m\n");
+        assert!(a.extract_active(home.path()).unwrap().is_none());
+        // 指向不存在的 custom → None
+        write_file(home.path(), &cfg, "model:\n  provider: custom:Ghost\ncustom_providers: []\n");
+        assert!(a.extract_active(home.path()).unwrap().is_none());
+    }
+
+    // ---- 写后校验 + 回滚机制(mock adapter)----
+
+    /// apply 会写文件,但 validate 恒拒 —— 用来验证 apply_one 的回滚路径。
+    struct AlwaysInvalidAdapter;
+    impl ProviderAdapter for AlwaysInvalidAdapter {
+        fn agent_id(&self) -> &'static str {
+            "mock-invalid"
+        }
+        fn config_path(&self, home: &Path) -> PathBuf {
+            home.join(".mock").join("cfg.json")
+        }
+        fn plan(
+            &self,
+            _home: &Path,
+            _providers: &[ProviderSpec],
+            _active_id: Option<&str>,
+            _managed: &[String],
+        ) -> Result<Vec<ChangeItem>, String> {
+            Ok(vec![])
+        }
+        fn apply(
+            &self,
+            home: &Path,
+            _providers: &[ProviderSpec],
+            _active_id: Option<&str>,
+            _managed: &[String],
+        ) -> Result<usize, String> {
+            let p = home.join(".mock").join("cfg.json");
+            std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+            std::fs::write(&p, "{\"applied\":true}").unwrap();
+            Ok(1)
+        }
+        fn deployed_names(&self, _providers: &[ProviderSpec], _active_id: Option<&str>) -> Vec<String> {
+            vec![]
+        }
+        fn validate(&self, _home: &Path) -> Result<(), String> {
+            Err("mock: always invalid".into())
+        }
+    }
+
+    #[test]
+    fn apply_one_rolls_back_to_prior_file_on_validation_failure() {
+        let home = TempHome::new();
+        let cfg = PathBuf::from(".mock").join("cfg.json");
+        // 先有原始文件 → rollback 应回复它,而非留 apply 产物
+        write_file(home.path(), &cfg, "{\"original\":true}");
+        let r = apply_one(home.path(), &AlwaysInvalidAdapter, &[], None, &[]);
+        assert!(!r.ok, "must fail");
+        assert!(
+            r.error.as_deref().unwrap_or("").contains("rolled back"),
+            "{:?}",
+            r.error
+        );
+        let content = std::fs::read_to_string(home.path().join(&cfg)).unwrap();
+        assert!(content.contains("original"), "rollback must restore original; got: {}", content);
+    }
+
+    #[test]
+    fn apply_one_removes_file_when_no_prior_existed_and_validation_fails() {
+        let home = TempHome::new();
+        let r = apply_one(home.path(), &AlwaysInvalidAdapter, &[], None, &[]);
+        assert!(!r.ok);
+        assert!(
+            !home.path().join(".mock").join("cfg.json").exists(),
+            "rollback must remove the file that didn't exist before apply"
+        );
     }
 
     // ---- openclaw ----

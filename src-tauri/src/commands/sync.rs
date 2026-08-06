@@ -4,6 +4,7 @@
 
 use crate::commands::config::{load_config, real_home, save_config, Config, McpServerSpec, ProviderSpec};
 use crate::sync::{self, providers, AgentPlan, ApplyResult};
+use crate::sync::providers::{AdoptedProvider, Slot};
 use serde::Serialize;
 use std::collections::{BTreeMap, HashMap};
 use std::path::Path;
@@ -237,10 +238,142 @@ pub async fn agent_fallbacks_get() -> Result<HashMap<String, Vec<String>>, Strin
     Ok(load_config(&real_home())?.agent_fallbacks)
 }
 
-/// 启动对账:对每个已绑定 agent 跑 plan,有漂移(ClawBox 升级改了下发格式、
-/// 或用户手改过 agent 配置文件)才按当前绑定重推。无漂移零写入——不产生
-/// 备份、不碰任何文件。静默执行:失败不打断启动,下次启动或用户在
-/// Providers/Agents 页操作时自然重试并可见报错。
+/// 手动强制重推该 agent 的当前 provider 绑定。reconcile 默认不再自动覆盖
+/// 疑似用户手改(update 类漂移),改由这个显式动作愈合——用户在同步详情里
+/// 看到「已过期」时点它。
+pub fn agent_provider_resync_at(home: &Path, agent_id: &str) -> Result<ApplyResult, String> {
+    let config = load_config(home)?;
+    let pid = config
+        .agent_providers
+        .get(agent_id)
+        .ok_or_else(|| format!("no provider bound to {}", agent_id))?;
+    agent_provider_bind_at(home, agent_id, Some(pid.clone()))
+}
+
+#[tauri::command]
+pub async fn agent_provider_resync(agent_id: String) -> Result<ApplyResult, String> {
+    let _guard = crate::commands::config::CONFIG_LOCK
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+    agent_provider_resync_at(&real_home(), &agent_id)
+}
+
+/// agent → ClawBox「领养」:读 agent 当前在用的服务商,在 ClawBox 里 upsert 一条
+/// 同名 ProviderSpec 并绑定。漂移时三态 resolve 的「采用 agent 现值」即调它。
+/// created=true=新建了服务商,false=更新了已存在的同名条目。
+#[derive(Serialize, Clone, Debug)]
+pub struct AdoptResult {
+    pub provider_id: String,
+    pub provider_name: String,
+    pub created: bool,
+}
+
+fn apply_adopted_to_spec(p: &mut ProviderSpec, a: &AdoptedProvider) {
+    p.api_key = a.api_key.clone();
+    p.anthropic_base_url = if a.slot == Slot::Anthropic {
+        a.base_url.clone()
+    } else {
+        String::new()
+    };
+    p.openai_base_url = if a.slot == Slot::Openai {
+        a.base_url.clone()
+    } else {
+        String::new()
+    };
+    if !a.default_model.is_empty() {
+        p.default_model = a.default_model.clone();
+    }
+    if !a.models.is_empty() {
+        p.models = a.models.clone();
+    }
+    p.enabled = true;
+}
+
+pub fn agent_provider_adopt_at(home: &Path, agent_id: &str) -> Result<AdoptResult, String> {
+    let adapter = providers::find_adapter(agent_id)
+        .ok_or_else(|| format!("unknown agent: {}", agent_id))?;
+    let adopted = adapter
+        .extract_active(home)?
+        .ok_or_else(|| format!("no recognizable active provider in {}'s config", agent_id))?;
+    let mut config = load_config(home)?;
+    // 同名则更新,否则新建
+    let (id, created) = match config.providers.iter_mut().find(|p| p.name == adopted.name) {
+        Some(p) => {
+            apply_adopted_to_spec(p, &adopted);
+            (p.id.clone(), false)
+        }
+        None => {
+            let id = uuid::Uuid::new_v4().to_string();
+            let mut spec = ProviderSpec {
+                id: id.clone(),
+                name: adopted.name.clone(),
+                api_key: String::new(),
+                base_url: String::new(),
+                anthropic_base_url: String::new(),
+                openai_base_url: String::new(),
+                default_model: String::new(),
+                models: vec![],
+                enabled: true,
+                flavor: None,
+            };
+            apply_adopted_to_spec(&mut spec, &adopted);
+            config.providers.push(spec);
+            (id, true)
+        }
+    };
+    save_config(home, &config)?;
+    // 绑定 → re-push(此刻 agent 与 ClawBox 两边一致,幂等,过 validate)
+    let r = agent_provider_bind_at(home, agent_id, Some(id.clone()))?;
+    if !r.ok {
+        return Err(r.error.unwrap_or_else(|| "bind failed after adopt".to_string()));
+    }
+    Ok(AdoptResult {
+        provider_id: id,
+        provider_name: adopted.name,
+        created,
+    })
+}
+
+#[tauri::command]
+pub async fn agent_provider_adopt(agent_id: String) -> Result<AdoptResult, String> {
+    let _guard = crate::commands::config::CONFIG_LOCK
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+    agent_provider_adopt_at(&real_home(), &agent_id)
+}
+
+/// 漂移横幅要显示的「agent 现在在用的服务商」信息(只取名字+模型,不含 key)。
+#[derive(Serialize, Clone, Debug)]
+pub struct ActiveProviderInfo {
+    pub name: String,
+    pub model: String,
+}
+
+/// 批量取若干 agent 当前激活服务商的名字+模型(供三态横幅显示「现在用 X」)。
+/// null = 读不出(未实现 extract_active 的 agent,或 agent 没配激活服务商)。
+#[tauri::command]
+pub async fn agent_active_providers_get(
+    agent_ids: Vec<String>,
+) -> Result<HashMap<String, Option<ActiveProviderInfo>>, String> {
+    let home = real_home();
+    let mut out = HashMap::new();
+    for id in agent_ids {
+        let info = providers::find_adapter(&id)
+            .and_then(|a| a.extract_active(&home).ok().flatten())
+            .map(|ad| ActiveProviderInfo {
+                name: ad.name,
+                model: ad.default_model,
+            });
+        out.insert(id, info);
+    }
+    Ok(out)
+}
+
+/// 启动对账:检测漂移,但**默认不自动覆盖**——只在「安全补写」时才自愈:
+/// 我们管理的键缺失(add)且无 update/remove(update 可能是用户手改过的
+/// 我们的键,无声覆盖会破坏信任)。疑似手改的 update 漂移只由 UI 标红,
+/// 用户点 agent_provider_resync 显式愈合。无漂移零写入。静默执行:失败不
+/// 打断启动,下次启动或用户操作时自然重试并可见报错。
 pub fn reconcile_bindings_at(home: &Path) -> Vec<ApplyResult> {
     let Ok(config) = load_config(home) else {
         return vec![];
@@ -258,14 +391,17 @@ pub fn reconcile_bindings_at(home: &Path) -> Vec<ApplyResult> {
         }
         let bound = vec![spec.clone()];
         let managed = config.providers_managed.get(agent_id).cloned().unwrap_or_default();
-        let drifted = match adapter.plan(home, &bound, Some(pid), &managed) {
-            Ok(changes) => changes
-                .iter()
-                .any(|c| c.action != "unchanged" && c.action != "skip"),
+        // 只自动愈合「安全补写」:有 add(我们的键缺失)且无 update/remove
+        // (update = 键在但值不同,可能是用户手改 → 不自动覆盖)。
+        let safe_heal = match adapter.plan(home, &bound, Some(pid), &managed) {
+            Ok(changes) => {
+                changes.iter().any(|c| c.action == "add")
+                    && !changes.iter().any(|c| c.action == "update" || c.action == "remove")
+            }
             // 目标文件读不了/解析不了:不动它,留给用户操作路径显式报错。
             Err(_) => false,
         };
-        if !drifted {
+        if !safe_heal {
             continue;
         }
         match agent_provider_bind_at(home, agent_id, Some(pid.clone())) {
@@ -300,7 +436,10 @@ pub fn reconcile_bindings_at(home: &Path) -> Vec<ApplyResult> {
             .cloned()
             .unwrap_or_default();
         let drifted = match adapter.plan_fallbacks(home, &fb_specs, &fb_managed) {
-            Ok(changes) => !changes.is_empty(),
+            Ok(changes) => {
+                changes.iter().any(|c| c.action == "add")
+                    && !changes.iter().any(|c| c.action == "update" || c.action == "remove")
+            }
             Err(_) => false,
         };
         if !drifted {
@@ -1015,24 +1154,55 @@ mod tests {
         assert_eq!(cfg.providers_managed.get("claude-code"), Some(&vec!["env".to_string()]));
     }
 
-    // ---- reconcile_bindings_at:启动对账,漂移才重推 ----
+    // ---- reconcile_bindings_at:启动对账,只安全自愈、不覆盖手改 ----
 
     #[test]
-    fn reconcile_noop_without_drift_and_repairs_hand_edited_config() {
+    fn reconcile_noop_without_drift_and_does_not_clobber_hand_edits() {
         let home = bind_home_with(vec![pspec(
             "p1", "One", "https://one.example.com/anthropic", "",
         )]);
         agent_provider_bind_at(home.path(), "claude-code", Some("p1".to_string())).unwrap();
 
-        // 无漂移:零结果 = 零写入(不产生备份)
+        // 无漂移 → 零结果 = 零写入(不产生备份)
         assert!(reconcile_bindings_at(home.path()).is_empty());
 
-        // 手改 agent 配置制造漂移 → 对账按绑定修复
+        // 手改我们管理的键(update 漂移)→ 对账默认不覆盖(信任优先)
         let p = home.path().join(".claude").join("settings.json");
         let text = fs::read_to_string(&p)
             .unwrap()
             .replace("one.example.com", "evil.example.com");
         fs::write(&p, text).unwrap();
+        assert!(
+            reconcile_bindings_at(home.path()).is_empty(),
+            "reconcile must NOT auto-clobber hand edits to managed keys"
+        );
+        let env = claude_env(home.path());
+        assert_eq!(
+            env.get("ANTHROPIC_BASE_URL").and_then(|v| v.as_str()),
+            Some("https://evil.example.com/anthropic"),
+            "hand edit preserved until explicit resync"
+        );
+
+        // 用户显式 resync 才愈合
+        let r = agent_provider_resync_at(home.path(), "claude-code").unwrap();
+        assert!(r.ok, "{:?}", r.error);
+        let env = claude_env(home.path());
+        assert_eq!(
+            env.get("ANTHROPIC_BASE_URL").and_then(|v| v.as_str()),
+            Some("https://one.example.com/anthropic")
+        );
+    }
+
+    #[test]
+    fn reconcile_auto_heals_only_when_managed_keys_missing() {
+        let home = bind_home_with(vec![pspec(
+            "p1", "One", "https://one.example.com/anthropic", "",
+        )]);
+        agent_provider_bind_at(home.path(), "claude-code", Some("p1".to_string())).unwrap();
+
+        // 把我们写的键整个删掉(文件被重置/其它工具清空)→ 纯 add,安全自愈
+        let p = home.path().join(".claude").join("settings.json");
+        fs::write(&p, r#"{"env":{}}"#).unwrap();
         let results = reconcile_bindings_at(home.path());
         assert_eq!(results.len(), 1);
         assert!(results[0].ok, "{:?}", results[0].error);
@@ -1181,5 +1351,45 @@ mod tests {
         save_config(home.path(), &config).unwrap();
         let err = agent_fallbacks_set_at(home.path(), "hermes", vec!["p3".to_string()]).unwrap_err();
         assert!(err.contains("cannot be a fallback"), "{}", err);
+    }
+
+    // ---- adopt:agent → ClawBox 领养 ----
+
+    #[test]
+    fn adopt_creates_provider_from_agent_config_then_updates_on_readopt() {
+        let home = TempHome::new();
+        // hermes 配置里有个手建的 MiniMax 条目,ClawBox 完全不知道
+        let hcfg = home.path().join(".hermes").join("config.yaml");
+        fs::create_dir_all(hcfg.parent().unwrap()).unwrap();
+        fs::write(
+            &hcfg,
+            "model:\n  provider: custom:MiniMax\n  default: MiniMax-M3\ncustom_providers:\n  - name: MiniMax\n    base_url: https://api.minimaxi.com/anthropic\n    api_key: sk-adopted\n    api_mode: anthropic_messages\n    model: MiniMax-M3\n",
+        )
+        .unwrap();
+        save_config(home.path(), &Config::default()).unwrap();
+
+        let r = agent_provider_adopt_at(home.path(), "hermes").unwrap();
+        assert_eq!(r.provider_name, "MiniMax");
+        assert!(r.created, "first adopt should create a new provider");
+
+        let cfg = load_config(home.path()).unwrap();
+        let p = cfg.providers.iter().find(|p| p.name == "MiniMax").unwrap();
+        assert_eq!(p.api_key, "sk-adopted");
+        assert_eq!(p.anthropic_base_url, "https://api.minimaxi.com/anthropic");
+        assert_eq!(p.openai_base_url, "");
+        assert_eq!(p.default_model, "MiniMax-M3");
+        assert_eq!(cfg.agent_providers.get("hermes").map(String::as_str), Some(p.id.as_str()));
+
+        // 再 adopt:key 变了 → 同名更新(created=false),不新建
+        fs::write(&hcfg, fs::read_to_string(&hcfg).unwrap().replace("sk-adopted", "sk-updated")).unwrap();
+        let r2 = agent_provider_adopt_at(home.path(), "hermes").unwrap();
+        assert!(!r2.created, "re-adopt should update existing, not create");
+        assert_eq!(r2.provider_id, r.provider_id, "same provider id on re-adopt");
+        let cfg = load_config(home.path()).unwrap();
+        assert_eq!(cfg.providers.iter().filter(|p| p.name == "MiniMax").count(), 1, "no duplicate");
+        assert_eq!(
+            cfg.providers.iter().find(|p| p.name == "MiniMax").unwrap().api_key,
+            "sk-updated"
+        );
     }
 }
