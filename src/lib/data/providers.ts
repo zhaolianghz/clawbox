@@ -9,6 +9,23 @@ import type { Localized } from './localized';
 
 export type ProviderCategory = 'intl' | 'cn' | 'aggregator' | 'local' | 'custom';
 
+/**
+ * 免费额度。分类只区分「会不会用完就没」——用户唯一真正关心的一点:
+ *  - recurring: 周期性重置或常驻的免费层(可长期白嫖)
+ *  - trial:     一次性注册试用金(用完即止)
+ *
+ * verifiedAt 是人工核对该条额度的年月(YYYY-MM)。各家免费政策半年就变,
+ * 过期条目由 UI 淡化并提示「信息可能已过期」——不要让用户信一条我们没再核对过的额度。
+ */
+export interface FreeTier {
+  kind: 'recurring' | 'trial';
+  note: Localized;
+  /** 免绑卡 —— 用户筛选免费额度时最在意的一条 */
+  noCard?: boolean;
+  /** 人工核对年月,如 '2026-07' */
+  verifiedAt: string;
+}
+
 export interface ProviderCatalogEntry {
   id: string;
   name: string | Localized;
@@ -22,8 +39,8 @@ export interface ProviderCatalogEntry {
   anthropicHost?: string;
   description?: Localized;
   defaultModel?: string;
-  /** 免费额度亮点(有免费层/试用金的服务商);卡片显示绿色小徽章 */
-  freeNote?: Localized;
+  /** 免费额度(有免费层/试用金的服务商);卡片显示徽章,可按此筛选 */
+  freeTier?: FreeTier;
 }
 
 export const PROVIDER_CATEGORIES: { id: ProviderCategory; label: Localized }[] = [
@@ -121,13 +138,15 @@ export const PROVIDER_CATALOG: ProviderCatalogEntry[] = [
     id: 'reka', name: 'Reka', apiHost: 'https://api.reka.ai/v1', website: 'https://docs.reka.ai/chat/overview',
     category: 'intl', color: '#111827',
     description: { en: 'Reka multimodal models', zh: 'Reka 多模态模型' },
-    freeNote: { en: '$10/month recurring free API credits', zh: '每月循环 $10 免费 API 额度' },
+    freeTier: { kind: 'recurring', verifiedAt: '2026-07',
+      note: { en: '$10/month recurring free API credits', zh: '每月循环 $10 免费 API 额度' } },
   },
   {
     id: 'ai21', name: 'AI21 Labs', apiHost: 'https://api.ai21.com/studio/v1', website: 'https://www.ai21.com',
     category: 'intl', color: '#0284C7',
     description: { en: 'Jamba model family', zh: 'Jamba 系列模型' },
-    freeNote: { en: '$10 trial credits on signup (3-month validity), no credit card', zh: '注册送 $10 试用金(3 个月有效),免绑卡' },
+    freeTier: { kind: 'trial', noCard: true, verifiedAt: '2026-07',
+      note: { en: '$10 trial credits on signup (3-month validity)', zh: '注册送 $10 试用金(3 个月有效)' } },
   },
   {
     id: 'venice', name: 'Venice.ai', apiHost: 'https://api.venice.ai/api/v1', website: 'https://venice.ai',
@@ -148,37 +167,43 @@ export const PROVIDER_CATALOG: ProviderCatalogEntry[] = [
     id: 'nous-research', name: 'Nous Research', apiHost: 'https://inference-api.nousresearch.com/v1', website: 'https://portal.nousresearch.com',
     category: 'intl', color: '#2563EB',
     description: { en: 'Hermes open models', zh: 'Hermes 系列开源模型' },
-    freeNote: { en: 'Free tier: 50 RPM / 500K TPM — no credit card', zh: '免费层:50 RPM / 50 万 TPM,免绑卡' },
+    freeTier: { kind: 'recurring', noCard: true, verifiedAt: '2026-07',
+      note: { en: 'Free tier: 50 RPM / 500K TPM', zh: '免费层:50 RPM / 50 万 TPM' } },
   },
   {
     id: 'morph', name: 'Morph', apiHost: 'https://api.morphllm.com/v1', website: 'https://morphllm.com',
     category: 'intl', color: '#2563EB',
     description: { en: 'Fast code-apply models', zh: '高速代码合并(apply)模型' },
-    freeNote: { en: 'Free tier: 250K credits/month', zh: '免费层:每月 25 万额度' },
+    freeTier: { kind: 'recurring', verifiedAt: '2026-07',
+      note: { en: 'Free tier: 250K credits/month', zh: '免费层:每月 25 万额度' } },
   },
   {
     id: 'blackbox', name: 'Blackbox AI', apiHost: 'https://api.blackbox.ai/v1', website: 'https://blackbox.ai',
     category: 'intl', color: '#1A1A2E',
     description: { en: 'Coding-focused aggregation API', zh: '面向编程的聚合 API' },
-    freeNote: { en: 'Free tier available — no credit card required', zh: '提供免费层,免绑卡' },
+    freeTier: { kind: 'recurring', noCard: true, verifiedAt: '2026-07',
+      note: { en: 'Free tier available', zh: '提供免费层' } },
   },
   {
     id: 'deepinfra', name: 'DeepInfra', apiHost: 'https://api.deepinfra.com/v1/openai', website: 'https://deepinfra.com',
     category: 'intl', color: '#2563EB',
     description: { en: 'Serverless open-model inference', zh: '开源模型无服务器推理' },
-    freeNote: { en: 'Free signup credits for API testing', zh: '注册送免费测试额度' },
+    freeTier: { kind: 'trial', verifiedAt: '2026-07',
+      note: { en: 'Free signup credits for API testing', zh: '注册送免费测试额度' } },
   },
   {
     id: 'hyperbolic', name: 'Hyperbolic', apiHost: 'https://api.hyperbolic.xyz/v1', website: 'https://hyperbolic.xyz',
     category: 'intl', color: '#00D4FF',
     description: { en: 'Serverless GPU inference', zh: '无服务器 GPU 推理' },
-    freeNote: { en: '$1-5 trial credits on signup', zh: '注册送 $1-5 试用金' },
+    freeTier: { kind: 'trial', verifiedAt: '2026-07',
+      note: { en: '$1-5 trial credits on signup', zh: '注册送 $1-5 试用金' } },
   },
   {
     id: 'sambanova', name: 'SambaNova', apiHost: 'https://api.sambanova.ai/v1', website: 'https://sambanova.ai',
     category: 'intl', color: '#DC2626',
     description: { en: 'RDU-accelerated fast inference', zh: 'RDU 加速的高速推理' },
-    freeNote: { en: '$5 free credits on signup (30-day validity), no credit card', zh: '注册送 $5(30 天有效),免绑卡' },
+    freeTier: { kind: 'trial', noCard: true, verifiedAt: '2026-07',
+      note: { en: '$5 free credits on signup (30-day validity)', zh: '注册送 $5(30 天有效)' } },
   },
   {
     id: 'lambda-ai', name: 'Lambda AI', apiHost: 'https://api.lambda.ai/v1', website: 'https://lambda.ai',
@@ -189,37 +214,43 @@ export const PROVIDER_CATALOG: ProviderCatalogEntry[] = [
     id: 'nebius', name: 'Nebius AI', apiHost: 'https://api.tokenfactory.nebius.com/v1', website: 'https://nebius.com',
     category: 'intl', color: '#6C5CE7',
     description: { en: 'Token Factory open-model inference', zh: 'Token Factory 开源模型推理' },
-    freeNote: { en: '~$1 trial credits on signup', zh: '注册送约 $1 试用金' },
+    freeTier: { kind: 'trial', verifiedAt: '2026-07',
+      note: { en: '~$1 trial credits on signup', zh: '注册送约 $1 试用金' } },
   },
   {
     id: 'baseten', name: 'Baseten', apiHost: 'https://inference.baseten.co/v1', website: 'https://baseten.co',
     category: 'intl', color: '#111827',
     description: { en: 'Dedicated + serverless model APIs', zh: '专用/无服务器模型 API' },
-    freeNote: { en: '$30 free trial credits', zh: '注册送 $30 试用金' },
+    freeTier: { kind: 'trial', verifiedAt: '2026-07',
+      note: { en: '$30 free trial credits', zh: '注册送 $30 试用金' } },
   },
   {
     id: 'nscale', name: 'nScale', apiHost: 'https://inference.api.nscale.com/v1', website: 'https://nscale.com',
     category: 'intl', color: '#0891B2',
     description: { en: 'European GPU inference', zh: '欧洲 GPU 推理服务' },
-    freeNote: { en: '$5 free credits on signup', zh: '注册送 $5 免费额度' },
+    freeTier: { kind: 'trial', verifiedAt: '2026-07',
+      note: { en: '$5 free credits on signup', zh: '注册送 $5 免费额度' } },
   },
   {
     id: 'featherless-ai', name: 'Featherless AI', apiHost: 'https://api.featherless.ai/v1', website: 'https://featherless.ai',
     category: 'intl', color: '#EA580C',
     description: { en: 'Unlimited open-model subscriptions', zh: '开源模型订阅制推理' },
-    freeNote: { en: 'Free tier available — no credit card required', zh: '提供免费层,免绑卡' },
+    freeTier: { kind: 'recurring', noCard: true, verifiedAt: '2026-07',
+      note: { en: 'Free tier available', zh: '提供免费层' } },
   },
   {
     id: 'friendliai', name: 'FriendliAI', apiHost: 'https://api.friendli.ai/serverless/v1', website: 'https://friendli.ai',
     category: 'intl', color: '#EC4899',
     description: { en: 'Serverless endpoints for open models', zh: '开源模型无服务器端点' },
-    freeNote: { en: 'Free tier for serverless inference — no credit card', zh: '无服务器推理免费层,免绑卡' },
+    freeTier: { kind: 'recurring', noCard: true, verifiedAt: '2026-07',
+      note: { en: 'Free tier for serverless inference', zh: '无服务器推理免费层' } },
   },
   {
     id: 'inference-net', name: 'Inference.net', apiHost: 'https://api.inference.net/v1', website: 'https://inference.net',
     category: 'intl', color: '#2563EB',
     description: { en: 'Distributed GPU network inference', zh: '分布式 GPU 网络推理' },
-    freeNote: { en: '$25 free credits on signup', zh: '注册送 $25 免费额度' },
+    freeTier: { kind: 'trial', verifiedAt: '2026-07',
+      note: { en: '$25 free credits on signup', zh: '注册送 $25 免费额度' } },
   },
   {
     id: 'wandb', name: 'W&B Inference', apiHost: 'https://api.inference.wandb.ai/v1', website: 'https://wandb.ai',
@@ -230,7 +261,8 @@ export const PROVIDER_CATALOG: ProviderCatalogEntry[] = [
     id: 'ollama-cloud', name: 'Ollama Cloud', apiHost: 'https://ollama.com/v1', website: 'https://ollama.com',
     category: 'intl', color: '#58A6FF',
     description: { en: 'Hosted Ollama models', zh: 'Ollama 官方云端模型' },
-    freeNote: { en: 'Free tier available', zh: '提供免费层' },
+    freeTier: { kind: 'recurring', verifiedAt: '2026-07',
+      note: { en: 'Free tier available', zh: '提供免费层' } },
   },
   {
     id: 'digitalocean', name: 'DigitalOcean Gradient', apiHost: 'https://inference.do-ai.run/v1', website: 'https://docs.digitalocean.com/products/ai-platform/',
@@ -350,7 +382,8 @@ export const PROVIDER_CATALOG: ProviderCatalogEntry[] = [
     id: 'byteplus', name: 'BytePlus ModelArk', apiHost: 'https://ark.ap-southeast.bytepluses.com/api/v3', website: 'https://console.byteplus.com/ark',
     category: 'cn', color: '#2563EB',
     description: { en: 'ByteDance international Ark platform', zh: '字节跳动国际版方舟平台' },
-    freeNote: { en: 'Free credits for new accounts', zh: '新账户送免费额度' },
+    freeTier: { kind: 'trial', verifiedAt: '2026-07',
+      note: { en: 'Free credits for new accounts', zh: '新账户送免费额度' } },
   },
   {
     id: 'xiaomi-mimo', name: { en: 'Xiaomi MiMo', zh: '小米 MiMo' },
@@ -406,19 +439,22 @@ export const PROVIDER_CATALOG: ProviderCatalogEntry[] = [
     id: 'agentrouter', name: 'AgentRouter', apiHost: 'https://agentrouter.org/v1', website: 'https://agentrouter.org',
     category: 'aggregator', color: '#10B981',
     description: { en: 'Multi-model routing gateway', zh: '多模型路由网关' },
-    freeNote: { en: '$200 free credits on signup — no credit card', zh: '注册送 $200 免费额度,免绑卡' },
+    freeTier: { kind: 'trial', noCard: true, verifiedAt: '2026-07',
+      note: { en: '$200 free credits on signup', zh: '注册送 $200 免费额度' } },
   },
   {
     id: 'requesty', name: 'Requesty', apiHost: 'https://router.requesty.ai/v1', website: 'https://requesty.ai',
     category: 'aggregator', color: '#6366F1',
     description: { en: '300+ models, one router', zh: '一个路由聚合 300+ 模型' },
-    freeNote: { en: 'Free tier ~200 requests/day', zh: '免费层约每日 200 次请求' },
+    freeTier: { kind: 'recurring', verifiedAt: '2026-07',
+      note: { en: 'Free tier ~200 requests/day', zh: '免费层约每日 200 次请求' } },
   },
   {
     id: 'novita', name: 'Novita AI', apiHost: 'https://api.novita.ai/openai/v1', website: 'https://novita.ai',
     category: 'aggregator', color: '#FF4081',
     description: { en: 'Aggregated model marketplace', zh: '聚合模型市场' },
-    freeNote: { en: '$0.50 trial credits on signup (~1-year validity)', zh: '注册送 $0.5 试用金(约 1 年有效)' },
+    freeTier: { kind: 'trial', verifiedAt: '2026-07',
+      note: { en: '$0.50 trial credits on signup (~1-year validity)', zh: '注册送 $0.5 试用金(约 1 年有效)' } },
   },
   {
     id: 'aimlapi', name: 'AI/ML API', apiHost: 'https://api.aimlapi.com/v1', website: 'https://aimlapi.com',
@@ -449,7 +485,8 @@ export const PROVIDER_CATALOG: ProviderCatalogEntry[] = [
     id: 'zenmux', name: 'ZenMux', apiHost: 'https://zenmux.ai/api/v1', website: 'https://zenmux.ai',
     category: 'aggregator', color: '#7C3AED', anthropicHost: 'https://zenmux.ai/api/anthropic',
     description: { en: 'Multi-protocol model gateway', zh: '多协议模型网关' },
-    freeNote: { en: 'Free tier: Gemini Flash, DeepSeek, Grok Fast and more', zh: '免费层含 Gemini Flash、DeepSeek、Grok Fast 等' },
+    freeTier: { kind: 'recurring', verifiedAt: '2026-07',
+      note: { en: 'Free tier: Gemini Flash, DeepSeek, Grok Fast and more', zh: '免费层含 Gemini Flash、DeepSeek、Grok Fast 等' } },
   },
   {
     id: 'qiniu', name: { en: 'Qiniu AI', zh: '七牛云 AI' },

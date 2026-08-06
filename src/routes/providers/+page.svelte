@@ -3,7 +3,7 @@
   import { _, locale } from 'svelte-i18n';
   import {
     PROVIDER_CATALOG, PROVIDER_CATEGORIES,
-    type ProviderCatalogEntry, type ProviderCategory,
+    type ProviderCatalogEntry, type ProviderCategory, type FreeTier,
   } from '$lib/data/providers';
   import { localize } from '$lib/data/localized';
   import ProviderLogo from '$lib/components/ProviderLogo.svelte';
@@ -20,6 +20,8 @@
 
   let query = $state('');
   let activeCategory = $state<ProviderCategory | 'all'>('all');
+  /** 「免费额度」筛选。与分类正交(免费额度横跨 intl/cn/aggregator),所以是独立开关而非一个分类。 */
+  let freeOnly = $state(false);
   let pageError = $state('');
 
   // 编辑保存后的自动重推结果提示(成功 N 家 / 失败列出)
@@ -101,17 +103,44 @@
     const q = query.trim().toLowerCase();
     const list = [...PROVIDER_CATALOG, ...customEntries].filter((e) => {
       const matchCat = activeCategory === 'all' || e.category === activeCategory;
+      const matchFree = !freeOnly || !!e.freeTier;
       const name = localize(e.name, $locale).toLowerCase();
       const desc = e.description ? localize(e.description, $locale).toLowerCase() : '';
       const matchQ = !q || name.includes(q) || e.apiHost.toLowerCase().includes(q) || desc.includes(q);
-      return matchCat && matchQ;
+      return matchCat && matchFree && matchQ;
     });
-    // 「+ 自定义服务商」新增卡:仅在浏览 全部/自定义 且未搜索时出现在末尾
-    if ((activeCategory === 'all' || activeCategory === 'custom') && !q) {
+    // 「+ 自定义服务商」新增卡:仅在浏览 全部/自定义 且未搜索、未筛免费时出现在末尾
+    if ((activeCategory === 'all' || activeCategory === 'custom') && !q && !freeOnly) {
       list.push({ id: CUSTOM_NEW_ID, name: '', apiHost: '', category: 'custom', color: '#7c5cff' });
     }
     return list;
   });
+
+  const freeCount = $derived(PROVIDER_CATALOG.filter((e) => e.freeTier).length);
+
+  /**
+   * 免费额度信息超过 6 个月没人工核对 → 视为可能过期。
+   * 各家的限额/活动变得很快,宁可提示用户去官网确认,也不要让 ClawBox 背书一条陈旧数据。
+   */
+  const STALE_MONTHS = 6;
+  function isStale(verifiedAt: string): boolean {
+    const [y, m] = verifiedAt.split('-').map(Number);
+    if (!y || !m) return false;
+    const now = new Date();
+    return (now.getFullYear() - y) * 12 + (now.getMonth() + 1 - m) > STALE_MONTHS;
+  }
+
+  /** 免费徽章的悬停文案:额度说明 + 免绑卡 + 核对时间(过期则改为提醒) */
+  function freeTitle(f: FreeTier): string {
+    const parts = [localize(f.note, $locale)];
+    if (f.noCard) parts.push($_('providers.free.noCard'));
+    parts.push(
+      isStale(f.verifiedAt)
+        ? $_('providers.free.stale', { values: { date: f.verifiedAt } })
+        : $_('providers.free.verified', { values: { date: f.verifiedAt } })
+    );
+    return parts.join(' · ');
+  }
 
   function categoryLabel(c: ProviderCategory): string {
     const label = PROVIDER_CATEGORIES.find((x) => x.id === c)?.label;
@@ -921,6 +950,16 @@
         {localize(cat.label, $locale)}
       </button>
     {/each}
+    <span class="bar-sep"></span>
+    <!-- 免费额度:与分类正交的独立开关,可叠加在任意分类上 -->
+    <button
+      class="chip free-toggle"
+      class:active={freeOnly}
+      aria-pressed={freeOnly}
+      onclick={() => (freeOnly = !freeOnly)}
+    >
+      {$_('providers.free.filter', { values: { count: freeCount } })}
+    </button>
   </div>
 
   <div class="provider-grid" bind:this={gridEl}>
@@ -965,8 +1004,17 @@
           {:else}
             <code class="host" title={e.apiHost}>{e.apiHost.replace(/^https?:\/\//, '')}</code>
           {/if}
-          {#if e.freeNote}
-            <span class="free-chip" title={localize(e.freeNote, $locale)}>{$_('providers.freeTier')}</span>
+          {#if e.freeTier}
+            <span
+              class="free-chip free-{e.freeTier.kind}"
+              class:stale={isStale(e.freeTier.verifiedAt)}
+              title={freeTitle(e.freeTier)}
+            >
+              {e.freeTier.kind === 'recurring' ? $_('providers.free.recurring') : $_('providers.free.trial')}
+            </span>
+            {#if e.freeTier.noCard}
+              <span class="free-chip no-card" title={$_('providers.free.noCard')}>{$_('providers.free.noCardShort')}</span>
+            {/if}
           {/if}
           {#if configured && (configured.models?.length ?? 0) > 0}
             <span class="model-count">{$_('providers.modelCount', { values: { count: configured.models.length } })}</span>
@@ -1221,7 +1269,10 @@
     font-size: 0.85rem; outline: none; width: 100%;
   }
 
-  .category-bar { display: flex; gap: 0.5rem; flex-wrap: wrap; }
+  .category-bar { display: flex; gap: 0.5rem; flex-wrap: wrap; align-items: center; }
+  .bar-sep { width: 1px; align-self: stretch; margin: 0.15rem 0.25rem; background: rgba(255,255,255,0.12); }
+  /* 免费开关用绿色语义,与青色的分类 chip 区分开 —— 它是正交筛选,不是第六个分类 */
+  .chip.free-toggle.active { background: rgba(74,222,128,0.14); border-color: #4ade80; color: #4ade80; }
   .chip {
     padding: 0.3rem 0.85rem; border-radius: 999px; font-size: 0.8rem;
     background: var(--bg-secondary); border: 1px solid rgba(255,255,255,0.1);
@@ -1274,6 +1325,13 @@
     font-size: 0.65rem; padding: 0.1rem 0.45rem; border-radius: 999px; white-space: nowrap;
     background: rgba(74,222,128,0.15); color: #4ade80; cursor: help;
   }
+  /* 长期免费 = 绿色实心;一次性试用金 = 描边弱化,区分「用完就没」 */
+  .free-chip.free-trial {
+    background: transparent; color: #a3b18a; border: 1px solid rgba(163,177,138,0.45);
+  }
+  .free-chip.no-card { background: rgba(0,245,255,0.12); color: var(--neon-cyan); }
+  /* 超过核对期:淡化,悬停文案会提示去官网确认 */
+  .free-chip.stale { opacity: 0.45; }
   .sync-badge { font-size: 0.65rem; padding: 0.1rem 0.45rem; border-radius: 999px; white-space: nowrap; }
   .sync-badge.synced { background: rgba(74,222,128,0.15); color: #4ade80; cursor: help; }
 
