@@ -1,6 +1,7 @@
 //! Tauri command layer for the unified agent registry.
 
 use crate::agents::{self, AgentStatus, InstallMethod};
+use crate::path_env::{self, PathInitStatus};
 
 #[tauri::command]
 pub async fn agents_list() -> Vec<AgentStatus> {
@@ -24,4 +25,12 @@ pub async fn agent_install(id: String) -> Result<String, String> {
             .await
             .map_err(|e| e.to_string())?,
     }
+}
+
+/// Report whether PATH resolution at startup recovered the interactive-shell
+/// PATH or degraded to well-known dirs. Drives the agents-page warning banner
+/// (GH#3: installed agents may read "not installed" when PATH is degraded).
+#[tauri::command]
+pub async fn path_env_status() -> PathInitStatus {
+    path_env::init_status()
 }
