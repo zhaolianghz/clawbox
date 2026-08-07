@@ -295,6 +295,10 @@
     "missingDeps": "依赖",
     "detectOnly": "仅支持手动安装",
     "docs": "文档",
+    "pathWarning": {
+      "title": "Agent 检测使用了备用 PATH",
+      "text": "未能及时读取你的 shell PATH(启动超时)。如果某 agent 显示“未安装”但你其实已安装,就是这个原因。在此重装一次即可恢复检测。"
+    },
     "kind": {
       "native_cli": "CLI",
       "runtime": "运行时",

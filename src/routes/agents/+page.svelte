@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { _ } from 'svelte-i18n';
-  import { agents_list, agent_install, type AgentStatus } from '../../lib/api/agents';
+  import { agents_list, agent_install, type AgentStatus, path_env_status } from '../../lib/api/agents';
   import { checkLatestVersions, extractSemver, type LatestInfo } from '../../lib/api/latest';
   import { agent_sync_overview, type AgentSyncOverview, type SyncedItem } from '../../lib/api/providerSync';
   import AgentLogo from '../../lib/components/AgentLogo.svelte';
@@ -27,6 +27,8 @@
   let latest = $state<Record<string, LatestInfo>>({});
   let checkingLatest = $state(false);
   let justUpgraded = $state<Record<string, boolean>>({}); // 升级成功后版本号短暂高亮
+  // PATH 解析是否降级(shell 超时→备用目录)。降级时顶部提示:已装 agent 可能误报未安装(GH#3)。
+  let pathDegraded = $state(false);
 
   // 上次探测结果缓存:打开页面先渲染旧状态,探测(最慢的 CLI ~2s)后台跑完再覆盖
   const STATUS_CACHE_KEY = 'clawbox.agents.status';
@@ -89,6 +91,9 @@
     agent_fallbacks_get()
       .then((f) => (fallbacks = f))
       .catch((e) => console.warn('agent_fallbacks_get failed', e));
+    path_env_status()
+      .then((s) => (pathDegraded = s === 'shell_failed'))
+      .catch((e) => console.warn('path_env_status failed', e));
     void refresh().then(() => {
       // 版本徽章依赖探测结果;页面加载时只消费缓存(1h TTL 内零请求)
       checkUpdates(false);
@@ -450,6 +455,15 @@
   {#if isLoading && agents.length === 0}
     <div class="loading glass-card"><span class="spinner"></span> {$_('agents.loading')}</div>
   {:else}
+    {#if pathDegraded}
+      <div class="path-warn glass-card">
+        <span class="path-warn-icon" aria-hidden="true">⚠</span>
+        <span class="path-warn-text">
+          <strong>{$_('agents.pathWarning.title')}</strong>
+          {$_('agents.pathWarning.text')}
+        </span>
+      </div>
+    {/if}
     {#if driftedAgentIds().length > 0}
       <div class="drift-bar glass-card">
         <span class="drift-bar-icon" aria-hidden="true">⚠</span>
@@ -787,6 +801,15 @@
   }
   .drift-bar-icon { font-size: 1rem; }
   .drift-bar-text { flex: 1; font-size: 0.8rem; }
+  /* PATH 解析降级提示(GH#3):安装了但检测不到时给出原因与解法 */
+  .path-warn {
+    display: flex; align-items: flex-start; gap: 0.6rem; padding: 0.6rem 0.9rem;
+    border: 1px solid rgba(250,204,21,0.4); border-radius: 8px;
+    background: color-mix(in srgb, #facc15 8%, var(--bg-secondary));
+  }
+  .path-warn-icon { font-size: 1rem; line-height: 1.4; }
+  .path-warn-text { flex: 1; font-size: 0.8rem; line-height: 1.45; }
+  .path-warn-text strong { display: block; margin-bottom: 0.15rem; }
   .drift-banner {
     display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap;
     padding: 0.5rem 0.7rem; border-radius: 7px; margin-bottom: 0.2rem;

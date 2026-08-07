@@ -45,6 +45,7 @@ pub fn run() {
             commands::install::check_openclaw_update,
             commands::agents::agents_list,
             commands::agents::agent_install,
+            commands::agents::path_env_status,
             commands::sync::config_mcp_list,
             commands::sync::config_mcp_upsert,
             commands::sync::config_mcp_remove,
