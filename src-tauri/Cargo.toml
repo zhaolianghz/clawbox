@@ -1,6 +1,6 @@
 [package]
 name = "clawbox"
-version = "0.3.8"
+version = "0.3.9"
 description = "Unified configuration center for AI agents — providers, MCP, skills and memory in one place"
 authors = ["you"]
 edition = "2021"
