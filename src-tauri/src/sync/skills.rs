@@ -600,7 +600,7 @@ fn repo_base_name(repo: &str) -> String {
 }
 
 fn run_git(args: &[&str]) -> Result<String, String> {
-    let output = std::process::Command::new("git")
+    let output = crate::proc::command("git")
         .args(args)
         .env("GIT_TERMINAL_PROMPT", "0")
         .output()
@@ -1169,7 +1169,7 @@ mod tests {
     // ---- Git 安装引擎(本地 file:// 仓造数,全程无网络) ----
 
     fn git_in(dir: &Path, args: &[&str]) {
-        let out = std::process::Command::new("git")
+        let out = crate::proc::command("git")
             .args(args)
             .current_dir(dir)
             .env("GIT_TERMINAL_PROMPT", "0")

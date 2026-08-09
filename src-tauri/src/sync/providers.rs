@@ -2103,7 +2103,7 @@ impl ClineProviderAdapter {
     }
 
     fn run_cli(args: &[String]) -> Result<(), String> {
-        let output = std::process::Command::new("cline")
+        let output = crate::proc::command("cline")
             .args(args)
             .output()
             .map_err(|e| format!("failed to run cline CLI: {}", e))?;

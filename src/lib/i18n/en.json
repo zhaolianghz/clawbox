@@ -297,7 +297,7 @@
     "docs": "Docs",
     "pathWarning": {
       "title": "Agent detection used a fallback PATH",
-      "text": "We couldn't read your shell PATH in time (slow shell startup). If an agent shows \"Not installed\" but you've already installed it, that's why. Reinstall it from here to fix detection."
+      "text": "We couldn't read your full system PATH in time (the probe timed out). If an agent shows \"Not installed\" but you've already installed it, that's why. Reinstall it from here to fix detection."
     },
     "kind": {
       "native_cli": "CLI",

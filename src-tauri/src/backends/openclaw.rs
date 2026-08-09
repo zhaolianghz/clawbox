@@ -1,11 +1,10 @@
-use std::process::Command;
 use serde_json::Value;
 
 const GATEWAY_PORT: u16 = 18789;
 
 /// Run an `openclaw` subcommand and parse its stdout as JSON.
 pub fn openclaw_json(args: &[&str]) -> Result<Value, String> {
-    let output = Command::new("openclaw")
+    let output = crate::proc::command("openclaw")
         .args(args)
         .output()
         .map_err(|e| format!("Failed to run openclaw: {}", e))?;
@@ -22,7 +21,7 @@ pub fn openclaw_json(args: &[&str]) -> Result<Value, String> {
 
 /// Run an `openclaw` subcommand for its side effect, returning stdout.
 pub fn openclaw_run(args: &[&str]) -> Result<String, String> {
-    let output = Command::new("openclaw")
+    let output = crate::proc::command("openclaw")
         .args(args)
         .output()
         .map_err(|e| format!("Failed to run openclaw: {}", e))?;
@@ -38,33 +37,104 @@ use super::{Backend, GatewayStatus};
 
 /// Trust boundary: `gateway_pid()` discovers any PID listening on
 /// `GATEWAY_PORT` and trusts that it is openclaw's gateway. We re-check the
-/// process's comm (via `ps -o comm=`) and reject anything that is not
-/// openclaw itself or the Node.js interpreter running openclaw's bundled JS.
-/// This guards against a stale dev server or stray `nc -l 18789` being
-/// reported as a running gateway.
+/// process's name (unix `ps -o comm=`, Windows `tasklist`) and reject anything
+/// that is not openclaw itself or the Node.js interpreter running openclaw's
+/// bundled JS. This guards against a stale dev server or stray `nc -l 18789`
+/// being reported as a running gateway.
 fn gateway_pid() -> Option<i32> {
-    let pid = Command::new("lsof")
+    let pid = listening_pid()?;
+    if is_openclaw_process(&process_name(pid)) { Some(pid) } else { None }
+}
+
+/// PID of the socket listening on `GATEWAY_PORT`, if any.
+#[cfg(not(windows))]
+fn listening_pid() -> Option<i32> {
+    crate::proc::command("lsof")
         .args(["-t", "-i", &format!(":{}", GATEWAY_PORT), "-sTCP:LISTEN"])
         .output().ok()
         .filter(|o| o.status.success())
         .and_then(|o| String::from_utf8_lossy(&o.stdout).lines().next()
-            .and_then(|l| l.trim().parse::<i32>().ok()))?;
+            .and_then(|l| l.trim().parse::<i32>().ok()))
+}
 
-    let comm = Command::new("ps")
+/// Windows ships neither lsof nor ps; `netstat -ano` is the built-in that
+/// carries the owning PID. Without this the gateway reads "stopped" on every
+/// Windows box no matter what's running.
+#[cfg(windows)]
+fn listening_pid() -> Option<i32> {
+    let out = crate::proc::command("netstat")
+        .args(["-ano", "-p", "TCP"])
+        .output().ok()
+        .filter(|o| o.status.success())?;
+    parse_netstat_listening_pid(&String::from_utf8_lossy(&out.stdout), GATEWAY_PORT)
+}
+
+/// Pure helper: the PID owning the listening socket on `port` in `netstat -ano`
+/// output, whose columns are `TCP <local> <remote> <state> <pid>`.
+///
+/// We key off the wildcard remote address (`0.0.0.0:0` / `[::]:0`) that only a
+/// listening socket carries, never off the literal word LISTENING: the state
+/// column's localization varies by Windows locale, and matching the local port
+/// alone would also match a *client* socket connected to the gateway.
+///
+/// Compiled on every platform (hence the allow): the parsing is where the bugs
+/// live, and gating it behind `cfg(windows)` would hide it from the macOS/CI
+/// test run that is the only one anyone routinely executes.
+#[cfg_attr(not(windows), allow(dead_code))]
+fn parse_netstat_listening_pid(out: &str, port: u16) -> Option<i32> {
+    let local_suffix = format!(":{}", port);
+    out.lines().find_map(|line| {
+        let cols: Vec<&str> = line.split_whitespace().collect();
+        if cols.len() < 5 || !cols[0].eq_ignore_ascii_case("tcp") {
+            return None;
+        }
+        if !cols[1].ends_with(&local_suffix) || !cols[2].ends_with(":0") {
+            return None;
+        }
+        cols[4].parse::<i32>().ok()
+    })
+}
+
+/// Process name for `pid`, or "" when it can't be determined.
+#[cfg(not(windows))]
+fn process_name(pid: i32) -> String {
+    crate::proc::command("ps")
         .args(["-p", &pid.to_string(), "-o", "comm="])
         .output().ok()
         .filter(|o| o.status.success())
         .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
-        .unwrap_or_default();
-    if is_openclaw_process(&comm) { Some(pid) } else { None }
+        .unwrap_or_default()
 }
 
-/// Pure helper: returns true when `comm` (the trimmed output of
-/// `ps -o comm=`) looks like the openclaw gateway process. Accepts the
-/// `openclaw` binary itself and any `node` process (openclaw ships a
-/// Node.js entrypoint).
-fn is_openclaw_process(comm: &str) -> bool {
-    let lower = comm.trim().to_lowercase();
+#[cfg(windows)]
+fn process_name(pid: i32) -> String {
+    crate::proc::command("tasklist")
+        // CSV + no header: one quoted row we can parse without column math.
+        .args(["/FI", &format!("PID eq {}", pid), "/FO", "CSV", "/NH"])
+        .output().ok()
+        .filter(|o| o.status.success())
+        .map(|o| parse_tasklist_image_name(&String::from_utf8_lossy(&o.stdout)).unwrap_or_default())
+        .unwrap_or_default()
+}
+
+/// Pure helper: image name out of a `tasklist /FO CSV /NH` row, e.g.
+/// `"node.exe","12345","Console","1","54,321 K"` -> `node.exe`. A filter that
+/// matched nothing prints a localized `INFO:` line instead of a quoted row,
+/// which yields None (and thus a rejected PID). Compiled on every platform so
+/// the macOS/CI test run covers it — see parse_netstat_listening_pid.
+#[cfg_attr(not(windows), allow(dead_code))]
+fn parse_tasklist_image_name(out: &str) -> Option<String> {
+    let row = out.lines().map(str::trim).find(|l| l.starts_with('"'))?;
+    let name = row.trim_start_matches('"').split('"').next()?;
+    if name.is_empty() { None } else { Some(name.to_string()) }
+}
+
+/// Pure helper: returns true when `name` (a `ps -o comm=` value on unix, a
+/// tasklist image name on Windows) looks like the openclaw gateway process.
+/// Accepts the `openclaw` binary itself and any `node` process (openclaw ships
+/// a Node.js entrypoint) — including their `.exe` forms.
+fn is_openclaw_process(name: &str) -> bool {
+    let lower = name.trim().to_lowercase();
     lower.contains("openclaw") || lower.starts_with("node")
 }
 
@@ -74,7 +144,7 @@ impl Backend for OpenClawBackend {
     fn id(&self) -> &'static str { "openclaw" }
     fn display_name(&self) -> &'static str { "OpenClaw" }
     fn version(&self) -> String {
-        Command::new("openclaw").arg("--version").output().ok()
+        crate::proc::command("openclaw").arg("--version").output().ok()
             .filter(|o| o.status.success())
             .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
             .filter(|s| !s.is_empty())
@@ -82,7 +152,7 @@ impl Backend for OpenClawBackend {
     }
 
     fn is_installed(&self) -> bool {
-        Command::new("openclaw").arg("--version").output()
+        crate::proc::command("openclaw").arg("--version").output()
             .map(|o| o.status.success()).unwrap_or(false)
     }
     fn gateway_status(&self) -> Result<GatewayStatus, String> {
@@ -235,5 +305,69 @@ mod tests {
         assert!(!is_openclaw_process(""));
         assert!(!is_openclaw_process("/usr/local/bin/node"));
         assert!(!is_openclaw_process("rustc"));
+    }
+
+    #[test]
+    fn is_openclaw_process_accepts_windows_image_names() {
+        // tasklist reports "node.exe" / "openclaw.exe", not bare names.
+        assert!(is_openclaw_process("node.exe"));
+        assert!(is_openclaw_process("openclaw.exe"));
+        assert!(!is_openclaw_process("nc.exe"));
+    }
+
+    /// `netstat -ano -p TCP` on Windows, header included.
+    const NETSTAT_FIXTURE: &str = "\
+Active Connections
+
+  Proto  Local Address          Foreign Address        State           PID
+  TCP    0.0.0.0:135            0.0.0.0:0              LISTENING       1044
+  TCP    127.0.0.1:18789        127.0.0.1:52341        ESTABLISHED     4711
+  TCP    0.0.0.0:18789          0.0.0.0:0              LISTENING       9312
+  TCP    [::]:18789             [::]:0                 LISTENING       9312
+";
+
+    #[test]
+    fn netstat_picks_the_listener_not_a_client_socket() {
+        // 4711 is a client connected *to* the gateway and shares the local
+        // port; only the wildcard-remote row is the gateway itself.
+        assert_eq!(parse_netstat_listening_pid(NETSTAT_FIXTURE, 18789), Some(9312));
+    }
+
+    #[test]
+    fn netstat_ignores_the_localized_state_column() {
+        // German/Chinese/... Windows renders the state word differently; the
+        // parse must not depend on it.
+        let out = "  TCP    0.0.0.0:18789    0.0.0.0:0    ABHÖREN    777\n";
+        assert_eq!(parse_netstat_listening_pid(out, 18789), Some(777));
+    }
+
+    #[test]
+    fn netstat_matches_the_whole_port_only() {
+        // Suffix matching must not let 18789 satisfy a probe for 8789, nor a
+        // 118789 listener satisfy one for 18789.
+        assert_eq!(parse_netstat_listening_pid(NETSTAT_FIXTURE, 8789), None);
+        let out = "  TCP    0.0.0.0:118789    0.0.0.0:0    LISTENING    777\n";
+        assert_eq!(parse_netstat_listening_pid(out, 18789), None);
+    }
+
+    #[test]
+    fn netstat_returns_none_when_port_is_free() {
+        assert_eq!(parse_netstat_listening_pid(NETSTAT_FIXTURE, 4000), None);
+        assert_eq!(parse_netstat_listening_pid("", 18789), None);
+    }
+
+    #[test]
+    fn tasklist_extracts_the_image_name() {
+        let out = "\"node.exe\",\"9312\",\"Console\",\"1\",\"54,321 K\"\r\n";
+        assert_eq!(parse_tasklist_image_name(out).as_deref(), Some("node.exe"));
+    }
+
+    #[test]
+    fn tasklist_returns_none_when_the_filter_matched_nothing() {
+        // Localized INFO line, no quoted row — the PID must end up rejected
+        // rather than accepted on an empty name.
+        let out = "INFO: No tasks are running which match the specified criteria.\r\n";
+        assert_eq!(parse_tasklist_image_name(out), None);
+        assert!(!is_openclaw_process(&parse_tasklist_image_name(out).unwrap_or_default()));
     }
 }

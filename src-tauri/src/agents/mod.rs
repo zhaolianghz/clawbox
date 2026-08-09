@@ -5,7 +5,7 @@ pub mod install;
 
 use serde::Serialize;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::Stdio;
 use std::sync::OnceLock;
 use std::time::Duration;
 
@@ -219,16 +219,28 @@ fn is_executable(p: &Path) -> bool {
     p.is_file()
 }
 
-/// Manual `which`: walk the current process PATH for the first matching
-/// executable. Avoids pulling in the `which` crate for ~10 lines.
-fn find_in_path(binary: &str) -> Option<PathBuf> {
-    let path = std::env::var("PATH").ok()?;
-    let sep = if cfg!(windows) { ';' } else { ':' };
-    for dir in path.split(sep) {
-        if dir.is_empty() {
-            continue;
-        }
-        let candidate = PathBuf::from(dir).join(binary);
+/// Executable file extensions to try for a bare binary name, most-specific
+/// first. On Windows a CLI on PATH is almost never extensionless: `npm i -g`
+/// writes `claude.cmd` (+ a `.ps1` sibling), native builds ship `claude.exe`.
+/// `.ps1` is deliberately absent — CreateProcess can't launch a PowerShell
+/// script, whereas `std::process` routes `.cmd`/`.bat` through cmd.exe for us.
+#[cfg(windows)]
+const EXE_EXTS: &[&str] = &["exe", "cmd", "bat"];
+#[cfg(not(windows))]
+const EXE_EXTS: &[&str] = &[];
+
+/// Accept `p` itself, else `p` with each executable extension appended.
+/// Fallback entries name a file (`~/.claude/local/claude`), and on Windows the
+/// file actually on disk is that name plus `.cmd` / `.exe`.
+fn resolve_exe_file(p: &Path) -> Option<PathBuf> {
+    if is_executable(p) {
+        return Some(p.to_path_buf());
+    }
+    for ext in EXE_EXTS {
+        // Append, don't set_extension: `trae-cli` must not become `trae.exe`.
+        let mut name = p.file_name()?.to_os_string();
+        name.push(format!(".{}", ext));
+        let candidate = p.with_file_name(name);
         if is_executable(&candidate) {
             return Some(candidate);
         }
@@ -236,14 +248,35 @@ fn find_in_path(binary: &str) -> Option<PathBuf> {
     None
 }
 
-/// npm global install prefix's `bin` dir, cached after first resolution.
+/// The first executable named `binary` (with any platform extension) in `dir`.
+fn find_exe_in(dir: &Path, binary: &str) -> Option<PathBuf> {
+    resolve_exe_file(&dir.join(binary))
+}
+
+/// Manual `which`: walk the current process PATH for the first matching
+/// executable. Avoids pulling in the `which` crate for ~10 lines.
+fn find_in_path(binary: &str) -> Option<PathBuf> {
+    let path = std::env::var("PATH").ok()?;
+    for dir in path.split(crate::path_env::PATH_SEP) {
+        let dir = dir.trim();
+        if dir.is_empty() {
+            continue;
+        }
+        if let Some(hit) = find_exe_in(Path::new(dir), binary) {
+            return Some(hit);
+        }
+    }
+    None
+}
+
+/// npm global install prefix's bin dir, cached after first resolution.
 /// `npm config get prefix` can be slow / hit the network, so memoize per
 /// process. Only consulted as a last-resort fallback for Npm-installed agents.
 static NPM_GLOBAL_BIN: OnceLock<Option<PathBuf>> = OnceLock::new();
 fn npm_global_bin() -> Option<PathBuf> {
     NPM_GLOBAL_BIN
         .get_or_init(|| {
-            let child = Command::new("npm")
+            let child = crate::proc::command("npm")
                 .args(["config", "get", "prefix"])
                 .stdin(Stdio::null())
                 .stdout(Stdio::piped())
@@ -258,9 +291,10 @@ fn npm_global_bin() -> Option<PathBuf> {
             if prefix.is_empty() || prefix == "undefined" {
                 return None;
             }
-            // npm "prefix" is the install root; CLIs land in <prefix>/bin (unix)
-            // or <prefix> itself on windows. Use bin; harmless if absent.
-            Some(PathBuf::from(prefix).join("bin"))
+            let prefix = PathBuf::from(prefix);
+            // Unix lays shims down in <prefix>/bin; Windows puts them directly
+            // in <prefix> (%APPDATA%\npm), where a "bin" join finds nothing.
+            Some(if cfg!(windows) { prefix } else { prefix.join("bin") })
         })
         .clone()
 }
@@ -283,22 +317,20 @@ impl AgentDef {
         }
         for fb in self.fallback_paths {
             if let Some(p) = expand_home(fb) {
-                if is_executable(&p) {
-                    return Some(p);
+                if let Some(hit) = resolve_exe_file(&p) {
+                    return Some(hit);
                 }
             }
         }
         if let Some(home) = dirs::home_dir() {
-            let p = home.join(".local/bin").join(self.binary);
-            if is_executable(&p) {
-                return Some(p);
+            if let Some(hit) = find_exe_in(&home.join(".local").join("bin"), self.binary) {
+                return Some(hit);
             }
         }
         if matches!(self.install, InstallMethod::Npm { .. }) {
             if let Some(bin_dir) = npm_global_bin() {
-                let p = bin_dir.join(self.binary);
-                if is_executable(&p) {
-                    return Some(p);
+                if let Some(hit) = find_exe_in(&bin_dir, self.binary) {
+                    return Some(hit);
                 }
             }
         }
@@ -314,7 +346,7 @@ impl AgentDef {
         // have to run an absolute fallback path instead of relying on PATH
         // lookup inside Command::new.
         let resolved = self.resolve()?;
-        let child = Command::new(&resolved)
+        let child = crate::proc::command(&resolved)
             .args(self.check_probe)
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
@@ -500,6 +532,51 @@ mod tests {
     #[test]
     fn find_in_path_returns_none_for_missing_binary() {
         assert!(find_in_path("definitely-not-a-real-binary-xyz").is_none());
+    }
+
+    /// A scratch dir holding one file, cleaned up on drop.
+    fn scratch_with(file: &str, tag: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("clawbox-exe-{}-{}", tag, std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("scratch dir");
+        let p = dir.join(file);
+        std::fs::write(&p, "").expect("scratch file");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
+        dir
+    }
+
+    #[test]
+    #[cfg(windows)]
+    fn find_exe_in_matches_npm_cmd_shim() {
+        // The Windows detection bug: `npm i -g @anthropic-ai/claude-code`
+        // writes claude.cmd, and an extensionless probe never sees it.
+        let dir = scratch_with("claude.cmd", "cmd");
+        let hit = find_exe_in(&dir, "claude").expect("claude.cmd must resolve from bare name");
+        assert_eq!(hit.file_name().unwrap(), "claude.cmd");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    #[cfg(windows)]
+    fn resolve_exe_file_appends_rather_than_replaces_extension() {
+        // `trae-cli` has a dot-free name but a hyphen; set_extension() on a
+        // name like `foo.bar` would clobber the suffix, so we append.
+        let dir = scratch_with("trae-cli.exe", "append");
+        let hit = resolve_exe_file(&dir.join("trae-cli")).expect("trae-cli.exe must resolve");
+        assert_eq!(hit.file_name().unwrap(), "trae-cli.exe");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn find_exe_in_finds_a_plain_executable() {
+        let dir = scratch_with(if cfg!(windows) { "probe.exe" } else { "probe" }, "plain");
+        assert!(find_exe_in(&dir, "probe").is_some());
+        assert!(find_exe_in(&dir, "absent").is_none());
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

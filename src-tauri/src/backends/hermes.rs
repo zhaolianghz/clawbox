@@ -1,4 +1,3 @@
-use std::process::Command;
 
 use super::{Backend, GatewayStatus};
 
@@ -8,7 +7,7 @@ impl Backend for HermesBackend {
     fn id(&self) -> &'static str { "hermes" }
     fn display_name(&self) -> &'static str { "Hermes" }
     fn version(&self) -> String {
-        Command::new("hermes").arg("--version").output().ok()
+        crate::proc::command("hermes").arg("--version").output().ok()
             .filter(|o| o.status.success())
             .map(|o| String::from_utf8_lossy(&o.stdout).lines().next().unwrap_or("").trim().to_string())
             .filter(|s| !s.is_empty())
@@ -16,7 +15,7 @@ impl Backend for HermesBackend {
     }
 
     fn is_installed(&self) -> bool {
-        Command::new("hermes").arg("--version").output()
+        crate::proc::command("hermes").arg("--version").output()
             .map(|o| o.status.success()).unwrap_or(false)
     }
     fn gateway_status(&self) -> Result<GatewayStatus, String> {
@@ -36,7 +35,7 @@ impl Backend for HermesBackend {
 
 impl super::capabilities::McpCapability for HermesBackend {
     fn mcp_list(&self) -> Result<Vec<super::capabilities::McpServer>, String> {
-        let output = std::process::Command::new("hermes")
+        let output = crate::proc::command("hermes")
             .args(["mcp", "list"])
             .output()
             .map_err(|e| format!("Failed to run hermes: {}", e))?;
@@ -72,7 +71,7 @@ impl super::capabilities::McpCapability for HermesBackend {
 /// `hermes hooks list > /tmp/hermes_hooks.txt` and improve the parser.
 impl super::capabilities::MemoryCapability for HermesBackend {
     fn memory_status(&self) -> Result<super::capabilities::MemoryStatus, String> {
-        let output = std::process::Command::new("hermes").args(["memory", "status"]).output()
+        let output = crate::proc::command("hermes").args(["memory", "status"]).output()
             .map_err(|e| format!("Failed to run hermes: {}", e))?;
         if !output.status.success() {
             return Err(format!("hermes memory status failed: {}",
@@ -103,7 +102,7 @@ fn parse_hermes_memory_text(text: &str) -> super::capabilities::MemoryStatus {
 }
 
 fn run_hermes(args: &[&str]) -> Result<String, String> {
-    let output = Command::new("hermes").args(args).output()
+    let output = crate::proc::command("hermes").args(args).output()
         .map_err(|e| format!("Failed to run hermes: {}", e))?;
     if !output.status.success() {
         return Err(format!("hermes {} failed: {}",
@@ -117,7 +116,7 @@ fn run_hermes(args: &[&str]) -> Result<String, String> {
 fn run_hermes_with_stdin(args: &[&str], stdin_input: &str) -> Result<String, String> {
     use std::io::Write;
     use std::process::Stdio;
-    let mut child = Command::new("hermes")
+    let mut child = crate::proc::command("hermes")
         .args(args)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
