@@ -884,7 +884,7 @@ mod tests {
             vec!["add", "-A"],
             vec!["commit", "-m", "init"],
         ] {
-            let out = std::process::Command::new("git")
+            let out = crate::proc::command("git")
                 .args(&args)
                 .current_dir(&repo)
                 .env("GIT_TERMINAL_PROMPT", "0")

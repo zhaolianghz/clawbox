@@ -50,7 +50,7 @@ pub fn build_install_args(def: &AgentDef) -> Result<(String, Vec<String>), Strin
 /// process-wide by path_env::init(), so npm/bash resolve like a user shell.
 pub fn run_install(def: &AgentDef) -> Result<String, String> {
     let (cmd, args) = build_install_args(def)?;
-    let out = std::process::Command::new(&cmd)
+    let out = crate::proc::command(&cmd)
         .args(&args)
         .output()
         .map_err(|e| format!("failed to run {}: {}", cmd, e))?;

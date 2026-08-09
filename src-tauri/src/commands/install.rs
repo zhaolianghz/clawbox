@@ -1,5 +1,4 @@
 use serde::Serialize;
-use std::process::Command;
 
 #[derive(Serialize)]
 pub struct SystemCheck {
@@ -16,7 +15,7 @@ pub struct ComponentStatus {
 }
 
 fn check_command_version(cmd: &str, version_arg: &str) -> ComponentStatus {
-    let output = Command::new(cmd).arg(version_arg).output();
+    let output = crate::proc::command(cmd).arg(version_arg).output();
 
     match output {
         Ok(output) if output.status.success() => {
@@ -61,7 +60,7 @@ pub async fn install_openclaw(use_mirror: bool) -> Result<String, String> {
         args.push("--registry=https://registry.npmmirror.com");
     }
 
-    let output = Command::new("npm").args(&args).output();
+    let output = crate::proc::command("npm").args(&args).output();
 
     match output {
         Ok(output) if output.status.success() => {
@@ -95,7 +94,7 @@ pub async fn install_nodejs() -> Result<String, String> {
         }
     };
 
-    let output = Command::new(cmd).args(args).output();
+    let output = crate::proc::command(cmd).args(args).output();
 
     match output {
         Ok(output) if output.status.success() => {
@@ -170,7 +169,7 @@ pub async fn check_update() -> UpdateCheck {
 // GitHub Releases 最新 tag（用系统 curl，避免引入 HTTP 客户端依赖）
 fn fetch_latest_release_tag(repo: &str) -> Option<String> {
     let url = format!("https://api.github.com/repos/{}/releases/latest", repo);
-    let output = Command::new("curl")
+    let output = crate::proc::command("curl")
         .args(["-fsSL", "--max-time", "10", &url])
         .output()
         .ok()?;
@@ -185,7 +184,7 @@ fn fetch_latest_release_tag(repo: &str) -> Option<String> {
 #[tauri::command]
 pub async fn check_openclaw_update() -> UpdateCheck {
     // 获取已安装的 openclaw CLI 版本
-    let installed_output = Command::new("openclaw")
+    let installed_output = crate::proc::command("openclaw")
         .arg("--version")
         .output();
 
@@ -197,7 +196,7 @@ pub async fn check_openclaw_update() -> UpdateCheck {
         .unwrap_or_else(|| "not installed".to_string());
 
     // 检查 npm 上的 openclaw 最新版本
-    let latest_output = Command::new("npm")
+    let latest_output = crate::proc::command("npm")
         .args(["view", "openclaw", "version"])
         .output();
 
