@@ -34,10 +34,10 @@
 - `pub fn list(home: &Path, agent_id: &str) -> Vec<SnapshotInfo>`(时间倒序)
 
 **Steps:**
-- [ ] 失败测试:capture 四种 entry(file/missing/symlink/dir)→ manifest.json 与 blobs 落盘正确;list 倒序;prune 超 20 份删最旧;同秒冲突 id 追加 `-N`;空 paths → restorable=false
-- [ ] 实现:id 生成 `yyyyMMdd-HHmmss[-N]-<scope>`;blob 编号 = entries 下标;dir 递归拷贝 `blobs/<i>/`;symlink 用 `symlink_metadata` 记目标(不跟随);prune 按 id 字典序(时间戳前缀保证可排序)
-- [ ] `cargo test snapshots` 通过
-- [ ] Commit: `feat(sync): 统一快照层 capture/list/prune`
+- [x] 失败测试:capture 四种 entry(file/missing/symlink/dir)→ manifest.json 与 blobs 落盘正确;list 倒序;prune 超 20 份删最旧;同秒冲突 id 追加 `-N`;空 paths → restorable=false
+- [x] 实现:id 生成 `yyyyMMdd-HHmmss[-N]-<scope>`;blob 编号 = entries 下标;dir 递归拷贝 `blobs/<i>/`;symlink 用 `symlink_metadata` 记目标(不跟随);prune 按 id 字典序(时间戳前缀保证可排序)
+- [x] `cargo test snapshots` 通过
+- [x] Commit: `feat(sync): 统一快照层 capture/list/prune`
 
 ### Task 2: restore — 还原 / 安全快照 / 记账清理 / 路径逃逸防护
 
@@ -49,10 +49,10 @@
 - `pub fn restore_blob(home: &Path, agent_id: &str, snapshot_id: &str, rel_path: &str, target: &Path) -> Result<(), String>`(Task 3 的 validate_or_rollback 用:从快照恢复单个 entry 到任意目标)
 
 **Steps:**
-- [ ] 失败测试:file 往返;missing → 删除现存;symlink 重建;dir 精确恢复(后加的多余子项被删);恢复前生成 pre-restore 安全快照;restorable=false → Err;manifest 手改为 `/abs` 或 `../x` → Err;scope→cleared 映射(provider/fallback/mcp/skills/memory,写 ClawBox config 后 reload 验证)
-- [ ] 实现:rel_path 规范化校验;file 经 `.clawbox-swap` 临时文件 + rename;清记账直接 load_config/save_config(scope 映射见 spec 表)
-- [ ] `cargo test snapshots` 通过
-- [ ] Commit: `feat(sync): 快照 restore + 记账清理 + 逃逸防护`
+- [x] 失败测试:file 往返;missing → 删除现存;symlink 重建;dir 精确恢复(后加的多余子项被删);恢复前生成 pre-restore 安全快照;restorable=false → Err;manifest 手改为 `/abs` 或 `../x` → Err;scope→cleared 映射(provider/fallback/mcp/skills/memory,写 ClawBox config 后 reload 验证)
+- [x] 实现:rel_path 规范化校验;file 经 `.clawbox-swap` 临时文件 + rename;清记账直接 load_config/save_config(scope 映射见 spec 表)
+- [x] `cargo test snapshots` 通过
+- [x] Commit: `feat(sync): 快照 restore + 记账清理 + 逃逸防护`
 
 ### Task 3: 接线四条 apply 线,替换 backup_target
 
@@ -61,14 +61,14 @@
 **Interfaces:**
 - `ConfigAdapter::touch_paths(&self, home: &Path) -> Vec<PathBuf>` 默认 `vec![self.config_path(home)]`;codex MCP adapter 覆写
 - `ProviderAdapter::touch_paths` 同上
-- skills `apply_one`:touch = `agent_skills_dir` 一级子项(目录本身不存在则 `[dir]` 记 missing)
+- skills `apply_one`:touch = `[agent_skills_dir]` 整目录单个 dir entry(实现偏差:子项清单无法在恢复时清掉 apply 新建的软链,整目录精确恢复语义更正确;目录不存在自然记 missing)
 - `ApplyResult { snapshot_id: Option<String>, ... }`(backup_path 删除,前端 3 处引用同步改名)
 
 **Steps:**
-- [ ] 旧 backup_target 测试删除,替换为:各 apply 站点产生快照(capture 后 `list` 可见、scope 正确);codex provider apply 快照含 3 条 entry;validate_or_rollback 失败路径从快照 blob 恢复(现有 rollback 测试改造)
-- [ ] 实现 + `cargo test` 全量通过(现有一处 `.clawbox/backups` 断言删除)
-- [ ] 前端 grep `backup_path` 改 `snapshotId`(mcp/capabilities 页展示文案改「已快照」)
-- [ ] Commit: `feat(sync): 四条 apply 线接入统一快照,移除 backup_target`
+- [x] 旧 backup_target 测试删除,替换为:各 apply 站点产生快照(capture 后 `list` 可见、scope 正确);codex provider apply 快照含 3 条 entry;validate_or_rollback 失败路径从快照 blob 恢复(现有 rollback 测试改造)
+- [x] 实现 + `cargo test` 全量通过(现有一处 `.clawbox/backups` 断言删除)
+- [x] 前端 grep `backup_path` 改 `snapshotId`(mcp/capabilities 页展示文案改「已快照」)
+- [x] Commit: `feat(sync): 四条 apply 线接入统一快照,移除 backup_target`
 
 ### Task 4: Tauri 命令
 
@@ -79,23 +79,23 @@
 - `#[tauri::command] pub async fn snapshots_restore(agent_id: String, snapshot_id: String) -> Result<RestoreResult, String>`(薄封装,持 CONFIG_LOCK)
 
 **Steps:**
-- [ ] 实现 + 注册;`cargo test` 通过
-- [ ] Commit: `feat(commands): snapshots_list / snapshots_restore 命令`
+- [x] 实现 + 注册;`cargo test` 通过
+- [x] Commit: `feat(commands): snapshots_list / snapshots_restore 命令`
 
 ### Task 5: 前端 — API 封装 + Agents 页快照弹层 + i18n
 
 **Files:** Create `src/lib/api/snapshots.ts`;Modify `src/routes/agents/+page.svelte`(每 agent「快照历史」入口 + 弹层列表 + 恢复确认)、`src/lib/i18n/{en,zh}.json`
 
 **Steps:**
-- [ ] snapshots.ts 类型化 invoke 封装
-- [ ] 弹层:时间/scope 徽章/摘要/文件数;restorable=false 灰化标「不可自动恢复」;恢复确认文案明示 skills 目录精确恢复语义与记账清除后果;成功 toast 展示 restored/cleared
-- [ ] en/zh 文案;`npm run check` 通过
-- [ ] Commit: `feat(ui): Agents 页快照历史与恢复`
+- [x] snapshots.ts 类型化 invoke 封装
+- [x] 弹层:时间/scope 徽章/摘要/文件数;restorable=false 灰化标「不可自动恢复」;恢复确认文案明示 skills 目录精确恢复语义与记账清除后果;成功 toast 展示 restored/cleared
+- [x] en/zh 文案;`npm run check` 通过
+- [x] Commit: `feat(ui): Agents 页快照历史与恢复`
 
 ### Task 6: 全量验证
 
 **Steps:**
-- [ ] `cd src-tauri && cargo test` 全绿
-- [ ] `npm run check` 全绿
-- [ ] ROADMAP.md 条目 4 标注已实现
-- [ ] Commit: `chore: 快照回滚收尾`
+- [x] `cd src-tauri && cargo test` 全绿
+- [x] `npm run check` 全绿
+- [x] ROADMAP.md 条目 4 标注已实现
+- [x] Commit: `chore: 快照回滚收尾`

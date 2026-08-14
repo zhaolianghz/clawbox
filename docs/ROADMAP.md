@@ -36,9 +36,11 @@ ClawBox 目前已具备：
 
 ## 二、配置信任线
 
-### 4. 配置快照与回滚 ⭐ 优先级建议最高
+### 4. 配置快照与回滚 ✅ 已实现（2026-08-14）
 
 每次 sync 前自动快照 agent 的原始配置文件，时间机器式一键恢复。
+
+- 已落地：统一快照层 `~/.clawbox/snapshots/`（file / missing / symlink / dir 四种条目，每 agent 保留 20 份），四条 apply 线（provider / fallback / MCP / skills / memory）全部接入；Agents 页快照面板可浏览与恢复；恢复时自动清对应维度托管记账，防止启动 reconcile 自动「修复」回去（设计：`docs/superpowers/specs/2026-08-14-config-snapshots-rollback-design.md`）
 
 - 价值：ClawBox 直接改写用户的 agent 配置文件，这是采纳的最大心理门槛——「改坏了能撤销」直接消除顾虑
 - 成本：低。现有 sync 的 plan/apply 架构正好挂快照钩子

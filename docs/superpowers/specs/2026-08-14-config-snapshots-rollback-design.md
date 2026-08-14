@@ -108,7 +108,10 @@ home 参数化 + TempHome 测试,与 `sync` 其余模块同铁律。
 - `ConfigAdapter`(MCP)与 `ProviderAdapter` 各加默认方法
   `touch_paths(&self, home) -> Vec<PathBuf>`,默认 `[config_path]`;
   Codex 两个 adapter 覆写为 `[config.toml, auth.json, catalog]`
-- skills `apply_one`:`agent_skills_dir` 的一级子项(目录不存在则记 dir missing)
+- skills `apply_one`:`agent_skills_dir` 整个目录记为单个 dir entry(目录不存在则记 dir missing)。
+  > 实现偏差:原设计为「一级子项」清单,实现时发现子项清单无法在恢复时移除
+  > apply 新建的软链(不在 manifest 里),故改为整目录精确恢复——语义更正确,
+  > 恢复确认文案已明示「之后新增的内容会被移除」
 - memory `apply_one`:`agent_memory_path` 文件
 - CLI 型(空 config_path):capture 空清单 + `restorable: false`
 
