@@ -185,7 +185,7 @@
         "skip": "跳过"
       },
       "confirm": "应用勾选（{count}）",
-      "backup": "备份",
+      "backup": "快照 ID",
       "selectAll": "全选"
     },
     "form": {

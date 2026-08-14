@@ -482,26 +482,29 @@ pub fn deployed_names(home: &Path, agent_id: &str) -> Vec<String> {
         .collect()
 }
 
-/// 应用到一个 agent:备份(技能目录是目录,backup_target 对非文件返回
-/// None,自然跳过)、应用、汇报。调用方在成功后更新 skills_managed。
+/// 应用到一个 agent:快照(技能目录一级子项;目录本身不存在则记
+/// missing)、应用、汇报。调用方在成功后更新 skills_managed。
 pub fn apply_one(home: &Path, agent_id: &str, managed: &[String]) -> ApplyResult {
     let id = agent_id.to_string();
     let Some(dir) = agent_skills_dir(home, agent_id) else {
         return ApplyResult {
             agent_id: id,
             ok: false,
-            backup_path: None,
+            snapshot_id: None,
             applied: 0,
             error: Some("agent not supported for skills sync".to_string()),
         };
     };
-    let backup_path = match super::backup_target(home, agent_id, &dir) {
-        Ok(p) => p,
+    // 快照范围 = 技能目录整体(单个 dir entry):恢复即精确重建快照时刻的
+    // 目录状态(我们 apply 建的软链也会被正确移除;快照后用户自加的也会
+    // 被删 —— UI 恢复确认弹窗明示此语义)。目录不存在则记 missing。
+    let snapshot_id = match super::snapshots::capture(home, agent_id, "skills", "skills sync", &[dir]) {
+        Ok(s) => Some(s.id),
         Err(e) => {
             return ApplyResult {
                 agent_id: id,
                 ok: false,
-                backup_path: None,
+                snapshot_id: None,
                 applied: 0,
                 error: Some(e),
             }
@@ -511,14 +514,14 @@ pub fn apply_one(home: &Path, agent_id: &str, managed: &[String]) -> ApplyResult
         Ok(applied) => ApplyResult {
             agent_id: id,
             ok: true,
-            backup_path,
+            snapshot_id,
             applied,
             error: None,
         },
         Err(e) => ApplyResult {
             agent_id: id,
             ok: false,
-            backup_path,
+            snapshot_id,
             applied: 0,
             error: Some(e),
         },
@@ -1372,15 +1375,20 @@ mod tests {
     }
 
     #[test]
-    fn apply_one_reports_and_backup_skips_directories() {
+    fn apply_one_snapshots_whole_skills_dir() {
         let home = TempHome::new();
         lib_skill(&home, "sk", "");
-        // 技能目录已存在(目录不是文件)→ backup_target 返回 None
+        // 技能目录已存在但为空 → 仍应拍出 dir entry(空目录可精确恢复)
         std::fs::create_dir_all(home.path().join(".claude").join("skills")).unwrap();
         let r = apply_one(home.path(), "claude-code", &[]);
         assert!(r.ok);
-        assert!(r.backup_path.is_none());
         assert_eq!(r.applied, 1);
+        // 快照 = 技能目录整体一个 entry
+        let snaps = crate::sync::snapshots::list(home.path(), Some("claude-code"));
+        assert_eq!(snaps.len(), 1);
+        assert_eq!(snaps[0].scope, "skills");
+        assert_eq!(snaps[0].files, 1);
+        assert!(snaps[0].restorable);
         let r = apply_one(home.path(), "codex", &[]);
         assert!(!r.ok);
         assert!(r.error.unwrap().contains("not supported"));

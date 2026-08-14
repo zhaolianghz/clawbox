@@ -64,7 +64,7 @@ pub async fn sync_mcp_apply(agent_ids: Vec<String>) -> Result<Vec<ApplyResult>, 
             results.push(ApplyResult {
                 agent_id: id,
                 ok: false,
-                backup_path: None,
+                snapshot_id: None,
                 applied: 0,
                 error: Some("unknown agent".to_string()),
             });
@@ -409,7 +409,7 @@ pub fn reconcile_bindings_at(home: &Path) -> Vec<ApplyResult> {
             Err(e) => results.push(ApplyResult {
                 agent_id: agent_id.clone(),
                 ok: false,
-                backup_path: None,
+                snapshot_id: None,
                 applied: 0,
                 error: Some(e),
             }),
@@ -450,7 +450,7 @@ pub fn reconcile_bindings_at(home: &Path) -> Vec<ApplyResult> {
             Err(e) => results.push(ApplyResult {
                 agent_id: agent_id.clone(),
                 ok: false,
-                backup_path: None,
+                snapshot_id: None,
                 applied: 0,
                 error: Some(e),
             }),

@@ -11,7 +11,7 @@
 //! 安全铁律:所有路径以显式 `home: &Path` 解析;ChangeItem.detail 绝不含
 //! apiKey 明文。
 
-use super::{backup_target, diff_changes, AgentPlan, ApplyResult, ChangeItem};
+use super::{diff_changes, AgentPlan, ApplyResult, ChangeItem, snapshots};
 use crate::commands::config::ProviderSpec;
 use serde_json::{json, Map, Value};
 use std::collections::BTreeMap;
@@ -24,8 +24,14 @@ pub trait ProviderAdapter: Send + Sync {
     fn supported(&self) -> bool {
         true
     }
-    /// 该适配器写的主配置文件(apply 前备份的对象)。
+    /// 该适配器写的主配置文件(apply 前快照的对象)。
     fn config_path(&self, home: &Path) -> PathBuf;
+    /// apply 可能触碰的全部路径(apply 前快照的范围)。默认主配置文件;
+    /// CLI 型(空 config_path)为空。写多文件的适配器(codex)覆写。
+    fn touch_paths(&self, home: &Path) -> Vec<PathBuf> {
+        let p = self.config_path(home);
+        if p.as_os_str().is_empty() { vec![] } else { vec![p] }
+    }
     fn plan(
         &self,
         home: &Path,
@@ -685,6 +691,12 @@ impl ProviderAdapter for CodexProviderAdapter {
 
     fn config_path(&self, home: &Path) -> PathBuf {
         home.join(".codex").join("config.toml")
+    }
+
+    /// codex 的 provider 下发同时写 config.toml(env/model 引用)、
+    /// auth.json(OPENAI_API_KEY)与模型目录文件 —— 快照需覆盖全部三个。
+    fn touch_paths(&self, home: &Path) -> Vec<PathBuf> {
+        vec![self.config_path(home), self.auth_path(home), self.catalog_path(home)]
     }
 
     fn plan(
@@ -3104,45 +3116,51 @@ pub fn plan_all(
 
 /// 对单个 agent 应用 fallback 链。与 apply_one 分离:fallback 不走主配置
 /// 备份(同一个 config.yaml 已在主 apply 备份过),只汇报写入条数与错误。
-/// 把主配置文件回滚到 apply 前的备份。backup=None 表示 apply 前文件不存在 →
-/// 删掉 apply 产物以恢复「不存在」状态。失败只记日志(尽力而为)。
-fn rollback_config(backup: &Option<String>, target: &Path) {
-    match backup {
-        Some(bk) => {
-            if let Err(e) = std::fs::copy(bk, target) {
-                eprintln!(
-                    "[clawbox] rollback: failed to restore {} from {}: {}",
-                    target.display(),
-                    bk,
-                    e
-                );
-            }
-        }
-        None => {
-            let _ = std::fs::remove_file(target);
-        }
+/// 把主配置文件回滚到 apply 前的快照。snapshot_id=None 表示 apply 前
+/// 没拍上快照(异常情况),只能尽力而为记日志。missing entry 语义下
+/// 「文件原本不存在」也能正确还原(删掉 apply 产物)。
+fn rollback_config(home: &Path, agent_id: &str, snapshot_id: &Option<String>, target: &Path) {
+    let Some(id) = snapshot_id else {
+        eprintln!("[clawbox] rollback: no snapshot for {}, cannot restore {}", agent_id, target.display());
+        return;
+    };
+    let rel = target
+        .strip_prefix(home)
+        .ok()
+        .map(|p| p.to_string_lossy().to_string());
+    let Some(rel) = rel else {
+        eprintln!("[clawbox] rollback: {} escapes home", target.display());
+        return;
+    };
+    if let Err(e) = snapshots::restore_paths(home, agent_id, id, &[rel]) {
+        eprintln!(
+            "[clawbox] rollback: failed to restore {} from snapshot {}: {}",
+            target.display(),
+            id,
+            e
+        );
     }
 }
 
-/// 校验刚写入的配置。apply 改了文件(applied>0)才校验;不过则回滚到 backup,
+/// 校验刚写入的配置。apply 改了文件(applied>0)才校验;不过则回滚到快照,
 /// 返回 Err(带原因)。apply 未改文件(applied==0)直接 Ok——原文件此前应是合法的。
 fn validate_or_rollback(
     home: &Path,
     adapter: &dyn ProviderAdapter,
     applied: usize,
-    backup: &Option<String>,
+    snapshot_id: &Option<String>,
 ) -> Result<(), (Option<String>, String)> {
     if applied == 0 {
         return Ok(());
     }
     if let Err(ve) = adapter.validate(home) {
-        rollback_config(backup, &adapter.config_path(home));
-        return Err((backup.clone(), format!("validation failed after write, rolled back: {}", ve)));
+        rollback_config(home, adapter.agent_id(), snapshot_id, &adapter.config_path(home));
+        return Err((snapshot_id.clone(), format!("validation failed after write, rolled back: {}", ve)));
     }
     Ok(())
 }
 
-/// 对单个 agent 应用 fallback 链。与 apply_one 同样走 备份→写→校验→(不过)回滚。
+/// 对单个 agent 应用 fallback 链。与 apply_one 同样走 快照→写→校验→(不过)回滚。
 pub fn apply_fallbacks_one(
     home: &Path,
     adapter: &dyn ProviderAdapter,
@@ -3154,18 +3172,18 @@ pub fn apply_fallbacks_one(
         return ApplyResult {
             agent_id,
             ok: false,
-            backup_path: None,
+            snapshot_id: None,
             applied: 0,
             error: Some("agent not supported for provider sync".to_string()),
         };
     }
-    let backup_path = match backup_target(home, adapter.agent_id(), &adapter.config_path(home)) {
-        Ok(p) => p,
+    let snapshot_id = match snapshots::capture(home, adapter.agent_id(), "fallback", "fallback sync", &adapter.touch_paths(home)) {
+        Ok(s) => Some(s.id),
         Err(e) => {
             return ApplyResult {
                 agent_id,
                 ok: false,
-                backup_path: None,
+                snapshot_id: None,
                 applied: 0,
                 error: Some(e),
             }
@@ -3177,31 +3195,31 @@ pub fn apply_fallbacks_one(
             return ApplyResult {
                 agent_id,
                 ok: false,
-                backup_path,
+                snapshot_id,
                 applied: 0,
                 error: Some(e),
             }
         }
     };
-    match validate_or_rollback(home, adapter, applied, &backup_path) {
+    match validate_or_rollback(home, adapter, applied, &snapshot_id) {
         Ok(()) => ApplyResult {
             agent_id,
             ok: true,
-            backup_path,
+            snapshot_id,
             applied,
             error: None,
         },
         Err((bk, msg)) => ApplyResult {
             agent_id,
             ok: false,
-            backup_path: bk,
+            snapshot_id: bk,
             applied: 0,
             error: Some(msg),
         },
     }
 }
 
-/// 对单个 agent 应用:备份主配置文件、写入、校验、(不过)回滚。调用方在
+/// 对单个 agent 应用:快照、写入、校验、(不过)回滚。调用方在
 /// 成功后更新 providers_managed。
 pub fn apply_one(
     home: &Path,
@@ -3215,18 +3233,18 @@ pub fn apply_one(
         return ApplyResult {
             agent_id,
             ok: false,
-            backup_path: None,
+            snapshot_id: None,
             applied: 0,
             error: Some("agent not supported for provider sync".to_string()),
         };
     }
-    let backup_path = match backup_target(home, adapter.agent_id(), &adapter.config_path(home)) {
-        Ok(p) => p,
+    let snapshot_id = match snapshots::capture(home, adapter.agent_id(), "provider", "provider sync", &adapter.touch_paths(home)) {
+        Ok(s) => Some(s.id),
         Err(e) => {
             return ApplyResult {
                 agent_id,
                 ok: false,
-                backup_path: None,
+                snapshot_id: None,
                 applied: 0,
                 error: Some(e),
             }
@@ -3238,24 +3256,24 @@ pub fn apply_one(
             return ApplyResult {
                 agent_id,
                 ok: false,
-                backup_path,
+                snapshot_id,
                 applied: 0,
                 error: Some(e),
             }
         }
     };
-    match validate_or_rollback(home, adapter, applied, &backup_path) {
+    match validate_or_rollback(home, adapter, applied, &snapshot_id) {
         Ok(()) => ApplyResult {
             agent_id,
             ok: true,
-            backup_path,
+            snapshot_id,
             applied,
             error: None,
         },
         Err((bk, msg)) => ApplyResult {
             agent_id,
             ok: false,
-            backup_path: bk,
+            snapshot_id: bk,
             applied: 0,
             error: Some(msg),
         },
@@ -4973,7 +4991,7 @@ mod tests {
     }
 
     #[test]
-    fn apply_one_backs_up_existing_target() {
+    fn apply_one_takes_snapshot() {
         let home = TempHome::new();
         write_file(
             home.path(),
@@ -4982,8 +5000,33 @@ mod tests {
         );
         let providers = vec![anthropic_provider()];
         let r = apply_one(home.path(), &claude_code(), &providers, Some("p-anth"), &[]);
-        assert!(r.ok);
-        assert!(r.backup_path.is_some());
-        assert!(r.backup_path.unwrap().contains("claude-code__settings.json"));
+        assert!(r.ok, "{:?}", r.error);
+        let snaps = snapshots::list(home.path(), Some("claude-code"));
+        assert_eq!(snaps.len(), 1);
+        assert_eq!(snaps[0].scope, "provider");
+        assert!(snaps[0].restorable);
+    }
+
+    #[test]
+    fn codex_provider_snapshot_covers_all_three_files() {
+        let home = TempHome::new();
+        let providers = vec![openai_provider()];
+        let r = apply_one(home.path(), &CodexProviderAdapter, &providers, Some("p-oa"), &[]);
+        assert!(r.ok, "{:?}", r.error);
+        let id = r.snapshot_id.expect("snapshot");
+        let dir = home.path().join(".clawbox").join("snapshots").join("codex").join(&id);
+        let m: serde_json::Value = serde_json::from_str(
+            &std::fs::read_to_string(dir.join("manifest.json")).unwrap(),
+        )
+        .unwrap();
+        let rels: Vec<&str> = m["entries"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|e| e["rel_path"].as_str().unwrap())
+            .collect();
+        assert!(rels.contains(&".codex/config.toml"), "{:?}", rels);
+        assert!(rels.contains(&".codex/auth.json"), "{:?}", rels);
+        assert!(rels.contains(&".codex/clawbox-model-catalog.json"), "{:?}", rels);
     }
 }

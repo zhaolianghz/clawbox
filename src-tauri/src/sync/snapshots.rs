@@ -426,7 +426,7 @@ fn clear_bookkeeping(home: &Path, agent_id: &str, scope: &str) -> Result<Vec<Str
     let mut config = load_config(home)?;
     let agent = agent_id.to_string();
     let mut cleared = Vec::new();
-    let mut had = |map: &mut std::collections::HashMap<String, Vec<String>>| map.remove(&agent).is_some();
+    let had = |map: &mut std::collections::HashMap<String, Vec<String>>| map.remove(&agent).is_some();
     match scope {
         "provider" => {
             if config.agent_providers.remove(&agent).is_some() {

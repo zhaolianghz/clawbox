@@ -423,7 +423,7 @@
     if (r.ok) {
       rowSynced = { ...rowSynced, [r.agent_id]: true };
       rowError = { ...rowError, [r.agent_id]: '' };
-      if (r.backup_path) rowBackup = { ...rowBackup, [r.agent_id]: r.backup_path };
+      if (r.snapshot_id) rowBackup = { ...rowBackup, [r.agent_id]: r.snapshot_id };
     } else {
       rowError = { ...rowError, [r.agent_id]: r.error ?? $_('errors.applyFailed') };
     }
@@ -647,7 +647,7 @@
     if (r.ok) {
       memRowSynced = { ...memRowSynced, [r.agent_id]: true };
       memRowError = { ...memRowError, [r.agent_id]: '' };
-      if (r.backup_path) memRowBackup = { ...memRowBackup, [r.agent_id]: r.backup_path };
+      if (r.snapshot_id) memRowBackup = { ...memRowBackup, [r.agent_id]: r.snapshot_id };
     } else {
       memRowError = { ...memRowError, [r.agent_id]: r.error ?? $_('errors.applyFailed') };
     }

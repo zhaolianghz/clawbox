@@ -31,7 +31,7 @@ export interface AgentPlan {
 export interface ApplyResult {
   agent_id: string;
   ok: boolean;
-  backup_path: string | null;
+  snapshot_id: string | null;
   applied: number;
   error: string | null;
 }

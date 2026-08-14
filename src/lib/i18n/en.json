@@ -185,7 +185,7 @@
         "skip": "Skip"
       },
       "confirm": "Apply Selected ({count})",
-      "backup": "Backup",
+      "backup": "Snapshot ID",
       "selectAll": "Select all"
     },
     "form": {

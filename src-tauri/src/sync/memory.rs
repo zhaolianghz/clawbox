@@ -311,7 +311,7 @@ pub fn deployed_names(home: &Path, agent_id: &str) -> Vec<String> {
     if has_block { vec![MANAGED_MARK.to_string()] } else { vec![] }
 }
 
-/// 应用到一个 agent:备份目标文件、应用、汇报。调用方成功后更新
+/// 应用到一个 agent:快照、应用、汇报。调用方成功后更新
 /// memory_managed。
 pub fn apply_one(home: &Path, agent_id: &str, managed: &[String]) -> ApplyResult {
     let id = agent_id.to_string();
@@ -319,20 +319,20 @@ pub fn apply_one(home: &Path, agent_id: &str, managed: &[String]) -> ApplyResult
         return ApplyResult {
             agent_id: id,
             ok: false,
-            backup_path: None,
+            snapshot_id: None,
             applied: 0,
             error: Some("agent not supported for memory sync".to_string()),
         };
     };
-    let backup_path = match super::backup_target(home, agent_id, &path) {
-        Ok(p) => p,
+    let snapshot_id = match super::snapshots::capture(home, agent_id, "memory", "memory sync", &[path]) {
+        Ok(s) => Some(s.id),
         Err(e) => {
-            return ApplyResult { agent_id: id, ok: false, backup_path: None, applied: 0, error: Some(e) }
+            return ApplyResult { agent_id: id, ok: false, snapshot_id: None, applied: 0, error: Some(e) }
         }
     };
     match apply_agent(home, agent_id, managed) {
-        Ok(applied) => ApplyResult { agent_id: id, ok: true, backup_path, applied, error: None },
-        Err(e) => ApplyResult { agent_id: id, ok: false, backup_path, applied: 0, error: Some(e) },
+        Ok(applied) => ApplyResult { agent_id: id, ok: true, snapshot_id, applied, error: None },
+        Err(e) => ApplyResult { agent_id: id, ok: false, snapshot_id, applied: 0, error: Some(e) },
     }
 }
 
@@ -610,9 +610,20 @@ mod tests {
         let r = apply_one(home.path(), "claude-code", &[]);
         assert!(r.ok, "{:?}", r.error);
         assert_eq!(r.applied, 1);
-        let backup = r.backup_path.expect("existing file backed up");
-        assert!(backup.contains("claude-code__CLAUDE.md"), "{}", backup);
-        assert_eq!(std::fs::read_to_string(&backup).unwrap(), "orig\n");
+        let id = r.snapshot_id.expect("existing file snapshotted");
+        let snaps = crate::sync::snapshots::list(home.path(), Some("claude-code"));
+        assert_eq!(snaps.len(), 1);
+        assert_eq!(snaps[0].id, id);
+        assert_eq!(snaps[0].scope, "memory");
+        let blob = home
+            .path()
+            .join(".clawbox")
+            .join("snapshots")
+            .join("claude-code")
+            .join(&id)
+            .join("blobs")
+            .join("0");
+        assert_eq!(std::fs::read_to_string(&blob).unwrap(), "orig\n");
         // 不支持的 agent
         let r = apply_one(home.path(), "kimi", &[]);
         assert!(!r.ok && r.error.unwrap().contains("not supported"));

@@ -327,7 +327,7 @@ pub fn providers_set_at(
             Err(e) => results.push(ApplyResult {
                 agent_id,
                 ok: false,
-                backup_path: None,
+                snapshot_id: None,
                 applied: 0,
                 error: Some(e),
             }),
@@ -339,7 +339,7 @@ pub fn providers_set_at(
             Err(e) => results.push(ApplyResult {
                 agent_id,
                 ok: false,
-                backup_path: None,
+                snapshot_id: None,
                 applied: 0,
                 error: Some(e),
             }),

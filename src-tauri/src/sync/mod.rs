@@ -44,7 +44,8 @@ pub struct AgentPlan {
 pub struct ApplyResult {
     pub agent_id: String,
     pub ok: bool,
-    pub backup_path: Option<String>,
+    /// apply 前快照 id(见 `sync::snapshots`);CLI 型 agent 为 None。
+    pub snapshot_id: Option<String>,
     pub applied: usize,
     pub error: Option<String>,
 }
@@ -59,6 +60,13 @@ pub trait ConfigAdapter: Send + Sync {
     /// Native config file this adapter writes. CLI-backed adapters return an
     /// empty path (they deploy through the agent's own CLI, not a file).
     fn config_path(&self, home: &Path) -> PathBuf;
+    /// apply 可能触碰的全部路径(apply 前快照的范围)。默认主配置文件;
+    /// CLI 型(空 config_path)为空列表 → 快照记为不可自动恢复。写多个
+    /// 文件的适配器(codex provider 侧)覆写。
+    fn touch_paths(&self, home: &Path) -> Vec<PathBuf> {
+        let p = self.config_path(home);
+        if p.as_os_str().is_empty() { vec![] } else { vec![p] }
+    }
     fn plan_mcp(
         &self,
         home: &Path,
@@ -196,32 +204,11 @@ pub fn plan_all(
 /// Copy the target file (if any) to
 /// `<home>/.clawbox/backups/<UTC yyyyMMdd-HHmmss>/<agent_id>__<filename>`.
 /// Returns None when there is nothing to back up.
-pub fn backup_target(home: &Path, agent_id: &str, target: &Path) -> Result<Option<String>, String> {
-    if target.as_os_str().is_empty() || !target.is_file() {
-        return Ok(None);
-    }
-    let now = time::OffsetDateTime::now_utc();
-    let stamp = format!(
-        "{:04}{:02}{:02}-{:02}{:02}{:02}",
-        now.year(),
-        u8::from(now.month()),
-        now.day(),
-        now.hour(),
-        now.minute(),
-        now.second()
-    );
-    let dir = home.join(".clawbox").join("backups").join(stamp);
-    std::fs::create_dir_all(&dir).map_err(|e| format!("Failed to create backup dir: {}", e))?;
-    let file_name = target
-        .file_name()
-        .map(|s| s.to_string_lossy().to_string())
-        .unwrap_or_else(|| "config".to_string());
-    let dest = dir.join(format!("{}__{}", agent_id, file_name));
-    std::fs::copy(target, &dest).map_err(|e| format!("Failed to back up {}: {}", target.display(), e))?;
-    Ok(Some(dest.to_string_lossy().to_string()))
-}
+///
+/// (历史机制,已被 `snapshots::capture` 取代并删除;旧 `~/.clawbox/backups/`
+/// 目录遗留不迁移不清理。)
 
-/// Apply the desired config to one agent: backup, write, report. The caller
+/// Apply the desired config to one agent: snapshot, write, report. The caller
 /// (the `sync_mcp_apply` command) updates `mcp_managed` on success.
 pub fn apply_one(
     home: &Path,
@@ -234,18 +221,18 @@ pub fn apply_one(
         return ApplyResult {
             agent_id,
             ok: false,
-            backup_path: None,
+            snapshot_id: None,
             applied: 0,
             error: Some("agent not supported for MCP sync".to_string()),
         };
     }
-    let backup_path = match backup_target(home, adapter.agent_id(), &adapter.config_path(home)) {
-        Ok(p) => p,
+    let snapshot_id = match snapshots::capture(home, adapter.agent_id(), "mcp", "mcp sync", &adapter.touch_paths(home)) {
+        Ok(s) => Some(s.id),
         Err(e) => {
             return ApplyResult {
                 agent_id,
                 ok: false,
-                backup_path: None,
+                snapshot_id: None,
                 applied: 0,
                 error: Some(e),
             }
@@ -255,14 +242,14 @@ pub fn apply_one(
         Ok(applied) => ApplyResult {
             agent_id,
             ok: true,
-            backup_path,
+            snapshot_id,
             applied,
             error: None,
         },
         Err(e) => ApplyResult {
             agent_id,
             ok: false,
-            backup_path,
+            snapshot_id,
             applied: 0,
             error: Some(e),
         },
@@ -449,23 +436,18 @@ mod tests {
     }
 
     #[test]
-    fn backup_copies_into_timestamped_dir() {
+    fn mcp_apply_takes_snapshot() {
         let home = test_util::TempHome::new();
         let target = home.path().join(".claude.json");
-        std::fs::write(&target, "{\"x\":1}").unwrap();
-        let backup = backup_target(home.path(), "claude-code", &target)
-            .unwrap()
-            .expect("backup created");
-        let backup_path = PathBuf::from(&backup);
-        assert!(backup_path.starts_with(home.path().join(".clawbox").join("backups")));
-        assert!(backup.ends_with("claude-code__.claude.json"));
-        assert_eq!(std::fs::read_to_string(&backup_path).unwrap(), "{\"x\":1}");
-    }
-
-    #[test]
-    fn backup_of_missing_file_is_none() {
-        let home = test_util::TempHome::new();
-        let target = home.path().join("nope.json");
-        assert!(backup_target(home.path(), "x", &target).unwrap().is_none());
+        std::fs::write(&target, "{}").unwrap();
+        let desired = BTreeMap::from([("srv".to_string(), test_util::stdio_spec("npx", &["my-mcp"]))]);
+        let r = apply_one(home.path(), find_adapter("claude-code").unwrap(), &desired, &[]);
+        assert!(r.ok, "{:?}", r.error);
+        let id = r.snapshot_id.expect("snapshot taken");
+        let snaps = snapshots::list(home.path(), Some("claude-code"));
+        assert_eq!(snaps.len(), 1);
+        assert_eq!(snaps[0].id, id);
+        assert_eq!(snaps[0].scope, "mcp");
+        assert!(snaps[0].restorable);
     }
 }
