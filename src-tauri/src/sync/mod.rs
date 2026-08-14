@@ -16,6 +16,7 @@ pub mod json_file;
 pub mod providers;
 pub mod memory;
 pub mod skills;
+pub mod snapshots;
 
 use crate::commands::config::McpServerSpec;
 use serde::Serialize;
