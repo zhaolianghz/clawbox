@@ -72,6 +72,8 @@ pub fn run() {
             commands::sync::skills_check_updates,
             commands::sync::skills_update,
             commands::sync::memory_read,
+            commands::snapshots::snapshots_list,
+            commands::snapshots::snapshots_restore,
             commands::sync::memory_write,
             commands::sync::memory_targets,
             commands::sync::memory_target_content,
