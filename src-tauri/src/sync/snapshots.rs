@@ -321,6 +321,7 @@ mod tests {
         let home = TempHome::new();
         let h = home.path();
         // file / symlink / dir(含嵌套)/ missing 四种对象
+        fs::create_dir_all(h.join(".codex")).unwrap();
         fs::write(h.join(".codex").join("config.toml"), "key = 1\n").unwrap();
         let lib = h.join(".clawbox").join("skills").join("library").join("foo");
         fs::create_dir_all(&lib).unwrap();
