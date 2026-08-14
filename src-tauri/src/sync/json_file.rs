@@ -98,16 +98,6 @@ pub fn cline() -> JsonFileAdapter {
     }
 }
 
-pub fn copilot_cli() -> JsonFileAdapter {
-    JsonFileAdapter {
-        id: "copilot-cli",
-        rel: &[".copilot", "mcp-config.json"],
-        servers_key: "mcpServers",
-        map: map_copilot,
-        skeleton: || json!({}),
-    }
-}
-
 /// claude-code / codebuddy: `{"type":"stdio","command",...}` / `{"type":"http","url",...}`.
 fn map_typed(spec: &McpServerSpec) -> Result<Value, String> {
     match spec.kind.as_str() {
@@ -172,17 +162,6 @@ fn map_gemini(spec: &McpServerSpec) -> Result<Value, String> {
         }
         other => Err(format!("unsupported server kind: {}", other)),
     }
-}
-
-/// copilot-cli: stdio→type "local",http→type "http";tools 必填,"*" = 全部启用。
-fn map_copilot(spec: &McpServerSpec) -> Result<Value, String> {
-    let mut v = map_typed(spec)?;
-    let o = v.as_object_mut().unwrap();
-    if spec.kind == "stdio" {
-        o.insert("type".into(), json!("local"));
-    }
-    o.insert("tools".into(), json!(["*"]));
-    Ok(v)
 }
 
 /// opencode: stdio→local (command is an array, env is "environment"),
@@ -344,7 +323,7 @@ mod tests {
     fn all_adapters() -> Vec<JsonFileAdapter> {
         vec![
             claude_code(), codebuddy(), cursor_agent(), opencode(),
-            gemini(), qwen_code(), cline(), copilot_cli(),
+            gemini(), qwen_code(), cline(),
         ]
     }
 

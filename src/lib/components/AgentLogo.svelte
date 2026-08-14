@@ -19,7 +19,6 @@
     cline: { bg: 'rgba(158, 134, 255, 0.18)', fg: '#b3a1ff', initial: 'C' },
     pi: { bg: 'rgba(251, 191, 36, 0.16)', fg: '#fbbf24', initial: 'π' },
     'qwen-code': { bg: 'rgba(97, 92, 237, 0.2)', fg: '#8b87ff', initial: 'Q' },
-    'copilot-cli': { bg: 'rgba(139, 148, 158, 0.18)', fg: '#c9d1d9', initial: 'C' },
     'trae-agent': { bg: 'rgba(240, 68, 86, 0.18)', fg: '#f87171', initial: 'T' },
   };
 
@@ -50,13 +49,6 @@
     <!-- 四角星火花 -->
     <svg viewBox="0 0 24 24" fill="currentColor" stroke="none">
       <path d="M12 2c.9 5.2 4.8 9.1 10 10-5.2.9-9.1 4.8-10 10-.9-5.2-4.8-9.1-10-10 5.2-.9 9.1-4.8 10-10z"/>
-    </svg>
-  {:else if id === 'copilot-cli'}
-    <!-- 护目镜 -->
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
-      <rect x="2.5" y="8.5" width="7.5" height="7" rx="2.5"/>
-      <rect x="14" y="8.5" width="7.5" height="7" rx="2.5"/>
-      <path d="M10 12h4" stroke-linecap="round"/>
     </svg>
   {:else}
     <span class="initial">{brand.initial}</span>

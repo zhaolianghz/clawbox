@@ -74,7 +74,6 @@ import qodercli from '@lobehub/icons-static-svg/icons/qoder-color.svg?raw';
 import geminiCli from '@lobehub/icons-static-svg/icons/geminicli-color.svg?raw';
 import cline from '@lobehub/icons-static-svg/icons/cline.svg?raw';
 import qwenCode from '@lobehub/icons-static-svg/icons/qwen-color.svg?raw';
-import githubCopilot from '@lobehub/icons-static-svg/icons/githubcopilot.svg?raw';
 import trae from '@lobehub/icons-static-svg/icons/trae-color.svg?raw';
 
 /** 服务商目录 id → 内联 SVG。未命中的 id 不在表内(回退首字母)。 */
@@ -155,7 +154,6 @@ export const AGENT_ICONS: Record<string, string> = {
   gemini: geminiCli,
   cline,
   'qwen-code': qwenCode,
-  'copilot-cli': githubCopilot,
   'trae-agent': trae,
   // pi:lobe-icons 无该品牌,AgentLogo 回退 π 字符
 };

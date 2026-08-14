@@ -3067,7 +3067,6 @@ pub fn adapters() -> &'static [Box<dyn ProviderAdapter>] {
                 Box::new(ClineProviderAdapter),
                 Box::new(PiProviderAdapter),
                 Box::new(UnsupportedProviderAdapter { id: "qwen-code" }),
-                Box::new(UnsupportedProviderAdapter { id: "copilot-cli" }),
                 Box::new(UnsupportedProviderAdapter { id: "trae-agent" }),
             ]
         })
@@ -4920,7 +4919,7 @@ mod tests {
             );
         }
         assert!(find_adapter("node").is_none());
-        assert_eq!(adapters().len(), 15);
+        assert_eq!(adapters().len(), 14);
         let supported: Vec<&str> = adapters()
             .iter()
             .filter(|a| a.supported())
@@ -4945,7 +4944,7 @@ mod tests {
         let bindings =
             std::collections::HashMap::from([("claude-code".to_string(), "p-anth".to_string())]);
         let plans = plan_all(home.path(), &providers, &bindings, &Default::default());
-        assert_eq!(plans.len(), 15);
+        assert_eq!(plans.len(), 14);
         let cc = plans.iter().find(|p| p.agent_id == "claude-code").unwrap();
         assert!(cc.error.is_some());
         let oc = plans.iter().find(|p| p.agent_id == "opencode").unwrap();

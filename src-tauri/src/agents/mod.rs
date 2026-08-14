@@ -163,14 +163,6 @@ static AGENTS: &[AgentDef] = &[
         depends_on: &[],
     },
     AgentDef {
-        id: "copilot-cli", label: "Copilot CLI", binary: "copilot",
-        kind: AgentKind::NativeCli,
-        install: InstallMethod::Npm { package: "@github/copilot", force: false },
-        check_probe: &["--version"], fallback_paths: &[],
-        docs_url: Some("https://docs.github.com/en/copilot/how-tos/copilot-cli"),
-        depends_on: &[],
-    },
-    AgentDef {
         // bytedance/trae-agent:不发 npm/PyPI,仅源码安装(clone + uv sync),
         // 故 DetectOnly。注意 Trae IDE 无 CLI,这里接的是开源 trae-agent。
         id: "trae-agent", label: "Trae Agent", binary: "trae-cli",
@@ -447,13 +439,13 @@ mod tests {
     use super::*;
 
     #[test]
-    fn registry_has_exactly_16_unique_entries() {
+    fn registry_has_exactly_15_unique_entries() {
         let ids: Vec<_> = agents().iter().map(|a| a.id).collect();
-        assert_eq!(ids.len(), 16);
+        assert_eq!(ids.len(), 15);
         let mut dedup = ids.clone();
         dedup.sort();
         dedup.dedup();
-        assert_eq!(dedup.len(), 16, "duplicate agent ids");
+        assert_eq!(dedup.len(), 15, "duplicate agent ids");
     }
 
     #[test]
@@ -461,7 +453,7 @@ mod tests {
         for id in [
             "node", "claude-code", "codex", "openclaw", "opencode", "codebuddy",
             "cursor-agent", "kimi", "qodercli", "hermes",
-            "gemini", "cline", "pi", "qwen-code", "copilot-cli", "trae-agent",
+            "gemini", "cline", "pi", "qwen-code", "trae-agent",
         ] {
             assert!(find_agent(id).is_some(), "missing agent: {}", id);
         }
