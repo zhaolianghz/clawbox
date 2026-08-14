@@ -360,6 +360,22 @@
       "cardUnknown": "Out of sync; ClawBox remembers {clawbox}.",
       "restore": "Restore to {name}",
       "keep": "Keep {name}"
+    },
+    "snapshots": {
+      "button": "Snapshots",
+      "loading": "Loading snapshots…",
+      "refresh": "Refresh",
+      "empty": "No snapshots yet",
+      "emptyHint": "Snapshots are taken automatically before every sync.",
+      "files": "{n} files",
+      "restore": "Restore",
+      "restoreConfirm": "Overwrite current config with this snapshot?",
+      "restoreConfirmBtn": "Restore",
+      "unrestorable": "Manual restore",
+      "unrestorableHint": "CLI-managed agent: no local files to restore, run the agent's own CLI",
+      "restored": "Restored {n} item(s)",
+      "clearedNote": "managed bookkeeping cleared",
+      "note": "Restoring recreates files exactly as they were at snapshot time (anything added later in those paths is removed) and clears the corresponding managed state so ClawBox shows them as unsynced."
     }
   },
   "monitor": {

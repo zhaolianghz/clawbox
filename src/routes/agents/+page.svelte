@@ -4,6 +4,7 @@
   import { agents_list, agent_install, type AgentStatus, path_env_status } from '../../lib/api/agents';
   import { checkLatestVersions, extractSemver, type LatestInfo } from '../../lib/api/latest';
   import { agent_sync_overview, type AgentSyncOverview, type SyncedItem } from '../../lib/api/providerSync';
+  import { snapshots_list, snapshots_restore, type SnapshotInfo } from '../../lib/api/snapshots';
   import AgentLogo from '../../lib/components/AgentLogo.svelte';
   import { providers, loadProviders } from '../../lib/stores/config';
   import {
@@ -418,8 +419,86 @@
       syncDetailId = null;
       return;
     }
+    snapDetailId = null; // 与快照面板互斥(同一行尾插槽)
     syncDetailId = id;
     void loadOverview();
+  }
+
+  // ---------- 快照历史内联展开(与同步详情同款:面板插在所点卡片所在行的行尾) ----------
+  let snapDetailId = $state<string | null>(null);
+  let snaps = $state<Record<string, SnapshotInfo[]>>({}); // agent_id -> 列表(倒序)
+  let snapsLoading = $state(false);
+  let snapsError = $state('');
+  let restoreConfirmId = $state<string | null>(null); // 待确认恢复的快照 id
+  let restoringId = $state<string | null>(null);
+  let restoreMsg = $state(''); // 最近一次恢复结果(成功摘要/失败原因)
+
+  const snapRowEnd = $derived.by(() => {
+    if (snapDetailId === null) return -1;
+    const idx = agents.findIndex((a) => a.id === snapDetailId);
+    if (idx < 0) return -1;
+    return Math.min(Math.floor(idx / gridCols) * gridCols + gridCols - 1, agents.length - 1);
+  });
+
+  async function loadSnaps(force = false) {
+    if (snapsLoading) return;
+    if (snapDetailId !== null && !force && snaps[snapDetailId]) return;
+    snapsLoading = true;
+    snapsError = '';
+    try {
+      const list = await snapshots_list();
+      snaps = {};
+      for (const s of list) {
+        (snaps[s.agent_id] ??= []).push(s);
+      }
+    } catch (e) {
+      snapsError = String(e);
+    } finally {
+      snapsLoading = false;
+    }
+  }
+
+  function toggleSnapDetail(id: string) {
+    restoreMsg = '';
+    restoreConfirmId = null;
+    if (snapDetailId === id) {
+      snapDetailId = null;
+      return;
+    }
+    syncDetailId = null; // 与同步详情互斥
+    snapDetailId = id;
+    void loadSnaps();
+  }
+
+  async function doRestore(agentId: string, snapId: string) {
+    if (restoringId) return;
+    restoringId = snapId;
+    restoreMsg = '';
+    try {
+      const r = await snapshots_restore(agentId, snapId);
+      restoreMsg = $_('agents.snapshots.restored', { values: { n: r.restored.length } })
+        + (r.cleared.length > 0 ? ' · ' + $_('agents.snapshots.clearedNote') : '');
+      restoreConfirmId = null;
+      await loadSnaps(true); // 恢复会产生 pre-restore 安全快照,刷新列表
+    } catch (e) {
+      restoreMsg = String(e);
+    } finally {
+      restoringId = null;
+    }
+  }
+
+  /** scope → 徽章文案(复用 syncDetail 的维度名) */
+  const SNAP_SCOPE_KEYS: Record<string, string> = {
+    provider: 'agents.syncDetail.providers',
+    fallback: 'agents.fallback.label',
+    mcp: 'agents.syncDetail.mcp',
+    skills: 'agents.syncDetail.skills',
+    memory: 'agents.syncDetail.memory',
+  };
+
+  function fmtTime(iso: string): string {
+    const d = new Date(iso);
+    return isNaN(d.getTime()) ? iso : d.toLocaleString();
   }
 
   /** 数据未加载时先渲染按钮(点击即触发加载);加载后仅 supported 的 agent 保留 */
@@ -658,6 +737,11 @@
                 onclick={() => toggleSyncDetail(a.id)}
               >{$_('agents.syncDetail.button')}</button>
             {/if}
+            <button
+              class="btn"
+              class:active={snapDetailId === a.id}
+              onclick={() => toggleSnapDetail(a.id)}
+            >{$_('agents.snapshots.button')}</button>
             {#if a.docs_url}
               <a class="docs-link" href={a.docs_url} target="_blank" rel="noreferrer">{$_('agents.docs')}</a>
             {/if}
@@ -697,6 +781,71 @@
                 {@render syncSection($_('agents.syncDetail.memory'), o.memory_supported, o.memory, o.memory_config_path, o.memory_error, false)}
                 <div class="sync-detail-foot">
                   <button class="btn" onclick={() => loadOverview(true)}>{$_('agents.syncDetail.refresh')}</button>
+                </div>
+              {/if}
+            {/if}
+          </div>
+        {/if}
+
+        <!-- 快照历史:与同步详情同款插槽;两者互斥,不会同时展开 -->
+        {#if i === snapRowEnd}
+          <div class="glass-card sync-detail">
+            <div class="sync-detail-title">
+              {agents.find((x) => x.id === snapDetailId)?.label} · {$_('agents.snapshots.button')}
+            </div>
+            {#if snapsLoading}
+              <div class="sync-loading"><span class="spinner small"></span> {$_('agents.snapshots.loading')}</div>
+            {:else if snapsError}
+              <pre class="install-error">{snapsError}</pre>
+              <div class="sync-detail-foot">
+                <button class="btn" onclick={() => loadSnaps(true)}>{$_('agents.snapshots.refresh')}</button>
+              </div>
+            {:else}
+              {@const list = snapDetailId !== null ? (snaps[snapDetailId] ?? []) : []}
+              {#if list.length === 0}
+                <p class="sync-empty">{$_('agents.snapshots.empty')}</p>
+                <p class="sync-muted">{$_('agents.snapshots.emptyHint')}</p>
+                <div class="sync-detail-foot">
+                  <button class="btn" onclick={() => loadSnaps(true)}>{$_('agents.snapshots.refresh')}</button>
+                </div>
+              {:else}
+                {#if restoreMsg}
+                  <p class="snap-msg">{restoreMsg}</p>
+                {/if}
+                <ul class="snap-list">
+                  {#each list as s (s.id)}
+                    <li class="snap-item">
+                      <span class="chip snap-scope" data-scope={s.scope}>
+                        {$_(SNAP_SCOPE_KEYS[s.scope] ?? 'agents.snapshots.button')}
+                      </span>
+                      <code class="snap-time" title={s.id}>{fmtTime(s.created_at)}</code>
+                      <span class="snap-files">{$_('agents.snapshots.files', { values: { n: s.files } })}</span>
+                      {#if !s.restorable}
+                        <span class="snap-unrestorable" title={$_('agents.snapshots.unrestorableHint')}>
+                          {$_('agents.snapshots.unrestorable')}
+                        </span>
+                      {/if}
+                      <span class="snap-actions">
+                        {#if restoreConfirmId === s.id}
+                          <span class="snap-confirm-text">{$_('agents.snapshots.restoreConfirm')}</span>
+                          <button class="btn danger" disabled={restoringId !== null} onclick={() => snapDetailId && doRestore(snapDetailId, s.id)}>
+                            {#if restoringId === s.id}<span class="spinner small"></span>{:else}{$_('agents.snapshots.restoreConfirmBtn')}{/if}
+                          </button>
+                          <button class="btn" disabled={restoringId !== null} onclick={() => (restoreConfirmId = null)}>
+                            {$_('agents.cancel')}
+                          </button>
+                        {:else if s.restorable}
+                          <button class="btn" disabled={restoringId !== null} onclick={() => (restoreConfirmId = s.id)}>
+                            {$_('agents.snapshots.restore')}
+                          </button>
+                        {/if}
+                      </span>
+                    </li>
+                  {/each}
+                </ul>
+                <p class="snap-note">{$_('agents.snapshots.note')}</p>
+                <div class="sync-detail-foot">
+                  <button class="btn" onclick={() => loadSnaps(true)}>{$_('agents.snapshots.refresh')}</button>
                 </div>
               {/if}
             {/if}
@@ -860,6 +1009,18 @@
   .sync-muted { font-size: 0.75rem; opacity: 0.5; margin: 0; }
   .sync-empty { margin: 0; font-size: 0.8rem; opacity: 0.75; }
   .sync-detail-foot { display: flex; justify-content: flex-end; }
+  .snap-list { list-style: none; margin: 0.5rem 0; padding: 0; display: flex; flex-direction: column; gap: 0.35rem; }
+  .snap-item { display: flex; align-items: center; gap: 0.6rem; font-size: 0.78rem; flex-wrap: wrap; }
+  .snap-scope { min-width: 3.5em; justify-content: center; }
+  .snap-scope[data-scope='provider'], .snap-scope[data-scope='fallback'] { border-color: var(--neon-cyan); }
+  .snap-time { font-size: 0.75rem; opacity: 0.85; }
+  .snap-files { font-size: 0.72rem; opacity: 0.6; font-variant-numeric: tabular-nums; }
+  .snap-unrestorable { font-size: 0.7rem; color: var(--danger, #f87171); border: 1px dashed currentColor;
+    padding: 0.1rem 0.4rem; border-radius: 999px; cursor: help; }
+  .snap-actions { margin-left: auto; display: inline-flex; gap: 0.4rem; align-items: center; }
+  .snap-confirm-text { font-size: 0.72rem; color: var(--danger, #f87171); }
+  .snap-msg { font-size: 0.78rem; color: var(--accent-teal); margin: 0.25rem 0; }
+  .snap-note { font-size: 0.7rem; opacity: 0.5; margin: 0.35rem 0 0; }
   .provider-bind { display: flex; align-items: center; gap: 0.5rem; }
   .bind-label { font-size: 0.75rem; opacity: 0.6; white-space: nowrap; }
   .bind-select {
