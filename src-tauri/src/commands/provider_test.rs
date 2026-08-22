@@ -88,22 +88,24 @@ pub fn parse_models(json: &serde_json::Value) -> Vec<String> {
         .collect()
 }
 
-#[tauri::command]
-pub async fn provider_test(
-    base_url: String,
-    api_key: String,
-    flavor: String,
+/// 连通性拨测核心:命令层与 doctor 体检共用。构建 models URL 并 GET,
+/// anthropic 404 时回退探测 /v1/messages。永不 Err(网络/HTTP 失败都
+/// 折进 `ok=false` 的结果里),只构建 client 失败才 Err。
+pub async fn test_endpoint(
+    base_url: &str,
+    api_key: &str,
+    flavor: &str,
 ) -> Result<ProviderTestResult, String> {
-    let url = build_models_url(&base_url, &flavor);
+    let url = build_models_url(base_url, flavor);
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(8))
         .build()
         .map_err(|e| format!("Failed to build HTTP client: {}", e))?;
 
-    let request = match flavor.as_str() {
+    let request = match flavor {
         "anthropic" => client
             .get(&url)
-            .header("x-api-key", &api_key)
+            .header("x-api-key", api_key)
             .header("anthropic-version", "2023-06-01"),
         _ => client
             .get(&url)
@@ -135,7 +137,7 @@ pub async fn provider_test(
         // back to a reachability probe against the messages endpoint before
         // reporting failure.
         if flavor == "anthropic" && status.as_u16() == 404 {
-            return Ok(probe_anthropic_messages(&client, &base_url, &api_key, start).await);
+            return Ok(probe_anthropic_messages(&client, base_url, api_key, start).await);
         }
         let error = match status.as_u16() {
             401 | 403 => "Invalid API key or insufficient permissions".to_string(),
@@ -156,6 +158,15 @@ pub async fn provider_test(
         models,
         error: None,
     })
+}
+
+#[tauri::command]
+pub async fn provider_test(
+    base_url: String,
+    api_key: String,
+    flavor: String,
+) -> Result<ProviderTestResult, String> {
+    test_endpoint(&base_url, &api_key, &flavor).await
 }
 
 /// Reachability fallback for Anthropic-compatible gateways without `/v1/models`.

@@ -128,6 +128,130 @@ pub fn local_checks(home: &Path, config: &Config, statuses: &[AgentStatus]) -> V
     ]
 }
 
+/// Provider 连通性:每个启用 provider 的已配端点(anthropic/openai 各一)
+/// 并发拨测(单项 8s 超时在 `test_endpoint` 内)。离线(全部网络错误)时
+/// 整体降级 info;无已配端点 → info;任一真失败 → error。
+/// 真实网络,不单测,保持薄。
+pub async fn network_checks(config: &Config) -> Vec<DoctorCheck> {
+    // (provider 名, 端点, key, flavor)
+    let mut targets: Vec<(String, String, String, String)> = Vec::new();
+    for p in config.providers.iter().filter(|p| p.enabled) {
+        if !p.anthropic_base_url.trim().is_empty() {
+            targets.push((
+                p.name.clone(),
+                p.anthropic_base_url.clone(),
+                p.api_key.clone(),
+                "anthropic".into(),
+            ));
+        }
+        if !p.openai_base_url.trim().is_empty() {
+            targets.push((
+                p.name.clone(),
+                p.openai_base_url.clone(),
+                p.api_key.clone(),
+                "openai".into(),
+            ));
+        }
+    }
+    if targets.is_empty() {
+        return vec![DoctorCheck::new(
+            "providers",
+            "Provider connectivity",
+            "info",
+            "no enabled provider endpoints configured",
+        )];
+    }
+
+    let tasks: Vec<_> = targets
+        .iter()
+        .map(|(name, url, key, flavor)| {
+            let (name, url, key, flavor) = (name.clone(), url.clone(), key.clone(), flavor.clone());
+            tokio::spawn(async move {
+                let r = crate::commands::provider_test::test_endpoint(&url, &key, &flavor)
+                    .await
+                    .unwrap_or_else(|e| ProviderTestResult {
+                        ok: false,
+                        latency_ms: 0,
+                        models: vec![],
+                        error: Some(e),
+                    });
+                (name, url, flavor, r)
+            })
+        })
+        .collect();
+    let mut ok_lines = Vec::new();
+    let mut fail_lines = Vec::new();
+    let mut network_error = false;
+    let mut real_failure = false;
+    for t in tasks {
+        let Ok((name, url, flavor, r)) = t.await else { continue };
+        let line = format!("{} · {}: {} ({}ms)", name, flavor, url, r.latency_ms);
+        if r.ok {
+            ok_lines.push(line);
+        } else {
+            let err = r.error.unwrap_or_default();
+            let is_net = err.starts_with("Network error") || err.starts_with("Request timed out");
+            network_error |= is_net;
+            real_failure |= !is_net;
+            fail_lines.push(format!("{} — {}", line, err));
+        }
+    }
+
+    let check = if real_failure {
+        DoctorCheck::new(
+            "providers",
+            "Provider connectivity",
+            "error",
+            fail_lines.join("\n"),
+        )
+        .with_hint("check Base URL / API key; retest on the Providers page")
+    } else if network_error {
+        // 全部网络错误 → 离线,整体降级跳过
+        DoctorCheck::new(
+            "providers",
+            "Provider connectivity",
+            "info",
+            "network unreachable, skipped",
+        )
+    } else {
+        DoctorCheck::new("providers", "Provider connectivity", "ok", ok_lines.join("\n"))
+    };
+    vec![check]
+}
+
+/// 后端网关:已安装后端的 gateway_status Err → warn;无已安装后端 →
+/// info。真实 CLI 探测,不单测,保持薄。
+pub fn backend_checks() -> Vec<DoctorCheck> {
+    let installed: Vec<_> = crate::backends::backends()
+        .iter()
+        .filter(|b| b.is_installed())
+        .collect();
+    if installed.is_empty() {
+        return vec![DoctorCheck::new(
+            "gateways",
+            "Backend gateways",
+            "info",
+            "no backends installed",
+        )];
+    }
+    let mut errors = Vec::new();
+    let mut ok_lines = Vec::new();
+    for b in installed {
+        match b.gateway_status() {
+            Ok(s) => ok_lines.push(format!("{}: {}", b.display_name(), s.status)),
+            Err(e) => errors.push(format!("{}: {}", b.display_name(), e)),
+        }
+    }
+    if errors.is_empty() {
+        vec![DoctorCheck::new("gateways", "Backend gateways", "ok", ok_lines.join(", "))]
+    } else {
+        vec![DoctorCheck::new("gateways", "Backend gateways", "warn", errors.join("\n"))
+            .with_hint("the openclaw/hermes gateway is not running or its CLI failed")]
+    }
+}
+
+use crate::commands::provider_test::ProviderTestResult;
+
 #[cfg(test)]
 mod tests {
     use super::*;

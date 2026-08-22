@@ -36,6 +36,7 @@ pub fn run() {
             commands::config::config_providers_get,
             commands::config::config_providers_set,
             commands::provider_test::provider_test,
+            commands::doctor::doctor_run,
             commands::cc_switch::cc_switch_import_preview,
             commands::transfer::transfer_export,
             commands::transfer::transfer_import_preview,
