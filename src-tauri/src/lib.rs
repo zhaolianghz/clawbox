@@ -1,5 +1,6 @@
 pub mod agents;
 pub mod backends;
+pub mod doctor;
 pub mod path_env;
 pub mod proc;
 pub mod sync;
