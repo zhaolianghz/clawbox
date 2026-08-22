@@ -488,6 +488,7 @@
       "inLibraryShort": "已收录",
       "manage": "管理",
       "customInstall": "从 URL 安装",
+      "installFromGithub": "从 GitHub 仓库安装",
       "customHint": "任意含 SKILL.md 目录的公开 Git 仓库",
       "close": "关闭"
     },

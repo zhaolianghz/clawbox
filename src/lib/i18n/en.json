@@ -488,6 +488,7 @@
       "inLibraryShort": "in library",
       "manage": "Manage",
       "customInstall": "Install from URL",
+      "installFromGithub": "Install from GitHub",
       "customHint": "Any public Git repo containing SKILL.md folders",
       "close": "Close"
     },

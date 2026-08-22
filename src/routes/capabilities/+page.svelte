@@ -190,10 +190,11 @@
       );
     })
   );
-  /** 市场卡「安装」:填入 repo + 发现 + 展开发现列表(installOpen 在市场分支渲染) */
+  /** 市场卡「安装」:填入 repo + 切到「我的」+ 展开发现面板 */
   function installFromMarket(src: SkillSourceEntry) {
     repoInput = src.repo;
     installOpen = true;
+    skillsView = 'mine';
     void discoverRepo();
   }
 
@@ -775,78 +776,20 @@
                 </div>
               </div>
             {/each}
-            <!-- 自定义 URL 安装 -->
-            <div class="glass-card skill-card market-card">
-              <div class="skill-card-title">
-                <span class="skill-card-name">{$_('capabilities.skillsSync.customInstall')}</span>
-              </div>
-              <p class="skill-card-desc">{$_('capabilities.skillsSync.customHint')}</p>
-              <div class="repo-row">
-                <input class="text-input repo-input" type="text" placeholder={$_('capabilities.skillsSync.repoPlaceholder')} bind:value={repoInput} onkeydown={(e) => { if (e.key === 'Enter') { e.preventDefault(); installOpen = true; void discoverRepo(); } }} />
-                <button class="action-btn wide primary" onclick={() => { installOpen = true; void discoverRepo(); }} disabled={discovering || installingSkills || !repoInput.trim()}>
-                  {#if discovering}<span class="spinner small"></span>{/if}
-                  {$_('capabilities.skillsSync.discover')}
-                </button>
-              </div>
-            </div>
           </div>
-
-          <!-- 发现列表(点市场卡或自定义发现后展开) -->
-          {#if installOpen}
-            <div class="scan-panel">
-              <div class="scan-head">
-                <span class="scan-title">{repoInput}</span>
-                <button class="action-btn wide" onclick={() => { installOpen = false; discovery = null; }}>{$_('capabilities.skillsSync.close')}</button>
-              </div>
-              {#if discovering}
-                <div class="sync-loading"><span class="spinner small"></span> {$_('capabilities.skillsSync.discovering')}</div>
-              {/if}
-              {#if discoverError}
-                <p class="error-line">{discoverError}</p>
-              {/if}
-              {#if discovery}
-                {#if discovery.skills.length === 0}
-                  <p class="empty">{$_('capabilities.skillsSync.noSkillsInRepo')}</p>
-                {:else}
-                  {@const selectableSkills = discovery.skills.filter((s) => !s.in_library && !installOutcomes[s.name]?.ok)}
-                  {@const allPicked = selectableSkills.length > 0 && selectableSkills.every((s) => installChecked[s.subdir])}
-                  <label class="scan-row select-all-row">
-                    <input type="checkbox" disabled={installingSkills || selectableSkills.length === 0} checked={allPicked} onchange={() => { const next = { ...installChecked }; for (const s of selectableSkills) next[s.subdir] = !allPicked; installChecked = next; }} />
-                    <span class="scan-name">{$_('capabilities.skillsSync.selectAll')}</span>
-                    <span class="scan-desc">{selectableSkills.length}</span>
-                  </label>
-                  {#each discovery.skills as s (s.subdir)}
-                    {@const outcome = installOutcomes[s.name]}
-                    <label class="scan-row" class:muted-row={s.in_library}>
-                      <input type="checkbox" disabled={s.in_library || installingSkills || outcome?.ok === true} checked={!s.in_library && !outcome?.ok && !!installChecked[s.subdir]} onchange={(e) => (installChecked = { ...installChecked, [s.subdir]: e.currentTarget.checked })} />
-                      <span class="scan-name">{s.name}</span>
-                      {#if s.description}<span class="scan-desc" title={s.description}>{s.description}</span>{/if}
-                      {#if s.in_library}<span class="relink-badge">{$_('capabilities.skillsSync.alreadyInstalled')}</span>{/if}
-                      {#if outcome}
-                        {#if outcome.ok}<span class="adopt-ok">✓ {$_('capabilities.skillsSync.installedOk')}</span>{:else}<span class="adopt-fail">✗ {outcome.detail}</span>{/if}
-                      {/if}
-                    </label>
-                  {/each}
-                  <div class="scan-foot">
-                    <button class="action-btn wide primary" onclick={installSelected} disabled={installCheckedCount === 0 || installingSkills}>
-                      {#if installingSkills}<span class="spinner small"></span>{/if}
-                      {$_('capabilities.skillsSync.installSelected', { values: { count: installCheckedCount } })}
-                    </button>
-                  </div>
-                {/if}
-              {/if}
-              <p class="security-note">{$_('capabilities.skillsSync.securityNote')}</p>
-            </div>
-          {/if}
         </div>
       {:else}
       <div class="skills-sync">
-        <!-- 工具条:导入 / 扫描收编 / 同步到 Agent -->
+        <!-- 工具条:导入 / GitHub 仓库 / 扫描收编 / 检查更新 / 同步到 Agent -->
         <div class="skills-toolbar">
           <span class="skills-hint">{$_('capabilities.skillsSync.libraryHint')}</span>
           <button class="action-btn wide" onclick={importSkill} disabled={importing}>
             {#if importing}<span class="spinner small"></span>{/if}
             {$_('capabilities.skillsSync.import')}
+          </button>
+          <button class="action-btn wide" class:on={installOpen} onclick={() => { installOpen = !installOpen; if (installOpen) void discoverRepo(); }} disabled={discovering || !repoInput.trim()}>
+            {#if discovering}<span class="spinner small"></span>{/if}
+            {$_('capabilities.skillsSync.installFromGithub')}
           </button>
           <button class="action-btn wide" class:on={scanOpen} onclick={toggleScan} disabled={adopting}>
             {$_('capabilities.skillsSync.scan')}
@@ -859,6 +802,61 @@
             {$_('capabilities.skillsSync.syncToAgents')}
           </button>
         </div>
+
+        <!-- GitHub 仓库输入 + 发现列表(工具条按钮切换) -->
+        <div class="repo-row">
+          <input class="text-input repo-input" type="text" placeholder={$_('capabilities.skillsSync.repoPlaceholder')} bind:value={repoInput} onkeydown={(e) => { if (e.key === 'Enter') { e.preventDefault(); installOpen = true; void discoverRepo(); } }} />
+          <button class="action-btn wide primary" onclick={() => { installOpen = true; void discoverRepo(); }} disabled={discovering || installingSkills || !repoInput.trim()}>
+            {#if discovering}<span class="spinner small"></span>{/if}
+            {$_('capabilities.skillsSync.discover')}
+          </button>
+        </div>
+        {#if installOpen}
+          <div class="scan-panel">
+            <div class="scan-head">
+              <span class="scan-title">{repoInput}</span>
+              <button class="action-btn wide" onclick={() => { installOpen = false; discovery = null; }}>{$_('capabilities.skillsSync.close')}</button>
+            </div>
+            {#if discovering}
+              <div class="sync-loading"><span class="spinner small"></span> {$_('capabilities.skillsSync.discovering')}</div>
+            {/if}
+            {#if discoverError}
+              <p class="error-line">{discoverError}</p>
+            {/if}
+            {#if discovery}
+              {#if discovery.skills.length === 0}
+                <p class="empty">{$_('capabilities.skillsSync.noSkillsInRepo')}</p>
+              {:else}
+                {@const selectableSkills = discovery.skills.filter((s) => !s.in_library && !installOutcomes[s.name]?.ok)}
+                {@const allPicked = selectableSkills.length > 0 && selectableSkills.every((s) => installChecked[s.subdir])}
+                <label class="scan-row select-all-row">
+                  <input type="checkbox" disabled={installingSkills || selectableSkills.length === 0} checked={allPicked} onchange={() => { const next = { ...installChecked }; for (const s of selectableSkills) next[s.subdir] = !allPicked; installChecked = next; }} />
+                  <span class="scan-name">{$_('capabilities.skillsSync.selectAll')}</span>
+                  <span class="scan-desc">{selectableSkills.length}</span>
+                </label>
+                {#each discovery.skills as s (s.subdir)}
+                  {@const outcome = installOutcomes[s.name]}
+                  <label class="scan-row" class:muted-row={s.in_library}>
+                    <input type="checkbox" disabled={s.in_library || installingSkills || outcome?.ok === true} checked={!s.in_library && !outcome?.ok && !!installChecked[s.subdir]} onchange={(e) => (installChecked = { ...installChecked, [s.subdir]: e.currentTarget.checked })} />
+                    <span class="scan-name">{s.name}</span>
+                    {#if s.description}<span class="scan-desc" title={s.description}>{s.description}</span>{/if}
+                    {#if s.in_library}<span class="relink-badge">{$_('capabilities.skillsSync.alreadyInstalled')}</span>{/if}
+                    {#if outcome}
+                      {#if outcome.ok}<span class="adopt-ok">✓ {$_('capabilities.skillsSync.installedOk')}</span>{:else}<span class="adopt-fail">✗ {outcome.detail}</span>{/if}
+                    {/if}
+                  </label>
+                {/each}
+                <div class="scan-foot">
+                  <button class="action-btn wide primary" onclick={installSelected} disabled={installCheckedCount === 0 || installingSkills}>
+                    {#if installingSkills}<span class="spinner small"></span>{/if}
+                    {$_('capabilities.skillsSync.installSelected', { values: { count: installCheckedCount } })}
+                  </button>
+                </div>
+              {/if}
+            {/if}
+            <p class="security-note">{$_('capabilities.skillsSync.securityNote')}</p>
+          </div>
+        {/if}
         {#if importError}
           <p class="error-line">{importError}</p>
         {/if}
