@@ -376,6 +376,39 @@
       "restored": "已恢复 {n} 项",
       "clearedNote": "已清除托管记账",
       "note": "恢复会把相关路径精确重建为快照时刻的状态（之后新增的内容会被移除），并清除对应的托管记账，恢复后这些项会显示为未同步。"
+    },
+    "doctor": {
+      "title": "一键体检",
+      "run": "体检",
+      "running": "体检中…",
+      "loading": "正在体检…",
+      "rerun": "重新体检",
+      "checks": {
+        "path": {
+          "title": "PATH",
+          "hint": "已安装的 agent 可能被误报未安装；请检查 shell 启动文件"
+        },
+        "deps": {
+          "title": "运行时依赖",
+          "hint": "安装缺失的运行时后刷新"
+        },
+        "orphans": {
+          "title": "服务商绑定",
+          "hint": "安装该 agent 或在 Agents 页改绑"
+        },
+        "drift": {
+          "title": "配置漂移",
+          "hint": "可在 Agents 页重新同步（有快照兜底）"
+        },
+        "providers": {
+          "title": "服务商连通性",
+          "hint": "检查 Base URL / API Key，可在服务商页重新测试"
+        },
+        "gateways": {
+          "title": "后端网关",
+          "hint": "openclaw/hermes 网关未运行或 CLI 异常"
+        }
+      }
     }
   },
   "monitor": {

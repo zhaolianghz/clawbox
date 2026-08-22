@@ -376,6 +376,39 @@
       "restored": "Restored {n} item(s)",
       "clearedNote": "managed bookkeeping cleared",
       "note": "Restoring recreates files exactly as they were at snapshot time (anything added later in those paths is removed) and clears the corresponding managed state so ClawBox shows them as unsynced."
+    },
+    "doctor": {
+      "title": "Health check",
+      "run": "Health check",
+      "running": "Checking…",
+      "loading": "Running checks…",
+      "rerun": "Re-run checks",
+      "checks": {
+        "path": {
+          "title": "PATH",
+          "hint": "Installed agents may be reported missing; check your shell startup files"
+        },
+        "deps": {
+          "title": "Runtime dependencies",
+          "hint": "Install the missing runtimes, then refresh"
+        },
+        "orphans": {
+          "title": "Provider bindings",
+          "hint": "Install the agent or rebind on the Agents page"
+        },
+        "drift": {
+          "title": "Config drift",
+          "hint": "Re-sync on the Agents page (snapshots are taken automatically)"
+        },
+        "providers": {
+          "title": "Provider connectivity",
+          "hint": "Check Base URL / API key; retest on the Providers page"
+        },
+        "gateways": {
+          "title": "Backend gateways",
+          "hint": "The openclaw/hermes gateway is not running or its CLI failed"
+        }
+      }
     }
   },
   "monitor": {

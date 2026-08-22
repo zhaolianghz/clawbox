@@ -5,6 +5,7 @@
   import { checkLatestVersions, extractSemver, type LatestInfo } from '../../lib/api/latest';
   import { agent_sync_overview, type AgentSyncOverview, type SyncedItem } from '../../lib/api/providerSync';
   import { snapshots_list, snapshots_restore, type SnapshotInfo } from '../../lib/api/snapshots';
+  import { doctor_run, type DoctorReport, type CheckStatus } from '../../lib/api/doctor';
   import AgentLogo from '../../lib/components/AgentLogo.svelte';
   import { providers, loadProviders } from '../../lib/stores/config';
   import {
@@ -30,6 +31,26 @@
   let justUpgraded = $state<Record<string, boolean>>({}); // 升级成功后版本号短暂高亮
   // PATH 解析是否降级(shell 超时→备用目录)。降级时顶部提示:已装 agent 可能误报未安装(GH#3)。
   let pathDegraded = $state(false);
+
+  // 一键体检:顶部内联报告面板,只读,重新体检按钮复用
+  let doctorReport = $state<DoctorReport | null>(null);
+  let doctorRunning = $state(false);
+  let doctorError = $state<string | null>(null);
+
+  const DOCTOR_ICONS: Record<CheckStatus, string> = { ok: '✓', warn: '⚠', error: '✕', info: 'ℹ' };
+
+  async function runDoctor() {
+    if (doctorRunning) return;
+    doctorRunning = true;
+    doctorError = null;
+    try {
+      doctorReport = await doctor_run();
+    } catch (e) {
+      doctorError = String(e);
+    } finally {
+      doctorRunning = false;
+    }
+  }
 
   // 上次探测结果缓存:打开页面先渲染旧状态,探测(最慢的 CLI ~2s)后台跑完再覆盖
   const STATUS_CACHE_KEY = 'clawbox.agents.status';
@@ -525,6 +546,10 @@
       {#if checkingLatest}<span class="spinner small"></span>{/if}
       {$_('agents.checkUpdates')}
     </button>
+    <button class="refresh-btn" onclick={runDoctor} disabled={doctorRunning}>
+      {#if doctorRunning}<span class="spinner small"></span>{/if}
+      {$_(doctorRunning ? 'agents.doctor.running' : 'agents.doctor.run')}
+    </button>
     <button class="refresh-btn" onclick={refresh} disabled={probing}>
       {#if probing}<span class="spinner small"></span>{/if}
       {$_('agents.refresh')}
@@ -534,6 +559,43 @@
   {#if isLoading && agents.length === 0}
     <div class="loading glass-card"><span class="spinner"></span> {$_('agents.loading')}</div>
   {:else}
+    {#if doctorReport || doctorRunning || doctorError}
+      <div class="doctor-panel glass-card">
+        <div class="doctor-head">
+          <strong>{$_('agents.doctor.title')}</strong>
+          {#if doctorReport}<span class="doctor-ran-at">{doctorReport.ran_at}</span>{/if}
+        </div>
+        {#if doctorRunning && !doctorReport}
+          <div class="doctor-loading"><span class="spinner small"></span> {$_('agents.doctor.loading')}</div>
+        {:else if doctorError}
+          <div class="doctor-item error">
+            <span class="doctor-icon" aria-hidden="true">✕</span>
+            <div class="doctor-body"><div class="doctor-line">{doctorError}</div></div>
+          </div>
+        {:else if doctorReport}
+          {#each doctorReport.checks as c (c.id)}
+            <div class="doctor-item {c.status}">
+              <span class="doctor-icon" aria-hidden="true">{DOCTOR_ICONS[c.status]}</span>
+              <div class="doctor-body">
+                <div class="doctor-line">
+                  <strong>{$_(`agents.doctor.checks.${c.id}.title`)}</strong>
+                  {#if c.detail}<span class="doctor-detail">{c.detail}</span>{/if}
+                </div>
+                {#if c.hint}
+                  <div class="doctor-hint">{$_(`agents.doctor.checks.${c.id}.hint`)}</div>
+                {/if}
+              </div>
+            </div>
+          {/each}
+        {/if}
+        <div class="doctor-actions">
+          <button class="btn primary" onclick={runDoctor} disabled={doctorRunning}>
+            {#if doctorRunning}<span class="spinner small"></span>{/if}
+            {$_('agents.doctor.rerun')}
+          </button>
+        </div>
+      </div>
+    {/if}
     {#if pathDegraded}
       <div class="path-warn glass-card">
         <span class="path-warn-icon" aria-hidden="true">⚠</span>
@@ -959,6 +1021,28 @@
   .path-warn-icon { font-size: 1rem; line-height: 1.4; }
   .path-warn-text { flex: 1; font-size: 0.8rem; line-height: 1.45; }
   .path-warn-text strong { display: block; margin-bottom: 0.15rem; }
+  /* 一键体检报告:内联面板,按 status 着色图标与左边框 */
+  .doctor-panel { display: flex; flex-direction: column; gap: 0.5rem; padding: 0.7rem 0.9rem; }
+  .doctor-head { display: flex; align-items: baseline; gap: 0.6rem; font-size: 0.85rem; }
+  .doctor-ran-at { color: var(--text-dim, inherit); opacity: 0.6; font-size: 0.7rem; }
+  .doctor-loading { display: flex; align-items: center; gap: 0.5rem; font-size: 0.8rem; opacity: 0.8; }
+  .doctor-item { display: flex; align-items: flex-start; gap: 0.6rem; padding: 0.35rem 0.6rem;
+    border-radius: 7px; border-left: 3px solid transparent; }
+  .doctor-item.ok { border-left-color: #34d399; }
+  .doctor-item.warn { border-left-color: #facc15; }
+  .doctor-item.error { border-left-color: #f87171; }
+  .doctor-item.info { border-left-color: #60a5fa; }
+  .doctor-item.ok .doctor-icon { color: #34d399; }
+  .doctor-item.warn .doctor-icon { color: #facc15; }
+  .doctor-item.error .doctor-icon { color: #f87171; }
+  .doctor-item.info .doctor-icon { color: #60a5fa; }
+  .doctor-icon { flex-shrink: 0; width: 1.1rem; text-align: center; line-height: 1.4; }
+  .doctor-body { flex: 1; min-width: 0; font-size: 0.78rem; line-height: 1.45; }
+  .doctor-line { display: flex; align-items: baseline; gap: 0.5rem; flex-wrap: wrap; }
+  .doctor-line strong { flex-shrink: 0; }
+  .doctor-detail { white-space: pre-line; word-break: break-word; opacity: 0.85; }
+  .doctor-hint { margin-top: 0.1rem; opacity: 0.6; font-size: 0.72rem; }
+  .doctor-actions { display: flex; justify-content: flex-end; }
   .drift-banner {
     display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap;
     padding: 0.5rem 0.7rem; border-radius: 7px; margin-bottom: 0.2rem;
