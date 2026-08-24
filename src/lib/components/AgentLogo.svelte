@@ -20,6 +20,7 @@
     pi: { bg: 'rgba(251, 191, 36, 0.16)', fg: '#fbbf24', initial: 'π' },
     'qwen-code': { bg: 'rgba(97, 92, 237, 0.2)', fg: '#8b87ff', initial: 'Q' },
     'trae-agent': { bg: 'rgba(240, 68, 86, 0.18)', fg: '#f87171', initial: 'T' },
+    dsh: { bg: 'rgba(61, 106, 255, 0.18)', fg: '#7aa2ff', initial: 'D' },
   };
 
   const brand = $derived(

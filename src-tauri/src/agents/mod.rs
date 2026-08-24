@@ -172,6 +172,17 @@ static AGENTS: &[AgentDef] = &[
         docs_url: Some("https://github.com/bytedance/trae-agent"),
         depends_on: &[],
     },
+    AgentDef {
+        // DeepSeek Harness(dsh):一切皆插件的 agent harness;Web UI 从
+        // `npx @deepseek-ai/dsh web` 启动,服务商配置在 ~/.dsh/settings.yaml
+        // (llm-pi-ai.providers)+ ~/.dsh/.credentials.yaml(refs)。
+        id: "dsh", label: "DeepSeek Harness", binary: "dsh",
+        kind: AgentKind::NativeCli,
+        install: InstallMethod::Npm { package: "@deepseek-ai/dsh", force: false },
+        check_probe: &["--version"], fallback_paths: &[],
+        docs_url: Some("https://github.com/deepseek-ai/deepseek-harness"),
+        depends_on: &["node"],
+    },
 ];
 
 pub fn agents() -> &'static [AgentDef] {
@@ -441,11 +452,11 @@ mod tests {
     #[test]
     fn registry_has_exactly_15_unique_entries() {
         let ids: Vec<_> = agents().iter().map(|a| a.id).collect();
-        assert_eq!(ids.len(), 15);
+        assert_eq!(ids.len(), 16);
         let mut dedup = ids.clone();
         dedup.sort();
         dedup.dedup();
-        assert_eq!(dedup.len(), 15, "duplicate agent ids");
+        assert_eq!(dedup.len(), 16, "duplicate agent ids");
     }
 
     #[test]

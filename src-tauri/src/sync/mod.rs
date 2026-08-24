@@ -147,6 +147,7 @@ pub fn adapters() -> &'static [Box<dyn ConfigAdapter>] {
                 Box::new(json_file::qwen_code()),
                 // pi 设计上不支持 MCP(官方:build CLI tools with READMEs)。
                 Box::new(UnsupportedAdapter { id: "pi" }),
+                Box::new(UnsupportedAdapter { id: "dsh" }),
                 Box::new(UnsupportedAdapter { id: "trae-agent" }),
             ]
         })
@@ -414,7 +415,7 @@ mod tests {
         }
         assert!(find_adapter("node").is_none());
         // 14 = 15 registry entries minus node.
-        assert_eq!(adapters().len(), 14);
+        assert_eq!(adapters().len(), 15);
     }
 
     #[test]

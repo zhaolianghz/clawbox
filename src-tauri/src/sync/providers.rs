@@ -3007,6 +3007,362 @@ impl ProviderAdapter for KimiProviderAdapter {
     }
 }
 
+// ---- dsh(DeepSeek Harness):~/.dsh/settings.yaml + .credentials.yaml ----
+//
+// dsh 的自定义服务商走 settings.yaml 的 llm-pi-ai.providers.<route>
+// (docs/user/guide/providers.md,联网核实 2026-08-24):{apiKeyEnv(凭据引用,
+// 即环境变量名), api(协议), baseURL, models: [{id}]}。key 不落在
+// settings 里,而是存 ~/.dsh/.credentials.yaml 的 refs 节(ref → 明文);
+// dsh 要求该文件 0600,否则直接拒读。api 按命中槽定协议:Anthropic 槽
+// → anthropic-messages,OpenAI 槽 → openai-completions(Anthropic 优先)。
+// 解绑:删我们的 route 与 refs 键;其余用户配置一律不动。
+
+pub struct DshProviderAdapter;
+
+const DSH_SLOTS: [Slot; 2] = [Slot::Anthropic, Slot::Openai];
+const DSH_MISSING: &str = "No endpoint configured";
+/// settings.yaml 里我们占用的路由键(dsh 路由键永久,固定名便于 remove)。
+const DSH_ROUTE: &str = "clawbox";
+/// 凭据引用名(环境变量名语法 [A-Za-z_][A-Za-z0-9_]*,且避开常见真名)。
+const DSH_KEY_REF: &str = "CLAWBOX_DSH_API_KEY";
+
+impl DshProviderAdapter {
+    fn dsh_dir(home: &Path) -> PathBuf {
+        home.join(".dsh")
+    }
+
+    fn settings_path(home: &Path) -> PathBuf {
+        Self::dsh_dir(home).join("settings.yaml")
+    }
+
+    fn credentials_path(home: &Path) -> PathBuf {
+        Self::dsh_dir(home).join(".credentials.yaml")
+    }
+
+    fn read_yaml(path: &Path) -> Result<serde_yaml::Value, String> {
+        if !path.exists() {
+            return Ok(serde_yaml::Value::Mapping(serde_yaml::Mapping::new()));
+        }
+        let content = std::fs::read_to_string(path)
+            .map_err(|e| format!("failed to read {}: {}", path.display(), e))?;
+        serde_yaml::from_str(&content)
+            .map_err(|e| format!("failed to parse {}: {}", path.display(), e))
+    }
+
+    fn write_yaml(path: &Path, doc: &serde_yaml::Value) -> Result<(), String> {
+        if let Some(dir) = path.parent() {
+            std::fs::create_dir_all(dir)
+                .map_err(|e| format!("failed to create {}: {}", dir.display(), e))?;
+        }
+        // credentials 文件必须 0600(dsh 拒读 group/other 可读的文件)。
+        #[cfg(unix)]
+        if path.file_name().and_then(|n| n.to_str()) == Some(".credentials.yaml") {
+            use std::os::unix::fs::PermissionsExt;
+            let _ = std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600));
+        }
+        let text = serde_yaml::to_string(doc)
+            .map_err(|e| format!("failed to serialize {}: {}", path.display(), e))?;
+        std::fs::write(path, text).map_err(|e| format!("failed to write {}: {}", path.display(), e))?;
+        #[cfg(unix)]
+        if path.file_name().and_then(|n| n.to_str()) == Some(".credentials.yaml") {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))
+                .map_err(|e| format!("failed to chmod {}: {}", path.display(), e))?;
+        }
+        Ok(())
+    }
+
+    /// settings.yaml 里我们的 route 节点(不存在 = None)。
+    fn our_route(doc: &serde_yaml::Value) -> Option<&serde_yaml::Value> {
+        doc.get("llm-pi-ai")
+            .and_then(|v| v.get("providers"))
+            .and_then(|v| v.get(DSH_ROUTE))
+    }
+
+    /// credentials refs 节里我们的 key(空串 = 未配置;dsh 空值视为缺)。
+    fn our_key(doc: &serde_yaml::Value) -> String {
+        doc.get("refs")
+            .and_then(|v| v.get(DSH_KEY_REF))
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .trim()
+            .to_string()
+    }
+
+    /// 模型目录:models 优先,空则 default_model 兀底;都空 = None(dsh
+    /// 自定义服务商要求至少一个模型,由 plan/apply 以 skip 拒绝)。
+    fn model_ids(spec: &ProviderSpec) -> Vec<String> {
+        let mut ids: Vec<String> = spec
+            .models
+            .iter()
+            .map(|m| m.trim().to_string())
+            .filter(|m| !m.is_empty())
+            .collect();
+        let dm = spec.default_model.trim();
+        if ids.is_empty() && !dm.is_empty() {
+            ids.push(dm.to_string());
+        }
+        ids
+    }
+
+    fn api_of(slot: Slot) -> &'static str {
+        match slot {
+            Slot::Anthropic => "anthropic-messages",
+            Slot::Openai => "openai-completions",
+        }
+    }
+
+    fn detail(spec: &ProviderSpec, url: &str) -> String {
+        format!(
+            "baseURL={} · api={} · models={}",
+            url,
+            "auto",
+            Self::model_ids(spec).join(",")
+        )
+    }
+
+    /// 期望的 route 节点(不含 key;key 在 credentials)。
+    fn desired_route(spec: &ProviderSpec, url: &str, slot: Slot) -> serde_yaml::Value {
+        let mut m = serde_yaml::Mapping::new();
+        m.insert(ystr("apiKeyEnv"), ystr(DSH_KEY_REF));
+        m.insert(ystr("api"), ystr(Self::api_of(slot)));
+        m.insert(ystr("baseURL"), ystr(url));
+        m.insert(
+            ystr("models"),
+            serde_yaml::Value::Sequence(
+                Self::model_ids(spec)
+                    .into_iter()
+                    .map(|id| {
+                        let mut mm = serde_yaml::Mapping::new();
+                        mm.insert(ystr("id"), ystr(&id));
+                        serde_yaml::Value::Mapping(mm)
+                    })
+                    .collect(),
+            ),
+        );
+        serde_yaml::Value::Mapping(m)
+    }
+
+    /// route 节点的等价比较投影(只看我们下发的四个键)。
+    fn route_projection(v: &serde_yaml::Value) -> serde_yaml::Value {
+        let pick = |k: &str| v.get(k).cloned().unwrap_or(serde_yaml::Value::Null);
+        let mut m = serde_yaml::Mapping::new();
+        m.insert(ystr("apiKeyEnv"), pick("apiKeyEnv"));
+        m.insert(ystr("api"), pick("api"));
+        m.insert(ystr("baseURL"), pick("baseURL"));
+        m.insert(ystr("models"), pick("models"));
+        serde_yaml::Value::Mapping(m)
+    }
+}
+
+impl ProviderAdapter for DshProviderAdapter {
+    fn agent_id(&self) -> &'static str {
+        "dsh"
+    }
+
+    fn config_path(&self, home: &Path) -> PathBuf {
+        Self::settings_path(home)
+    }
+
+    /// 下发写两个文件:settings.yaml(route)+ .credentials.yaml(refs),
+    /// 快照需覆盖全部。
+    fn touch_paths(&self, home: &Path) -> Vec<PathBuf> {
+        vec![Self::settings_path(home), Self::credentials_path(home)]
+    }
+
+    fn plan(
+        &self,
+        home: &Path,
+        providers: &[ProviderSpec],
+        active_id: Option<&str>,
+        managed: &[String],
+    ) -> Result<Vec<ChangeItem>, String> {
+        let mut changes = Vec::new();
+        match resolve_single_active(providers, active_id, &DSH_SLOTS, DSH_MISSING) {
+            Target::Deploy { spec, url } => {
+                if Self::model_ids(spec).is_empty() {
+                    changes.push(ChangeItem {
+                        name: spec.name.clone(),
+                        action: "skip".into(),
+                        detail: "No model configured".to_string(),
+                    });
+                    return Ok(changes);
+                }
+                let (_, slot) = pick_endpoint(spec, &DSH_SLOTS).unwrap();
+                let settings = Self::read_yaml(&Self::settings_path(home))?;
+                let creds = Self::read_yaml(&Self::credentials_path(home))?;
+                let desired = Self::desired_route(spec, url, slot);
+                let route_ok = Self::our_route(&settings)
+                    .map(|r| Self::route_projection(r) == Self::route_projection(&desired))
+                    .unwrap_or(false);
+                let key_ok = Self::our_key(&creds) == spec.api_key.trim();
+                let action = if route_ok && key_ok {
+                    "unchanged"
+                } else if Self::our_route(&settings).is_none() && Self::our_key(&creds).is_empty() {
+                    "add"
+                } else {
+                    "update"
+                };
+                changes.push(ChangeItem {
+                    name: spec.name.clone(),
+                    action: action.into(),
+                    detail: if action == "unchanged" { String::new() } else { Self::detail(spec, url) },
+                });
+            }
+            Target::Skip { name, reason } => {
+                if managed.iter().any(|m| m == DSH_ROUTE) {
+                    changes.push(ChangeItem {
+                        name: DSH_ROUTE.into(),
+                        action: "remove".into(),
+                        detail: "no longer managed by ClawBox".into(),
+                    });
+                } else {
+                    changes.push(ChangeItem { name, action: "skip".into(), detail: reason });
+                }
+            }
+        }
+        Ok(changes)
+    }
+
+    fn apply(
+        &self,
+        home: &Path,
+        providers: &[ProviderSpec],
+        active_id: Option<&str>,
+        managed: &[String],
+    ) -> Result<usize, String> {
+        match resolve_single_active(providers, active_id, &DSH_SLOTS, DSH_MISSING) {
+            Target::Deploy { spec, url } => {
+                let models = Self::model_ids(spec);
+                if models.is_empty() {
+                    return Ok(0); // plan 已 skip,apply 兑底不报错
+                }
+                let (_, slot) = pick_endpoint(spec, &DSH_SLOTS).unwrap();
+                let mut settings = Self::read_yaml(&Self::settings_path(home))?;
+                let mut creds = Self::read_yaml(&Self::credentials_path(home))?;
+                if !settings.is_mapping() {
+                    settings = serde_yaml::Value::Mapping(serde_yaml::Mapping::new());
+                }
+                if !creds.is_mapping() {
+                    creds = serde_yaml::Value::Mapping(serde_yaml::Mapping::new());
+                }
+
+                // settings:llm-pi-ai.providers.clawbox = 期望节点(其余键不动)
+                {
+                    let root = settings.as_mapping_mut().unwrap();
+                    let llm = root
+                        .entry(ystr("llm-pi-ai"))
+                        .or_insert_with(|| serde_yaml::Value::Mapping(serde_yaml::Mapping::new()));
+                    if !llm.is_mapping() {
+                        return Err("settings.yaml: 'llm-pi-ai' is not a mapping".to_string());
+                    }
+                    let prov = llm
+                        .as_mapping_mut()
+                        .unwrap()
+                        .entry(ystr("providers"))
+                        .or_insert_with(|| serde_yaml::Value::Mapping(serde_yaml::Mapping::new()));
+                    if !prov.is_mapping() {
+                        return Err("settings.yaml: 'llm-pi-ai.providers' is not a mapping".to_string());
+                    }
+                    prov.as_mapping_mut()
+                        .unwrap()
+                        .insert(ystr(DSH_ROUTE), Self::desired_route(spec, url, slot));
+                }
+                // credentials:refs.CLAWBOX_DSH_API_KEY = key(其余 refs 不动)
+                {
+                    let root = creds.as_mapping_mut().unwrap();
+                    let refs = root
+                        .entry(ystr("refs"))
+                        .or_insert_with(|| serde_yaml::Value::Mapping(serde_yaml::Mapping::new()));
+                    if !refs.is_mapping() {
+                        return Err(".credentials.yaml: 'refs' is not a mapping".to_string());
+                    }
+                    refs.as_mapping_mut()
+                        .unwrap()
+                        .insert(ystr(DSH_KEY_REF), ystr(spec.api_key.trim()));
+                }
+                Self::write_yaml(&Self::credentials_path(home), &creds)?; // 先 key 后路由
+                Self::write_yaml(&Self::settings_path(home), &settings)?;
+                Ok(1)
+            }
+            Target::Skip { .. } => {
+                if !managed.iter().any(|m| m == DSH_ROUTE) {
+                    return Ok(0);
+                }
+                // 解绑:删我们的 route 与 refs 键(文件不存在则免)
+                let mut changed = false;
+                let sp = Self::settings_path(home);
+                if sp.exists() {
+                    let mut settings = Self::read_yaml(&sp)?;
+                    if let Some(root) = settings.as_mapping_mut() {
+                        if let Some(llm) = root.get_mut(&ystr("llm-pi-ai")) {
+                            if let Some(prov) = llm.get_mut(&ystr("providers")) {
+                                if let Some(m) = prov.as_mapping_mut() {
+                                    let rk = ystr(DSH_ROUTE);
+                                    changed |= m.remove(&rk).is_some();
+                                }
+                            }
+                        }
+                    }
+                    if changed {
+                        Self::write_yaml(&sp, &settings)?;
+                    }
+                }
+                let cp = Self::credentials_path(home);
+                if cp.exists() {
+                    let mut creds = Self::read_yaml(&cp)?;
+                    if let Some(root) = creds.as_mapping_mut() {
+                        if let Some(refs) = root.get_mut(&ystr("refs")) {
+                            if let Some(m) = refs.as_mapping_mut() {
+                                let rk = ystr(DSH_KEY_REF);
+                                changed |= m.remove(&rk).is_some();
+                            }
+                        }
+                    }
+                    if changed {
+                        Self::write_yaml(&cp, &creds)?;
+                    }
+                }
+                Ok(if changed { 1 } else { 0 })
+            }
+        }
+    }
+
+    fn deployed_names(&self, _providers: &[ProviderSpec], _active_id: Option<&str>) -> Vec<String> {
+        // Deploy 与 Skip(remove) 都国绕固定路由键;deployed_names 只在
+        // apply 成功后记账,Deploy 时记路由键即可。
+        match active_spec(_providers, _active_id) {
+            Some(spec) if pick_endpoint(spec, &DSH_SLOTS).is_some() && !Self::model_ids(spec).is_empty() => {
+                vec![DSH_ROUTE.to_string()]
+            }
+            _ => vec![],
+        }
+    }
+
+    /// 写后校验:settings 可解析、route 四键齐全、credentials 里我们的
+    /// key 非空(dsh 把空值当未配置)。
+    fn validate(&self, home: &Path) -> Result<(), String> {
+        let sp = Self::settings_path(home);
+        let settings = Self::read_yaml(&sp)?;
+        let route = Self::our_route(&settings).ok_or_else(|| {
+            format!("{}: llm-pi-ai.providers.{} missing", sp.display(), DSH_ROUTE)
+        })?;
+        let base = route.get("baseURL").and_then(|v| v.as_str()).unwrap_or("");
+        if base.trim().is_empty() {
+            return Err(format!("{}: route '{}' has empty baseURL", sp.display(), DSH_ROUTE));
+        }
+        let creds = Self::read_yaml(&Self::credentials_path(home))?;
+        if Self::our_key(&creds).is_empty() {
+            return Err(format!(
+                "{}: refs.{} is empty",
+                Self::credentials_path(home).display(),
+                DSH_KEY_REF
+            ));
+        }
+        Ok(())
+    }
+}
+
 // ---- 占位适配器与注册表 ------------------------------------------------------
 
 /// v1 暂不管理服务商配置的 agent(配置格式未确认,不猜)。
@@ -3066,6 +3422,7 @@ pub fn adapters() -> &'static [Box<dyn ProviderAdapter>] {
                 Box::new(GeminiProviderAdapter),
                 Box::new(ClineProviderAdapter),
                 Box::new(PiProviderAdapter),
+                Box::new(DshProviderAdapter),
                 Box::new(UnsupportedProviderAdapter { id: "qwen-code" }),
                 Box::new(UnsupportedProviderAdapter { id: "trae-agent" }),
             ]
@@ -4919,7 +5276,7 @@ mod tests {
             );
         }
         assert!(find_adapter("node").is_none());
-        assert_eq!(adapters().len(), 14);
+        assert_eq!(adapters().len(), 15);
         let supported: Vec<&str> = adapters()
             .iter()
             .filter(|a| a.supported())
@@ -4927,7 +5284,7 @@ mod tests {
             .collect();
         assert_eq!(
             supported,
-            vec!["claude-code", "codex", "openclaw", "opencode", "codebuddy", "kimi", "hermes", "gemini", "cline", "pi"]
+            vec!["claude-code", "codex", "openclaw", "opencode", "codebuddy", "kimi", "hermes", "gemini", "cline", "pi", "dsh"]
         );
     }
 
@@ -4944,7 +5301,7 @@ mod tests {
         let bindings =
             std::collections::HashMap::from([("claude-code".to_string(), "p-anth".to_string())]);
         let plans = plan_all(home.path(), &providers, &bindings, &Default::default());
-        assert_eq!(plans.len(), 14);
+        assert_eq!(plans.len(), 15);
         let cc = plans.iter().find(|p| p.agent_id == "claude-code").unwrap();
         assert!(cc.error.is_some());
         let oc = plans.iter().find(|p| p.agent_id == "opencode").unwrap();
@@ -5027,5 +5384,109 @@ mod tests {
         assert!(rels.contains(&".codex/config.toml"), "{:?}", rels);
         assert!(rels.contains(&".codex/auth.json"), "{:?}", rels);
         assert!(rels.contains(&".codex/clawbox-model-catalog.json"), "{:?}", rels);
+    }
+    // ---- dsh(~/.dsh/settings.yaml + .credentials.yaml) -----------------
+
+    fn read_yaml_file(path: &std::path::Path) -> serde_yaml::Value {
+        serde_yaml::from_str(&std::fs::read_to_string(path).unwrap()).unwrap()
+    }
+
+    #[test]
+    fn dsh_apply_writes_route_and_credentials_then_plans_unchanged() {
+        let home = TempHome::new();
+        // 双端点:Anthropic 槽优先 → api = anthropic-messages
+        let providers = vec![dual_provider()];
+        let a = DshProviderAdapter;
+
+        // 空 models → skip,不落盘
+        let mut no_models = dual_provider();
+        no_models.models.clear();
+        no_models.default_model = String::new();
+        let changes = a.plan(home.path(), &[no_models.clone()], Some("p-dual"), &[]).unwrap();
+        assert_eq!((changes[0].action.as_str(), changes[0].detail.as_str()), ("skip", "No model configured"));
+
+        let changes = a.plan(home.path(), &providers, Some("p-dual"), &[]).unwrap();
+        assert_eq!(changes[0].action, "add");
+        assert_eq!(a.apply(home.path(), &providers, Some("p-dual"), &[]).unwrap(), 1);
+
+        let sp = home.path().join(".dsh").join("settings.yaml");
+        let cp = home.path().join(".dsh").join(".credentials.yaml");
+        let s = read_yaml_file(&sp);
+        let route = &s["llm-pi-ai"]["providers"]["clawbox"];
+        assert_eq!(route["apiKeyEnv"], "CLAWBOX_DSH_API_KEY");
+        assert_eq!(route["api"], "anthropic-messages");
+        assert_eq!(route["baseURL"], "https://api.dual.example.com/anthropic");
+        assert_eq!(route["models"][0]["id"], "model-a");
+        let c = read_yaml_file(&cp);
+        assert_eq!(c["refs"]["CLAWBOX_DSH_API_KEY"], "sk-secret-123");
+        // dsh 要求凭据文件 0600
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = std::fs::metadata(&cp).unwrap().permissions().mode() & 0o777;
+            assert_eq!(mode, 0o600);
+        }
+
+        a.validate(home.path()).unwrap();
+        // 幂等:再 plan → unchanged
+        let changes = a.plan(home.path(), &providers, Some("p-dual"), &["clawbox".into()]).unwrap();
+        assert_eq!(changes[0].action, "unchanged");
+
+        // 手改 baseURL → update(漂移)
+        let mut tampered = read_yaml_file(&sp);
+        tampered["llm-pi-ai"]["providers"]["clawbox"]["baseURL"] =
+            serde_yaml::Value::String("https://tampered.example.com".into());
+        std::fs::write(&sp, serde_yaml::to_string(&tampered).unwrap()).unwrap();
+        let changes = a.plan(home.path(), &providers, Some("p-dual"), &["clawbox".into()]).unwrap();
+        assert_eq!(changes[0].action, "update");
+    }
+
+    #[test]
+    fn dsh_openai_only_uses_openai_completions() {
+        let home = TempHome::new();
+        let providers = vec![openai_provider()];
+        let a = DshProviderAdapter;
+        a.apply(home.path(), &providers, Some("p-oa"), &[]).unwrap();
+        let s = read_yaml_file(&home.path().join(".dsh").join("settings.yaml"));
+        assert_eq!(s["llm-pi-ai"]["providers"]["clawbox"]["api"], "openai-completions");
+        assert_eq!(s["llm-pi-ai"]["providers"]["clawbox"]["baseURL"], "https://api.oa.example.com/v1");
+    }
+
+    #[test]
+    fn dsh_unbind_removes_route_and_ref_keeps_user_entries() {
+        let home = TempHome::new();
+        let providers = vec![dual_provider()];
+        let a = DshProviderAdapter;
+        // 预置用户自有 route 与 ref
+        let dir = home.path().join(".dsh");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(
+            dir.join("settings.yaml"),
+            "llm-pi-ai:\n  providers:\n    my-gateway:\n      api: openai-completions\n",
+        )
+        .unwrap();
+        std::fs::write(
+            dir.join(".credentials.yaml"),
+            "refs:\n  MY_KEY: sk-mine\n",
+        )
+        .unwrap();
+        a.apply(home.path(), &providers, Some("p-dual"), &[]).unwrap();
+
+        // 解绑:删我们的 route 与 ref;用户条目保留
+        {
+            let mut doc: serde_yaml::Value = serde_yaml::from_str("llm-pi-ai:\n  providers:\n    my-gateway:\n      api: x\n").unwrap();
+            let root = doc.as_mapping_mut().unwrap();
+            let llm = root.entry(ystr("llm-pi-ai")).or_insert_with(|| serde_yaml::Value::Mapping(serde_yaml::Mapping::new()));
+        }
+        assert_eq!(
+            a.apply(home.path(), &providers, None, &["clawbox".into()]).unwrap(),
+            1
+        );
+        let s = read_yaml_file(&dir.join("settings.yaml"));
+        assert!(s["llm-pi-ai"]["providers"].get("clawbox").is_none());
+        assert!(s["llm-pi-ai"]["providers"].get("my-gateway").is_some());
+        let c = read_yaml_file(&dir.join(".credentials.yaml"));
+        assert!(c["refs"].get("CLAWBOX_DSH_API_KEY").is_none());
+        assert_eq!(c["refs"]["MY_KEY"], "sk-mine");
     }
 }
