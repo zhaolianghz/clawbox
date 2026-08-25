@@ -302,6 +302,8 @@
     // cline 经 `cline auth -p anthropic -b <url>`;pi 双协议,Anthropic 优先
     cline: ['anthropic'],
     pi: ['anthropic', 'openai'],
+    // dsh 按 Anthropic 槽优先定协议(anthropic-messages / openai-completions)
+    dsh: ['anthropic', 'openai'],
     opencode: ['openai', 'anthropic'],
     openclaw: ['anthropic', 'openai'],
     kimi: ['openai', 'anthropic'],
