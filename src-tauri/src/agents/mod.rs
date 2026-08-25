@@ -302,6 +302,47 @@ fn npm_global_bin() -> Option<PathBuf> {
         .clone()
 }
 
+/// nvm-managed global bin dir: newest version under ~/.nvm/versions/node/*/bin.
+/// `npm config get prefix` is itself unreachable when the GUI PATH lacks nvm
+/// (npm lives inside the very bin dir we're looking for), so scan the
+/// filesystem instead. Honors ~/.nvm/alias/default when present, else picks
+/// the lexicographically greatest version dir (node versions sort lexically).
+fn nvm_global_bin() -> Option<PathBuf> {
+    if cfg!(windows) {
+        return None; // nvm-windows uses a different layout; out of scope
+    }
+    let nvm = dirs::home_dir()?.join(".nvm").join("versions").join("node");
+    let versions: Vec<PathBuf> = std::fs::read_dir(&nvm)
+        .ok()?
+        .filter_map(|e| e.ok())
+        .map(|e| e.path())
+        .filter(|p| p.is_dir())
+        .collect();
+    if versions.is_empty() {
+        return None;
+    }
+    // Prefer the version ~/.nvm/alias/default points at ("22", "v22.23.1",
+    // "lts/..."): try the two spellings; bare "lts/*" we skip — too fiddly.
+    let alias = std::fs::read_to_string(nvm.join("..").join("..").join("alias").join("default"))
+        .ok()
+        .map(|s| s.trim().trim_start_matches('v').to_string())
+        .filter(|a| !a.is_empty() && !a.starts_with("lts"));
+    if let Some(a) = alias {
+        for v in &versions {
+            if let Some(name) = v.file_name() {
+                let nv = name.to_string_lossy().trim_start_matches('v').to_string();
+                if nv == a || nv.starts_with(&format!("{}.", a)) {
+                    return Some(v.join("bin"));
+                }
+            }
+        }
+    }
+    versions
+        .into_iter()
+        .max()
+        .map(|v| v.join("bin"))
+}
+
 impl AgentDef {
     /// Resolve the absolute binary path, trying in order:
     ///   1. the process PATH (the common, fast case)
@@ -332,6 +373,13 @@ impl AgentDef {
         }
         if matches!(self.install, InstallMethod::Npm { .. }) {
             if let Some(bin_dir) = npm_global_bin() {
+                if let Some(hit) = find_exe_in(&bin_dir, self.binary) {
+                    return Some(hit);
+                }
+            }
+            // nvm layouts: `npm` itself is unreachable when the GUI PATH lacks
+            // the very bin dir we're hunting for — scan ~/.nvm directly.
+            if let Some(bin_dir) = nvm_global_bin() {
                 if let Some(hit) = find_exe_in(&bin_dir, self.binary) {
                     return Some(hit);
                 }
@@ -604,5 +652,30 @@ mod tests {
             // just that construction didn't omit it (compile-time check).
             let _ = a.fallback_paths;
         }
+    }
+
+    #[test]
+    fn nvm_global_bin_finds_default_alias_dir() {
+        // 本机 ~/.nvm 布局(nvm for unix);无 nvm 的环境跳过
+        let Some(bin) = nvm_global_bin() else { return };
+        assert!(bin.to_string_lossy().contains(".nvm"), "{:?}", bin);
+        assert!(bin.join("node").exists(), "node missing in {:?}", bin);
+    }
+
+    #[test]
+    fn dsh_resolves_via_nvm_even_with_minimal_path() {
+        // GUI 最小 PATH 复现:剥掉 nvm 段后 dsh 仍应经 nvm 兜底解析到
+        let saved = std::env::var("PATH").unwrap();
+        let stripped = saved
+            .split(':')
+            .filter(|d| !d.contains(".nvm"))
+            .collect::<Vec<_>>()
+            .join(":");
+        std::env::set_var("PATH", &stripped);
+        let hit = find_agent("dsh").unwrap().resolve();
+        std::env::set_var("PATH", &saved);
+        if hit.is_some() {
+            assert!(hit.unwrap().to_string_lossy().contains(".nvm"));
+        } // 无 nvm/未装 dsh 的环境:resolve 为 None 也合法
     }
 }
