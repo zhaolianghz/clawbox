@@ -3195,7 +3195,8 @@ impl ProviderAdapter for DshProviderAdapter {
                 let route_ok = Self::our_route(&settings)
                     .map(|r| Self::route_projection(r) == Self::route_projection(&desired))
                     .unwrap_or(false);
-                let key_ok = Self::our_key(&creds) == spec.api_key.trim();
+                let key_ok = Self::our_key(&creds) == spec.api_key.trim()
+                    && creds.get("version").and_then(|v| v.as_i64()) == Some(1);
                 let action = if route_ok && key_ok {
                     "unchanged"
                 } else if Self::our_route(&settings).is_none() && Self::our_key(&creds).is_empty() {
@@ -3268,9 +3269,12 @@ impl ProviderAdapter for DshProviderAdapter {
                         .unwrap()
                         .insert(ystr(DSH_ROUTE), Self::desired_route(spec, url, slot));
                 }
-                // credentials:refs.CLAWBOX_DSH_API_KEY = key(其余 refs 不动)
+                // credentials:refs.CLAWBOX_DSH_API_KEY = key(其余 refs 不动)。
+                // dsh 要求顶层 version: 1(credentials-local 的 DOCUMENT_VERSION),
+                // 缺失会被判为 pre-release 平铺格式拒读。
                 {
                     let root = creds.as_mapping_mut().unwrap();
+                    root.insert(ystr("version"), serde_yaml::Value::Number(1.into()));
                     let refs = root
                         .entry(ystr("refs"))
                         .or_insert_with(|| serde_yaml::Value::Mapping(serde_yaml::Mapping::new()));
@@ -5418,6 +5422,7 @@ mod tests {
         assert_eq!(route["baseURL"], "https://api.dual.example.com/anthropic");
         assert_eq!(route["models"][0]["id"], "model-a");
         let c = read_yaml_file(&cp);
+        assert_eq!(c["version"], 1);
         assert_eq!(c["refs"]["CLAWBOX_DSH_API_KEY"], "sk-secret-123");
         // dsh 要求凭据文件 0600
         #[cfg(unix)]
@@ -5467,7 +5472,7 @@ mod tests {
         .unwrap();
         std::fs::write(
             dir.join(".credentials.yaml"),
-            "refs:\n  MY_KEY: sk-mine\n",
+            "version: 1\nrefs:\n  MY_KEY: sk-mine\n",
         )
         .unwrap();
         a.apply(home.path(), &providers, Some("p-dual"), &[]).unwrap();
