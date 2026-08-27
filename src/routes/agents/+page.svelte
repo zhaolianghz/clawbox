@@ -4,6 +4,7 @@
   import { agents_list, agent_install, type AgentStatus, path_env_status } from '../../lib/api/agents';
   import { checkLatestVersions, extractSemver, type LatestInfo } from '../../lib/api/latest';
   import { agent_sync_overview, type AgentSyncOverview, type SyncedItem } from '../../lib/api/providerSync';
+  import { DEFAULT_PROVIDER_ID } from '../../lib/api/config';
   import { snapshots_list, snapshots_restore, type SnapshotInfo } from '../../lib/api/snapshots';
   import { doctor_run, type DoctorReport, type CheckStatus } from '../../lib/api/doctor';
   import AgentLogo from '../../lib/components/AgentLogo.svelte';
@@ -314,6 +315,11 @@
     const slots = AGENT_SLOTS[agentId];
     if (!slots || !p.apiKey) return false;
     return slots.some((s) => (s === 'anthropic' ? !!p.anthropicBaseUrl : !!p.openaiBaseUrl));
+  }
+
+  /** 选择器里的显示名:官方默认走 i18n */
+  function providerLabel(p: ModelProvider): string {
+    return p.id === DEFAULT_PROVIDER_ID ? $_('agents.provider.default') : p.name;
   }
 
   const enabledProviders = $derived($providers.filter((p) => p.enabled));
@@ -649,7 +655,7 @@
           {#if isDrifted(a.id)}
             {@const boundSpec = bindings[a.id] ? $providers.find((p) => p.id === bindings[a.id]) : null}
             {@const active = activeProviders[a.id] ?? null}
-            {@const clawboxName = boundSpec?.name ?? ''}
+            {@const clawboxName = boundSpec ? providerLabel(boundSpec) : ''}
             <div class="drift-banner">
               <span class="drift-icon" aria-hidden="true">⚠</span>
               <span class="drift-text">
@@ -699,10 +705,14 @@
               >
                 <!-- 未绑定时的占位:不可选,绑定后自动隐藏(不提供解绑入口) -->
                 <option value="" disabled hidden>{$_('agents.provider.placeholder')}</option>
+                <!-- 官方默认置顶:绑定它=把该 agent 恢复到官方默认配置 -->
+                <option value={DEFAULT_PROVIDER_ID}>{$_('agents.provider.default')} · {$_('agents.provider.defaultHint')}</option>
                 {#each enabledProviders as p (p.id)}
-                  <option value={p.id} disabled={!compatible(a.id, p)}>
-                    {p.name}{compatible(a.id, p) ? '' : ` (${$_('agents.provider.incompatible')})`}
-                  </option>
+                  {#if p.id !== DEFAULT_PROVIDER_ID}
+                    <option value={p.id} disabled={!compatible(a.id, p)}>
+                      {p.name}{compatible(a.id, p) ? '' : ` (${$_('agents.provider.incompatible')})`}
+                    </option>
+                  {/if}
                 {/each}
                 {#if bindings[a.id] && !enabledProviders.some((p) => p.id === bindings[a.id])}
                   <!-- 绑定的服务商已被禁用:保留一个占位项让选择器如实回显,提示重选 -->

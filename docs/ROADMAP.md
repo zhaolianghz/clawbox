@@ -45,6 +45,10 @@ ClawBox 目前已具备：
 - 价值：ClawBox 直接改写用户的 agent 配置文件，这是采纳的最大心理门槛——「改坏了能撤销」直接消除顾虑
 - 成本：低。现有 sync 的 plan/apply 架构正好挂快照钩子
 
+### 4b. 内置「官方默认」服务商 ✅ 已实现（2026-08-27）
+
+agent 一键恢复官方默认配置:绑定选择器置顶「官方默认」,绑定并同步即清掉 ClawBox 下发的全部键(复用解绑路径),用户自有配置不动;绑定关系保留、UI 显式可见,再绑真实服务商即可切回。虚拟条目不落盘、不可编辑删除。(设计:`docs/superpowers/specs/2026-08-27-default-provider-design.md`)
+
 ### 5. 安全审计
 
 扫描危险配置并报告：`bypassPermissions` / `--dangerously-skip-permissions`、过宽的 `allowedTools`、明文写在 MCP env 里的 API key 等。

@@ -344,7 +344,9 @@
       "label": "服务商",
       "placeholder": "请选择服务商",
       "incompatible": "端点不兼容",
-      "stale": "(已禁用的服务商,请重选)"
+      "stale": "(已禁用的服务商,请重选)",
+      "default": "官方默认",
+      "defaultHint": "恢复官方默认配置"
     },
     "fallback": {
       "label": "兜底链(Fallback)",

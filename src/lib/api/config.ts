@@ -7,6 +7,9 @@ export type { ApplyResult } from './mcpSync';
 // 与后端 ProviderSpec(serde camelCase)逐字段对齐,零转换。
 // 双端点契约:旧 baseUrl/flavor 已废弃 —— 后端 load 时自动迁移进槽位,
 // 序列化不再输出,前端类型里不保留。
+/** 内置「官方默认」虚拟服务商 id(后端注入,绑定它=恢复 agent 官方默认) */
+export const DEFAULT_PROVIDER_ID = '__default__';
+
 export interface ModelProvider {
   id: string;
   name: string;

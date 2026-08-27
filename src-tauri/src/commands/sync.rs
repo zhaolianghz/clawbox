@@ -102,6 +102,17 @@ pub fn agent_provider_bind_at(
     };
     let managed = config.providers_managed.get(agent_id).cloned().unwrap_or_default();
     match provider_id {
+        // 绑「官方默认」:走解绑路径清掉下发(恢复 agent 官方默认),但保留
+        // 绑定关系指向哨兵 id —— UI 显式显示默认态,后续同步幂等无操作。
+        Some(pid) if pid == crate::commands::config::DEFAULT_PROVIDER_ID => {
+            let result = providers::apply_one(home, adapter, &[], None, &managed);
+            if result.ok {
+                config.agent_providers.insert(agent_id.to_string(), pid);
+                config.providers_managed.remove(agent_id);
+                save_config(home, &config)?;
+            }
+            Ok(result)
+        }
         Some(pid) => {
             let Some(spec) = config.providers.iter().find(|p| p.id == pid) else {
                 return Err(format!("unknown provider id: {}", pid));
@@ -1243,6 +1254,42 @@ mod tests {
         );
         let cfg = load_config(home.path()).unwrap();
         assert_eq!(cfg.agent_providers.get("claude-code").map(String::as_str), Some("p2"));
+    }
+
+
+    #[test]
+    fn bind_default_resets_agent_keeps_binding() {
+        let home = bind_home_with(vec![pspec(
+            "p-anth", "Anthro Relay", "https://relay.example.com/anthropic", "",
+        )]);
+        // 先正常绑定下发,再切到「官方默认」
+        agent_provider_bind_at(home.path(), "claude-code", Some("p-anth".to_string())).unwrap();
+        assert!(claude_env(home.path()).get("ANTHROPIC_BASE_URL").is_some());
+
+        let r = agent_provider_bind_at(
+            home.path(),
+            "claude-code",
+            Some(crate::commands::config::DEFAULT_PROVIDER_ID.to_string()),
+        )
+        .unwrap();
+        assert!(r.ok, "{:?}", r.error);
+        // 下发的键被清 = 恢复默认
+        assert!(claude_env(home.path()).get("ANTHROPIC_BASE_URL").is_none());
+        let cfg = load_config(home.path()).unwrap();
+        // 绑定保留(显示为官方默认),托管记账清空
+        assert_eq!(
+            cfg.agent_providers.get("claude-code").map(String::as_str),
+            Some(crate::commands::config::DEFAULT_PROVIDER_ID)
+        );
+        assert!(!cfg.providers_managed.contains_key("claude-code"));
+        // resync 幂等:不报错、不再动文件、状态不变
+        let r2 = agent_provider_resync_at(home.path(), "claude-code").unwrap();
+        assert!(r2.ok, "{:?}", r2.error);
+        let cfg2 = load_config(home.path()).unwrap();
+        assert_eq!(
+            cfg2.agent_providers.get("claude-code").map(String::as_str),
+            Some(crate::commands::config::DEFAULT_PROVIDER_ID)
+        );
     }
 
     #[test]

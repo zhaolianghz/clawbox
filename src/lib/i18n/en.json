@@ -344,7 +344,9 @@
       "label": "Provider",
       "placeholder": "Select a provider",
       "incompatible": "endpoint mismatch",
-      "stale": "(disabled provider — pick another)"
+      "stale": "(disabled provider — pick another)",
+      "default": "Factory Default",
+      "defaultHint": "Reset agent to official defaults"
     },
     "fallback": {
       "label": "Fallback chain",

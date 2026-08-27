@@ -3456,6 +3456,16 @@ pub fn plan_all(
             if !a.supported() {
                 return AgentPlan { agent_id, supported: false, config_path, changes: vec![], error: None };
             }
+            // 绑「官方默认」哨兵:按空激活出 plan —— managed 有残留则展示
+            // remove(防手改配置后悬空托管),否则空条目。
+            if bindings.get(a.agent_id()).map(String::as_str)
+                == Some(crate::commands::config::DEFAULT_PROVIDER_ID)
+            {
+                let empty = vec![];
+                let m = managed.get(a.agent_id()).unwrap_or(&empty);
+                let changes = a.plan(home, &[], None, m).unwrap_or_default();
+                return AgentPlan { agent_id, supported: true, config_path, changes, error: None };
+            }
             let bound = bindings
                 .get(a.agent_id())
                 .and_then(|pid| providers.iter().find(|p| p.id == *pid));
@@ -3642,6 +3652,25 @@ pub fn apply_one(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn plan_all_default_binding_shows_remove_only_with_leftover_managed() {
+        let home = TempHome::new();
+        let bindings =
+            std::collections::HashMap::from([("dsh".to_string(), "__default__".to_string())]);
+        // 无残留:空条目
+        let plans = plan_all(home.path(), &[], &bindings, &Default::default());
+        let dsh = plans.iter().find(|p| p.agent_id == "dsh").unwrap();
+        // 只允许 skip(未下发),不得出现 add/update/remove
+        assert!(dsh.changes.iter().all(|c| c.action == "skip"), "{:?}", dsh.changes);
+        // 有残留(手改配置悬空):出 remove 条目
+        let managed =
+            std::collections::HashMap::from([("dsh".to_string(), vec!["clawbox".to_string()])]);
+        let plans = plan_all(home.path(), &[], &bindings, &managed);
+        let dsh = plans.iter().find(|p| p.agent_id == "dsh").unwrap();
+        assert_eq!(dsh.changes.len(), 1);
+        assert_eq!(dsh.changes[0].action, "remove");
+    }
+
     use super::*;
     use crate::sync::test_util::*;
 

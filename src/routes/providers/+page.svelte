@@ -8,7 +8,7 @@
   import { localize } from '$lib/data/localized';
   import ProviderLogo from '$lib/components/ProviderLogo.svelte';
   import { providers, addProvider, updateProvider, deleteProvider, loadProviders } from '$lib/stores/config';
-  import { provider_test, type ModelProvider, type ProviderFlavor, type ProviderTestResult } from '$lib/api/config';
+  import { provider_test, type ModelProvider, type ProviderFlavor, type ProviderTestResult, DEFAULT_PROVIDER_ID } from '$lib/api/config';
   import { agent_providers_get, type ApplyResult } from '$lib/api/providerSync';
   import { agents_list } from '$lib/api/agents';
   import { open } from '@tauri-apps/plugin-dialog';
@@ -753,7 +753,7 @@
     <div class="sync-panel glass-card">
       <h3>{$_('providers.transfer.exportTitle')}</h3>
       <div class="transfer-picks">
-        {#each $providers as p (p.id)}
+        {#each $providers.filter((p) => p.id !== DEFAULT_PROVIDER_ID) as p (p.id)}
           <label class="check-label">
             <input type="checkbox" bind:checked={expChecked[p.id]} />
             <span>{p.name}</span>

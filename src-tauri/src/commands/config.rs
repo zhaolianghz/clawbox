@@ -66,6 +66,27 @@ pub struct ProviderSpec {
     pub flavor: Option<String>,
 }
 
+/// 内置「官方默认」虚拟服务商 id(见 specs/2026-08-27-default-provider-design.md):
+/// 绑定它 = 走解绑路径把 agent 恢复到官方默认,但绑定关系保留、UI 显式可见。
+/// 不落盘(config.json providers 里永不存在),CRUD 一律拒绝。
+pub const DEFAULT_PROVIDER_ID: &str = "__default__";
+
+/// 虚拟条目本体:无端点无 key;仅用于列表展示与绑定语义,不可下发。
+pub fn default_provider_spec() -> ProviderSpec {
+    ProviderSpec {
+        id: DEFAULT_PROVIDER_ID.to_string(),
+        name: "Default".to_string(),
+        api_key: String::new(),
+        base_url: String::new(),
+        anthropic_base_url: String::new(),
+        openai_base_url: String::new(),
+        default_model: String::new(),
+        models: vec![],
+        enabled: true,
+        flavor: None,
+    }
+}
+
 /// 旧单端点(baseUrl+flavor)→ 双端点槽位迁移。两槽皆空且旧 baseUrl 非空时
 /// 按 flavor 定槽(缺失则启发式:id=="anthropic" 或 URL 含 "anthropic" →
 /// anthropic,否则 openai);旧字段随后一律清空(skip_serializing_if 保证
@@ -275,7 +296,15 @@ pub async fn set_config(path: String, value: serde_json::Value) -> Result<(), St
 
 #[tauri::command]
 pub async fn config_providers_get() -> Result<Vec<ProviderSpec>, String> {
-    Ok(load_config(&real_home())?.providers)
+    providers_get_at(&real_home())
+}
+
+/// home 参数化:读取时动态注入「官方默认」虚拟条目(排末位,前端在
+/// Providers 页过滤、在 agent 绑定选择器置顶)。
+pub fn providers_get_at(home: &Path) -> Result<Vec<ProviderSpec>, String> {
+    let mut list = load_config(home)?.providers;
+    list.push(default_provider_spec());
+    Ok(list)
 }
 
 /// Whole-table overwrite 的 home 参数化核心。
@@ -288,6 +317,9 @@ pub fn providers_set_at(
     home: &Path,
     providers: Vec<ProviderSpec>,
 ) -> Result<Vec<ApplyResult>, String> {
+    if providers.iter().any(|p| p.id == DEFAULT_PROVIDER_ID) {
+        return Err("the built-in default provider cannot be created or edited".to_string());
+    }
     let mut config = load_config(home)?;
     let old = std::mem::replace(&mut config.providers, providers);
     let ids: HashSet<String> = config.providers.iter().map(|p| p.id.clone()).collect();
@@ -360,6 +392,20 @@ pub async fn config_providers_set(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn providers_get_injects_default_and_set_rejects_it() {
+        let home = TempHome::new();
+        let list = providers_get_at(home.path()).unwrap();
+        assert!(list.iter().any(|p| p.id == DEFAULT_PROVIDER_ID), "virtual default missing");
+        // 落盘列表不含哨兵
+        let cfg = load_config(home.path()).unwrap();
+        assert!(cfg.providers.iter().all(|p| p.id != DEFAULT_PROVIDER_ID));
+        // 整表写入带哨兵 → 拒绝
+        let mut with_default = cfg.providers.clone();
+        with_default.push(default_provider_spec());
+        assert!(providers_set_at(home.path(), with_default).is_err());
+    }
+
     use super::*;
     use crate::sync::test_util::TempHome;
 
