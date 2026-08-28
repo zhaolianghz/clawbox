@@ -90,12 +90,28 @@
     };
   }
 
-  /** 存储里匹配不到任何目录 host 的 provider → 自定义条目 */
+  /** 每个目录 host 的首条配置才有资格合并进目录卡;同一端点的后续条目
+   * (如 "zhipu glm" 与 "智普" 都指 open.bigmodel.cn)保留为自定义卡,
+   * 否则会被目录卡整条吞掉:不渲染、搜不到、自定义分类里也消失 */
+  const catalogHostFirstOwner = $derived.by(() => {
+    const first = new Map<string, string>();
+    for (const p of $providers) {
+      for (const url of [p.anthropicBaseUrl, p.openaiBaseUrl]) {
+        if (!url) continue;
+        const h = hostOf(url);
+        if (catalogHostSet.has(h) && !first.has(h)) first.set(h, p.id);
+      }
+    }
+    return first;
+  });
+
+  /** 存储里没被目录卡吸收的 provider → 自定义条目(端点不在目录,或同端点第 2+ 条) */
   const customEntries = $derived(
     $providers
       .filter((p) => {
         const hosts = [p.anthropicBaseUrl, p.openaiBaseUrl].filter(Boolean).map(hostOf);
-        return hosts.length > 0 && !hosts.some((h) => catalogHostSet.has(h));
+        if (hosts.length === 0) return false;
+        return !hosts.some((h) => catalogHostFirstOwner.get(h) === p.id);
       })
       .map(syntheticEntry)
   );
@@ -117,7 +133,7 @@
         .filter((h): h is string => !!h)
         .flatMap((h) => configuredByHost.get(h) ?? [])
         .map((cp) => cp.name.toLowerCase());
-      const haystack = [name, e.id, e.apiHost, desc, ...configuredNames].join(' ').toLowerCase();
+      const haystack = [name, e.id, e.apiHost, desc, ...(e.keywords ?? []), ...configuredNames].join(' ').toLowerCase();
       const matchQ = !q || q.split(/\s+/).every((t) => haystack.includes(t));
       return matchCat && matchFree && matchQ;
     });

@@ -38,6 +38,8 @@ export interface ProviderCatalogEntry {
   /** Anthropic 兼容端点(cc-switch 风格,部分国内厂商提供) */
   anthropicHost?: string;
   description?: Localized;
+  /** 检索别名:拼音/缩写/曾用名等,zhipu、glm 这类 token 靠它命中 */
+  keywords?: string[];
   defaultModel?: string;
   /** 免费额度(有免费层/试用金的服务商);卡片显示徽章,可按此筛选 */
   freeTier?: FreeTier;
@@ -295,7 +297,7 @@ export const PROVIDER_CATALOG: ProviderCatalogEntry[] = [
     description: { en: 'Bailian platform · Qwen family', zh: '百炼平台 · 通义千问 Qwen 系列' }, defaultModel: 'qwen-max',
   },
   {
-    id: 'zhipu', name: { en: 'Zhipu AI', zh: '智谱' },
+    id: 'zhipu', name: { en: 'Zhipu AI', zh: '智谱' }, keywords: ['zhipu', 'glm', 'chatglm', 'bigmodel'],
     apiHost: 'https://open.bigmodel.cn/api/paas/v4', website: 'https://open.bigmodel.cn',
     category: 'cn', color: '#1E6FFF', anthropicHost: 'https://open.bigmodel.cn/api/anthropic',
     description: { en: 'GLM model family', zh: 'GLM 系列模型' }, defaultModel: 'glm-4-plus',
@@ -361,7 +363,7 @@ export const PROVIDER_CATALOG: ProviderCatalogEntry[] = [
   },
 
   {
-    id: 'zai', name: { en: 'Z.AI (GLM Intl)', zh: 'Z.AI(智谱国际版)' },
+    id: 'zai', name: { en: 'Z.AI (GLM Intl)', zh: 'Z.AI(智谱国际版)' }, keywords: ['zhipu', 'glm', 'chatglm'],
     apiHost: 'https://api.z.ai/api/coding/paas/v4', website: 'https://z.ai',
     category: 'cn', color: '#2563EB', anthropicHost: 'https://api.z.ai/api/anthropic',
     description: { en: 'GLM international platform', zh: 'GLM 国际版平台' },
