@@ -206,7 +206,8 @@
       "removeModel": "Remove model",
       "modelPlaceholder": "Type a model id and press Enter",
       "fetchModels": "Fetch Models",
-      "noModelsFetched": "Connected, but no models returned"
+      "noModelsFetched": "Connected, but no models returned",
+      "customPrefix": "Custom-{name}"
     },
     "modelCount": "{count} models",
     "confirmRemove": "Confirm Remove",

@@ -206,7 +206,8 @@
       "removeModel": "移除模型",
       "modelPlaceholder": "输入模型 ID 后回车添加",
       "fetchModels": "拉取模型列表",
-      "noModelsFetched": "连接成功,但未返回模型"
+      "noModelsFetched": "连接成功,但未返回模型",
+      "customPrefix": "自定义-{name}"
     },
     "modelCount": "{count} 个模型",
     "confirmRemove": "确认移除",
