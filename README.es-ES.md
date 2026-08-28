@@ -1,5 +1,3 @@
-
-
 <div align="center">
   <img src="src-tauri/icons/icon.png" width="96" alt="Logo de ClawBox" />
   <h1>ClawBox</h1>
@@ -40,14 +38,14 @@ En lugar de editar archivos de configuración en cinco directorios diferentes, c
 | **Proveedores** | Agrega claves API y puntos de conexión para cualquier proveedor compatible con OpenAI o Anthropic (78 integrados, dos puntos de conexión por proveedor). Elige un proveedor por agente: la selección se aplica al instante y los cambios se reimplantan automáticamente. |
 | **MCP** | Gestiona servidores MCP con un editor visual (formulario o JSON sin procesar). Sincroniza con todos los agentes que admiten MCP. 8 servidores seleccionados para una configuración rápida. |
 | **Habilidades** | Biblioteca de habilidades unificada respaldada por `~/.agents/skills/`. Instala desde repositorios Git (Anthropic Skills, Superpowers, …), adopta habilidades existentes de cualquier agente, sincroniza mediante enlaces simbólicos. |
-| **Memoria** | Edita un único archivo `~/.agents/memory/MEMORY.md` e inláyico como un bloque gestionado en el archivo de instrucciones de cada agente — sin tocar nada fuera del bloque. |
+| **Memoria** | Edita un único archivo `~/.agents/memory/MEMORY.md` e injértalo como un bloque gestionado en el archivo de instrucciones de cada agente — sin tocar nada fuera del bloque. |
 | **Agentes** | Instala, actualiza e inspecciona todos tus agentes CLI de IA desde una sola pantalla. |
 
 ## Fallback de proveedores y resolución de desviaciones
 
-**Cadena de respaldo (Hermes).** VincAsoc un proveedor principal junto con una lista ordenada de respaldos. Cuando el principal alcanza el límite de velocidad o genera un error, Hermes intenta automáticamente el siguiente — sin puerta de enlace, sin daemon en segundo plano. Arrastra las etiquetas para reordenar la prioridad. Los demás agentes  usan un único punto de conexión en tiempo de ejecución; para ellos, el fallback consiste en  apuntar al agente a un proveedor de puerta de enlace.
+**Cadena de respaldo (Hermes).** Vincula un proveedor principal junto con una lista ordenada de respaldos. Cuando el principal alcanza el límite de velocidad o genera un error, Hermes intenta automáticamente el siguiente — sin puerta de enlace, sin daemon en segundo plano. Arrastra las etiquetas para reordenar la prioridad. Los demás agentes  usan un único punto de conexión en tiempo de ejecución; para ellos, el fallback consiste en apuntar al agente a un proveedor de puerta de enlace.
 
-**Resolución de desviaciones (todos los agentes).** Cuando el archivo de configuración de un agente se desvía de lo que gestiona ClawBox (por ejemplo, lo editaste manualmente o otra herramienta lo modificó), ClawBox nunca lo sobrescribe silenciosamente. La desviación se muestra en lenguajelenguaje claro con dos acciones de un solo clic:
+**Resolución de desviaciones (todos los agentes).** Cuando el archivo de configuración de un agente se desvía de lo que gestiona ClawBox (por ejemplo, lo editaste manualmente o otra herramienta lo modificó), ClawBox nunca lo sobrescribe silenciosamente. La desviación se muestra en lenguaje claro con dos acciones de un solo clic:
 
 ![Drift resolution](docs/screenshots/fallback-drift.png)
 
@@ -56,7 +54,7 @@ En lugar de editar archivos de configuración en cinco directorios diferentes, c
 
 Sin tablas de diferencias ni nombres de campos: solo nombres de proveedores y dos botones. Una barra superior ofrece **Restaurar todo** para resolver la desviación de todos los agentes de una vez.
 
-**Adoptar desde agente.** Incorpora directamente a ClawBox el proveedor actualmente activo de cualquier agente (`Adoptar desde agente` en los detalles de sincronización) — útil cuando has configurado un agente  manualmente y quieres que ClawBox asuma el control.
+**Adoptar desde agente.** Incorpora directamente a ClawBox el proveedor actualmente activo de cualquier agente (`Adoptar desde agente` en los detalles de sincronización) — útil cuando has configurado un agente manualmente y quieres que ClawBox asuma el control.
 
 ## Agentes compatibles
 
@@ -71,10 +69,15 @@ Sin tablas de diferencias ni nombres de campos: solo nombres de proveedores y do
 | CodeBuddy | ✅ | ✅ | — | — | — |
 | Cursor | — | ✅ | — | — | — |
 | Qoder | — | — | — | — | — |
+| Gemini | ✅ | ✅ | — | — | — |
+| Cline | ✅ | ✅ | — | — | — |
+| Pi | ✅ | — | — | — | — |
+| DeepSeek Harness | ✅ | — | — | — | — |
+| Qwen Code | — | ✅ | — | — | — |
 
 *La resolución de desviaciones (restaurar / adoptar) funciona para la dimensión de Proveedores en todos los agentes anteriores. La cadena de fallback en tiempo de ejecución está disponible actualmente solo para Hermes.*
 
-Para conocer el archivo exacto que escribeescribe cada capacidad y las reglas de seguridad aplicables, consulta **[Transparencia](docs/TRANSPARENCY.md)**.
+Para conocer el archivo exacto que escribe cada capacidad y las reglas de seguridad aplicables, consulta **[Transparencia](docs/TRANSPARENCY.md)**.
 
 ## Instalación
 

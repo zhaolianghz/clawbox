@@ -9,7 +9,7 @@
     <a href="https://github.com/zhaolianghz/clawbox/issues"><img src="https://img.shields.io/github/issues/zhaolianghz/clawbox" alt="Issues" /></a>
   </p>
   <p>
-    <a href="README.md">English</a> · <a href="README.zh.md">中文</a>
+    <a href="README.md">English</a> · <a href="README.zh.md">中文</a> · <a href="README.es-ES.md">Español</a>
   </p>
 </div>
 
@@ -69,6 +69,11 @@ ClawBox 是一款桌面应用（macOS · Windows · Linux），为你的所有 A
 | CodeBuddy | ✅ | ✅ | — | — | — |
 | Cursor | — | ✅ | — | — | — |
 | Qoder | — | — | — | — | — |
+| Gemini | ✅ | ✅ | — | — | — |
+| Cline | ✅ | ✅ | — | — | — |
+| Pi | ✅ | — | — | — | — |
+| DeepSeek Harness | ✅ | — | — | — | — |
+| Qwen Code | — | ✅ | — | — | — |
 
 *漂移处理（恢复 / 导入)对上表所有 agent 的服务商维度生效;运行时兑底链目前仅 Hermes 支持。*
 

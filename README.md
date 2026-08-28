@@ -9,7 +9,7 @@
     <a href="https://github.com/zhaolianghz/clawbox/issues"><img src="https://img.shields.io/github/issues/zhaolianghz/clawbox" alt="Issues" /></a>
   </p>
   <p>
-    <a href="README.md">English</a> · <a href="README.zh.md">中文</a>
+    <a href="README.md">English</a> · <a href="README.zh.md">中文</a> · <a href="README.es-ES.md">Español</a>
   </p>
 </div>
 
@@ -69,6 +69,11 @@ No diff tables or field names — just provider names and two buttons. A top bar
 | CodeBuddy | ✅ | ✅ | — | — | — |
 | Cursor | — | ✅ | — | — | — |
 | Qoder | — | — | — | — | — |
+| Gemini | ✅ | ✅ | — | — | — |
+| Cline | ✅ | ✅ | — | — | — |
+| Pi | ✅ | — | — | — | — |
+| DeepSeek Harness | ✅ | — | — | — | — |
+| Qwen Code | — | ✅ | — | — | — |
 
 *Drift resolution (restore / adopt) works for the Providers dimension on all agents above. The runtime fallback chain is Hermes-only today.*
 
