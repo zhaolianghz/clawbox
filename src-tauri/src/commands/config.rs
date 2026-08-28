@@ -317,9 +317,10 @@ pub fn providers_set_at(
     home: &Path,
     providers: Vec<ProviderSpec>,
 ) -> Result<Vec<ApplyResult>, String> {
-    if providers.iter().any(|p| p.id == DEFAULT_PROVIDER_ID) {
-        return Err("the built-in default provider cannot be created or edited".to_string());
-    }
+    // get 注入的虚拟「官方默认」随整表回传时静默剥离(往返容错):报错会
+    // 拒掉整个保存,用户新增/编辑的真实服务商一起遭殃。
+    let providers: Vec<ProviderSpec> =
+        providers.into_iter().filter(|p| p.id != DEFAULT_PROVIDER_ID).collect();
     let mut config = load_config(home)?;
     let old = std::mem::replace(&mut config.providers, providers);
     let ids: HashSet<String> = config.providers.iter().map(|p| p.id.clone()).collect();
@@ -393,17 +394,32 @@ pub async fn config_providers_set(
 #[cfg(test)]
 mod tests {
     #[test]
-    fn providers_get_injects_default_and_set_rejects_it() {
+    fn providers_get_injects_default_and_set_strips_it() {
         let home = TempHome::new();
         let list = providers_get_at(home.path()).unwrap();
         assert!(list.iter().any(|p| p.id == DEFAULT_PROVIDER_ID), "virtual default missing");
         // 落盘列表不含哨兵
         let cfg = load_config(home.path()).unwrap();
         assert!(cfg.providers.iter().all(|p| p.id != DEFAULT_PROVIDER_ID));
-        // 整表写入带哨兵 → 拒绝
-        let mut with_default = cfg.providers.clone();
-        with_default.push(default_provider_spec());
-        assert!(providers_set_at(home.path(), with_default).is_err());
+        // 整表回传(get 的原样列表 + 用户新增)→ 必须静默剥离哨兵而不是报错,
+        // 且新增条目正常落盘(2026-08-28 月之暗面保存被误拒事故)
+        let mut roundtrip = providers_get_at(home.path()).unwrap();
+        roundtrip.push(ProviderSpec {
+            id: "moonshot".to_string(),
+            name: "Moonshot".to_string(),
+            api_key: "sk-x".to_string(),
+            base_url: String::new(),
+            anthropic_base_url: "https://api.moonshot.cn/anthropic".to_string(),
+            openai_base_url: String::new(),
+            default_model: String::new(),
+            models: vec![],
+            enabled: true,
+            flavor: None,
+        });
+        assert!(providers_set_at(home.path(), roundtrip).unwrap().is_empty());
+        let cfg = load_config(home.path()).unwrap();
+        assert!(cfg.providers.iter().any(|p| p.id == "moonshot"));
+        assert!(cfg.providers.iter().all(|p| p.id != DEFAULT_PROVIDER_ID));
     }
 
     use super::*;

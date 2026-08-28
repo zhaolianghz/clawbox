@@ -1,5 +1,5 @@
 import { writable, derived, get } from 'svelte/store';
-import { get_providers, save_providers, type ApplyResult, type ModelProvider } from '$lib/api/config';
+import { get_providers, save_providers, DEFAULT_PROVIDER_ID, type ApplyResult, type ModelProvider } from '$lib/api/config';
 
 export const providers = writable<ModelProvider[]>([]);
 
@@ -15,7 +15,8 @@ export async function loadProviders(): Promise<void> {
 /** 落盘当前 store;失败时回滚到 prev 并抛出,让调用方展示错误。成功时透传后端自动重推结果 */
 async function persist(prev: ModelProvider[]): Promise<ApplyResult[]> {
   try {
-    return await save_providers(get(providers));
+    // 虚拟「官方默认」条目不随整表回传(后端也会兜底剥离)
+    return await save_providers(get(providers).filter(p => p.id !== DEFAULT_PROVIDER_ID));
   } catch (e) {
     console.warn('save providers failed, rolling back:', e);
     providers.set(prev);
