@@ -102,11 +102,15 @@
   const filtered = $derived.by(() => {
     const q = query.trim().toLowerCase();
     const list = [...PROVIDER_CATALOG, ...customEntries].filter((e) => {
-      const matchCat = activeCategory === 'all' || e.category === activeCategory;
-      const matchFree = !freeOnly || !!e.freeTier;
+      // 搜索时无视分类/免费筛选,跨全目录检索——否则停在「自定义」tab 搜索会把
+      // 目录条目全部藏掉,看起来像"服务商只剩几个"(2026-08-28 智谱搜索事故)
+      const matchCat = !!q || activeCategory === 'all' || e.category === activeCategory;
+      const matchFree = !!q || !freeOnly || !!e.freeTier;
       const name = localize(e.name, $locale).toLowerCase();
       const desc = e.description ? localize(e.description, $locale).toLowerCase() : '';
-      const matchQ = !q || name.includes(q) || e.apiHost.toLowerCase().includes(q) || desc.includes(q);
+      // id 也参与匹配:中文名搜不到时,zhipu/glm 这类英文标识仍可命中
+      const matchQ =
+        !q || name.includes(q) || e.id.toLowerCase().includes(q) || e.apiHost.toLowerCase().includes(q) || desc.includes(q);
       return matchCat && matchFree && matchQ;
     });
     // 「+ 自定义服务商」新增卡:仅在浏览 全部/自定义 且未搜索、未筛免费时出现在末尾
