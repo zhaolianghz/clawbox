@@ -45,10 +45,10 @@
 
   // 已配置的服务商:任一端点槽的 host 命中目录条目即视为匹配
   const configuredByHost = $derived.by(() => {
-    const map = new Map<string, ModelProvider>();
+    const map = new Map<string, ModelProvider[]>();
     for (const p of $providers) {
-      if (p.anthropicBaseUrl) map.set(hostOf(p.anthropicBaseUrl), p);
-      if (p.openaiBaseUrl) map.set(hostOf(p.openaiBaseUrl), p);
+      if (p.anthropicBaseUrl) map.set(hostOf(p.anthropicBaseUrl), [...(map.get(hostOf(p.anthropicBaseUrl)) ?? []), p]);
+      if (p.openaiBaseUrl) map.set(hostOf(p.openaiBaseUrl), [...(map.get(hostOf(p.openaiBaseUrl)) ?? []), p]);
     }
     return map;
   });
@@ -58,8 +58,9 @@
   }
 
   function configuredEntry(e: ProviderCatalogEntry): ModelProvider | undefined {
-    return configuredByHost.get(hostOf(e.apiHost))
-      ?? (e.anthropicHost ? configuredByHost.get(hostOf(e.anthropicHost)) : undefined);
+    const byApi = configuredByHost.get(hostOf(e.apiHost)) ?? [];
+    const byAnthropic = e.anthropicHost ? (configuredByHost.get(hostOf(e.anthropicHost)) ?? []) : [];
+    return byApi[0] ?? byAnthropic[0];
   }
 
   // ---------- 自定义服务商(目录里没有的存储条目)----------
@@ -109,8 +110,15 @@
       const name = localize(e.name, $locale).toLowerCase();
       const desc = e.description ? localize(e.description, $locale).toLowerCase() : '';
       // id 也参与匹配:中文名搜不到时,zhipu/glm 这类英文标识仍可命中
-      const matchQ =
-        !q || name.includes(q) || e.id.toLowerCase().includes(q) || e.apiHost.toLowerCase().includes(q) || desc.includes(q);
+      // 分词 AND:每个空格分隔的词都命中才算匹配("zhipu GLM" → zhipu 命中 id、
+      // GLM 命中描述,而不是要求单个字段包含整串)。已合并进目录卡的配置名
+      // (如用户自定义叫 "zhipu glm")也参与检索。
+      const configuredNames = ([anthropicHostOf(e), openaiHostOf(e)] as (string | null)[])
+        .filter((h): h is string => !!h)
+        .flatMap((h) => configuredByHost.get(h) ?? [])
+        .map((cp) => cp.name.toLowerCase());
+      const haystack = [name, e.id, e.apiHost, desc, ...configuredNames].join(' ').toLowerCase();
+      const matchQ = !q || q.split(/\s+/).every((t) => haystack.includes(t));
       return matchCat && matchFree && matchQ;
     });
     // 「+ 自定义服务商」新增卡:仅在浏览 全部/自定义 且未搜索、未筛免费时出现在末尾
