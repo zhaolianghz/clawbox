@@ -12,6 +12,7 @@
     "skills": "技能",
     "memory": "记忆",
     "agents": "Agent 管理",
+    "usage": "用量",
     "capabilities": "能力",
     "about": "关于",
     "language": "语言"
@@ -534,5 +535,33 @@
   "errors": {
     "requestFailed": "请求失败",
     "applyFailed": "应用失败"
+  },
+  "usage": {
+    "title": "Token 用量",
+    "subtitle": "本机各 agent CLI 的真实 token 消耗,聚合自本地会话日志。",
+    "refresh": "刷新",
+    "loading": "加载中…",
+    "never": "从未",
+    "justNow": "刚刚",
+    "cardToday": "今日",
+    "card7d": "近 7 天",
+    "card30d": "近 30 天",
+    "cardEvents": "事件数 (30天)",
+    "tokensUnit": "tokens",
+    "eventsUnit": "事件",
+    "chartTitle": "按天",
+    "byAgentTitle": "按 agent",
+    "emptyChart": "还没有用量记录。点刷新扫描本机 agent 日志。",
+    "emptyAgent": "尚无 agent 用量数据。",
+    "colModel": "模型",
+    "colInput": "输入",
+    "colCacheRead": "缓存读",
+    "colCacheWrite": "缓存写",
+    "colOutput": "输出",
+    "colEvents": "事件数",
+    "healthOk": "解析正常",
+    "healthWarn": "解析降级 ({ratio}%)",
+    "healthWarnHint": "matched_ratio 低于 80% — 格式可能已变更,近期数据可能缺失。",
+    "refreshed": "已刷新:新增 {events} 个事件,{buckets} 个桶更新。"
   }
 }

@@ -12,6 +12,7 @@
     "skills": "Skills",
     "memory": "Memory",
     "agents": "Agent Management",
+    "usage": "Usage",
     "capabilities": "Capabilities",
     "about": "About",
     "language": "Language"
@@ -534,5 +535,33 @@
   "errors": {
     "requestFailed": "Request failed",
     "applyFailed": "Apply failed"
+  },
+  "usage": {
+    "title": "Token Usage",
+    "subtitle": "Local token consumption aggregated from agent CLI logs.",
+    "refresh": "Refresh",
+    "loading": "Loading…",
+    "never": "never",
+    "justNow": "just now",
+    "cardToday": "Today",
+    "card7d": "Last 7 days",
+    "card30d": "Last 30 days",
+    "cardEvents": "Events (30d)",
+    "tokensUnit": "tokens",
+    "eventsUnit": "events",
+    "chartTitle": "By day",
+    "byAgentTitle": "By agent",
+    "emptyChart": "No usage recorded yet. Click Refresh to scan local agent logs.",
+    "emptyAgent": "No agents with usage data.",
+    "colModel": "Model",
+    "colInput": "Input",
+    "colCacheRead": "Cache Read",
+    "colCacheWrite": "Cache Write",
+    "colOutput": "Output",
+    "colEvents": "Events",
+    "healthOk": "Parse healthy",
+    "healthWarn": "Parse degraded ({ratio}%)",
+    "healthWarnHint": "Matched ratio below 80% — format may have changed, recent data may be missing.",
+    "refreshed": "Refreshed: {events} new events, {buckets} buckets updated."
   }
 }

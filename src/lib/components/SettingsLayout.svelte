@@ -7,11 +7,12 @@
   import AgentHubPage from '../../routes/agents/+page.svelte';
   import CapabilitiesPage from '../../routes/capabilities/+page.svelte';
   import AboutPage from '../../routes/about/+page.svelte';
+  import UsagePage from '../../routes/usage/+page.svelte';
 
   // v1 定位:AI agent 统一配置中心。主导航自上而下:
   // 基础(服务商) → 能力三件套(MCP/技能/记忆,工具→行为→知识) → 消费者(Agent 管理)。
   // skills 与 memory 复用同一个 CapabilitiesPage 实例(keep-alive),由 tab prop 锁定。
-  type SectionId = 'providers' | 'mcp' | 'skills' | 'memory' | 'agents' | 'about';
+  type SectionId = 'providers' | 'mcp' | 'skills' | 'memory' | 'agents' | 'usage' | 'about';
 
   interface Props {
     /** standalone:作为应用本体渲染(无返回按钮,标题为 ClawBox,追加「关于」节) */
@@ -27,6 +28,7 @@
     { id: 'skills', labelKey: 'nav.skills' },
     { id: 'memory', labelKey: 'nav.memory' },
     { id: 'agents', labelKey: 'nav.agents' },
+    { id: 'usage', labelKey: 'nav.usage' },
   ];
 
   /** 语言切换:svelte-i18n locale + localStorage 持久化(i18n/index.ts 启动时读取) */
@@ -45,6 +47,7 @@
     skills: false,
     memory: false,
     agents: false,
+    usage: false,
     about: false,
   });
 
@@ -60,6 +63,7 @@
       mounted.skills = true;
       mounted.memory = true;
       mounted.agents = true;
+      mounted.usage = true;
       if (standalone) mounted.about = true;
     }, 600);
   });
@@ -127,6 +131,14 @@
               <rect x="3" y="3" width="18" height="18" rx="2" ry="2"/>
               <circle cx="8.5" cy="8.5" r="1.5"/>
               <polyline points="21 15 16 10 5 21"/>
+            </svg>
+          {:else if s.id === 'usage'}
+            <!-- 用量:柱状图 -->
+            <svg class="menu-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <line x1="12" y1="20" x2="12" y2="10"/>
+              <line x1="18" y1="20" x2="18" y2="4"/>
+              <line x1="6" y1="20" x2="6" y2="14"/>
+              <line x1="3" y1="20" x2="21" y2="20"/>
             </svg>
           {/if}
           <span class="menu-label">{$_(s.labelKey)}</span>
@@ -206,6 +218,9 @@
     {/if}
     {#if mounted.agents}
       <div class="pane" hidden={activeSection !== 'agents'}><AgentHubPage /></div>
+    {/if}
+    {#if mounted.usage}
+      <div class="pane" hidden={activeSection !== 'usage'}><UsagePage /></div>
     {/if}
     {#if mounted.about}
       <div class="pane" hidden={activeSection !== 'about'}><AboutPage /></div>
