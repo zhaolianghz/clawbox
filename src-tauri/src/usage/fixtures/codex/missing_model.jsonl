@@ -1,0 +1,5 @@
+{"type": "session_meta", "payload": {"id": "019e968d-b6c9-7ed1-975a-c0123fe455ad", "model_provider": "openai"}}
+{"type": "turn_context", "timestamp": "2026-06-05T06:52:45.875Z", "payload": {}}
+{"type": "token_count", "timestamp": "2026-06-05T06:54:31.741Z", "total": {"input": 17993, "cached": 2432, "output": 314, "reasoning": 27}}
+{"type": "token_count", "timestamp": "2026-06-05T06:54:40.410Z", "total": {"input": 41976, "cached": 20224, "output": 632, "reasoning": 27}}
+{"type": "token_count", "timestamp": "2026-06-05T06:55:08.500Z", "total": {"input": 74285, "cached": 22656, "output": 2029, "reasoning": 72}}
