@@ -8,3 +8,4 @@ pub mod provider_test;
 pub mod snapshots;
 pub mod sync;
 pub mod transfer;
+pub mod usage;

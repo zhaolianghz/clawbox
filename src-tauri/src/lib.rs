@@ -82,6 +82,9 @@ pub fn run() {
             commands::sync::memory_target_content,
             commands::sync::sync_memory_plan,
             commands::sync::sync_memory_apply,
+            commands::usage::usage_summary,
+            commands::usage::usage_refresh,
+            commands::usage::usage_provider_summary,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
