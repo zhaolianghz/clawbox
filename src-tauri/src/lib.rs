@@ -4,6 +4,7 @@ pub mod doctor;
 pub mod path_env;
 pub mod proc;
 pub mod sync;
+pub mod usage;
 pub mod commands;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
