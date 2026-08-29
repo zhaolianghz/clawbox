@@ -16,6 +16,8 @@ pub mod codex;
 pub mod store;
 pub mod aggregate;
 
+pub use store::{BucketTotals, MonthBucket};
+
 /// 单个 token 用量事件(已按 provider 计费口径拆分,前端按 4 列展示)。
 ///
 /// `input_tokens` = 新输入(不计 cache)
@@ -73,16 +75,29 @@ impl ParseStats {
 
 /// 单个 adapter 一次扫描的全部产物。`events` 可能为空(没匹配 / 文件被删),
 /// 失败永远记 `stats`,不抛错(逐行容错)。
+///
+/// `error_note` 仅致命错误(IO / 权限)时携带;逐行解析失败一律走
+/// `stats.lines_skipped`,不触发此字段。不参与 serde 序列化 — UI 通过
+/// `aggregate::ParseHealth.errors` 间接读取。
 #[derive(Clone, Debug, Default)]
 pub struct UsageScan {
     pub agent_id: String,
     pub events: Vec<UsageEvent>,
     pub stats: ParseStats,
+    pub error_note: Option<UsageError>,
 }
 
-/// 扫描过程的不可恢复错误(目录权限、IO 整体失败等)。逐行解析失败不算
+impl UsageScan {
+    /// 构造带 error_note 的空 scan(致命错误降级形态)。
+    pub fn with_error(base: UsageScan, e: UsageError) -> Self {
+        UsageScan {
+            error_note: Some(e),
+            ..base
+        }
+    }
+}/// 扫描过程的不可恢复错误(目录权限、IO 整体失败等)。逐行解析失败不算
 /// 错误,只记 stats,符合「降级可见而非静默丢失」原则。
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct UsageError {
     pub agent_id: String,
     pub kind: String,
@@ -149,6 +164,21 @@ pub fn month_bucket_path(home: &Path, year: i32, month: u8) -> PathBuf {
 /// 增量缓存路径 `cache.json`。key = 绝对路径,value = (size, mtime_ms, last_event_id, consumed_total)。
 pub fn cache_path(home: &Path) -> PathBuf {
     usage_dir(home).join("cache.json")
+}
+
+/// 当前 UTC 时间的 RFC3339 字符串(无亚秒,稳定)。aggregate 模块写入月桶
+/// `last_scan_at` 字段用。
+pub fn utc_now_string() -> String {
+    let now = time::OffsetDateTime::now_utc();
+    format!(
+        "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}Z",
+        now.year(),
+        u8::from(now.month()),
+        now.day(),
+        now.hour(),
+        now.minute(),
+        now.second()
+    )
 }
 
 #[cfg(test)]

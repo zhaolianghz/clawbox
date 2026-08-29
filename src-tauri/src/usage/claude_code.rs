@@ -137,15 +137,13 @@ impl UsageProvider for ClaudeCodeUsageProvider {
         if !projects.exists() {
             return Ok(UsageScan {
                 agent_id: agent_id.into(),
-                events: vec![],
-                stats: ParseStats::default(),
+                ..Default::default()
             });
         }
 
         let mut scan = UsageScan {
             agent_id: agent_id.into(),
-            events: vec![],
-            stats: ParseStats::default(),
+            ..Default::default()
         };
 
         let entries = match std::fs::read_dir(&projects) {

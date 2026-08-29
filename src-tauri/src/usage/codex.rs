@@ -185,15 +185,13 @@ impl UsageProvider for CodexUsageProvider {
         if !sessions.exists() {
             return Ok(UsageScan {
                 agent_id: agent_id.into(),
-                events: vec![],
-                stats: ParseStats::default(),
+                ..Default::default()
             });
         }
 
         let mut scan = UsageScan {
             agent_id: agent_id.into(),
-            events: vec![],
-            stats: ParseStats::default(),
+            ..Default::default()
         };
 
         // rollout 文件可能散在 YYYY/MM/DD/ 子目录下,用 walkdir 递归
