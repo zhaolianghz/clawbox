@@ -1,6 +1,6 @@
 <script lang="ts">
   import { _, locale } from 'svelte-i18n';
-  import { onMount } from 'svelte';
+  import { onMount, onDestroy } from 'svelte';
   import { themeChoice, setTheme, type ThemeChoice } from '$lib/theme';
   import ProvidersPage from '../../routes/providers/+page.svelte';
   import McpPage from '../../routes/mcp/+page.svelte';
@@ -8,11 +8,12 @@
   import CapabilitiesPage from '../../routes/capabilities/+page.svelte';
   import AboutPage from '../../routes/about/+page.svelte';
   import UsagePage from '../../routes/usage/+page.svelte';
+  import { currentSection, sectionRequest, type SettingsSection } from '$lib/stores/section';
 
   // v1 定位:AI agent 统一配置中心。主导航自上而下:
   // 基础(服务商) → 能力三件套(MCP/技能/记忆,工具→行为→知识) → 消费者(Agent 管理)。
   // skills 与 memory 复用同一个 CapabilitiesPage 实例(keep-alive),由 tab prop 锁定。
-  type SectionId = 'providers' | 'mcp' | 'skills' | 'memory' | 'agents' | 'usage' | 'about';
+  type SectionId = SettingsSection;
 
   interface Props {
     /** standalone:作为应用本体渲染(无返回按钮,标题为 ClawBox,追加「关于」节) */
@@ -40,6 +41,11 @@
   }
 
   let activeSection = $state<SectionId>('providers');
+  let unsubSectionRequest: (() => void) | null = null;
+  // 同步到共享 store,响应外部 sectionRequest(供其它页面跳转)
+  $effect(() => {
+    currentSection.set(activeSection);
+  });
   // keep-alive:子页首次访问后常驻,切回秒开,避免每次重跑 CLI 探测
   let mounted = $state<Record<SectionId, boolean>>({
     providers: true,
@@ -57,6 +63,13 @@
   }
 
   onMount(() => {
+    // 响应外部跳转请求(如 agents 页头部「用量」按钮)
+    unsubSectionRequest = sectionRequest.subscribe((s) => {
+      if (s) {
+        activeSection = s;
+        mounted[s] = true;
+      }
+    });
     // 预热:首屏就绪后静默挂载其余子页,数据提前加载
     setTimeout(() => {
       mounted.mcp = true;
@@ -66,6 +79,10 @@
       mounted.usage = true;
       if (standalone) mounted.about = true;
     }, 600);
+  });
+
+  onDestroy(() => {
+    unsubSectionRequest?.();
   });
 
   /** skills/memory 是否任一可见(共用 CapabilitiesPage 单实例) */

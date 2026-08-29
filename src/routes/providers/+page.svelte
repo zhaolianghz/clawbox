@@ -9,6 +9,7 @@
   import ProviderLogo from '$lib/components/ProviderLogo.svelte';
   import { providers, addProvider, updateProvider, deleteProvider, loadProviders } from '$lib/stores/config';
   import { provider_test, type ModelProvider, type ProviderFlavor, type ProviderTestResult, DEFAULT_PROVIDER_ID } from '$lib/api/config';
+  import { usageProviderSummary, type ProviderUsage } from '$lib/api/usage';
   import { agent_providers_get, type ApplyResult } from '$lib/api/providerSync';
   import { agents_list } from '$lib/api/agents';
   import { open } from '@tauri-apps/plugin-dialog';
@@ -37,6 +38,7 @@
 
   // agent_id → provider_id 绑定表 → 反查每家服务商被哪些 agent 使用
   let agentBindings = $state<Record<string, string>>({});
+  let providerUsages = $state<ProviderUsage[] | null>(null);
   const usageByProvider = $derived.by(() => {
     const m: Record<string, string[]> = {};
     for (const [agentId, pid] of Object.entries(agentBindings)) (m[pid] ??= []).push(agentId);
@@ -728,7 +730,24 @@
     } catch { /* 回退本地映射即可 */ }
     // 绑定表反查「使用中」徽章;绑定在 Agents 页变更后本页重新挂载时自然刷新
     agentBindings = await agent_providers_get().catch(() => ({}));
+    // 用量:按 provider 名聚合的近 N 天消耗,失败静默(用户没扫过本地日志 = 没数据)
+    usageProviderSummary()
+      .then((r) => (providerUsages = r))
+      .catch(() => {
+        /* 没数据正常 */
+      });
   });
+
+  // 按 provider 名查近 30 天用量,无数据返回 null(卡片里不渲染该行)
+  function providerUsageByName(name: string): ProviderUsage | null {
+    if (!providerUsages) return null;
+    return providerUsages.find((u) => u.provider_name === name) ?? null;
+  }
+  function fmtTokens(n: number): string {
+    if (n >= 1_000_000) return (n / 1_000_000).toFixed(1) + 'M';
+    if (n >= 1_000) return (n / 1_000).toFixed(1) + 'k';
+    return String(n);
+  }
 </script>
 
 <svelte:window
@@ -1006,6 +1025,7 @@
         </button>
       {:else}
       {@const configured = configuredEntry(e)}
+      {@const pUsage = providerUsageByName(localize(e.name, $locale))}
       <div
         class="provider-card glass-card"
         class:added={!!configured}
@@ -1022,6 +1042,11 @@
         </div>
 
         <div class="card-meta">
+          {#if pUsage && (pUsage.totals.input + pUsage.totals.cache_read + pUsage.totals.cache_creation + pUsage.totals.output) > 0}
+            <div class="usage-line" title={$_('providers.usageLineHint')}>
+              {$_('providers.usageMonth', { values: { tokens: fmtTokens(pUsage.totals.input + pUsage.totals.cache_read + pUsage.totals.cache_creation + pUsage.totals.output) } })}
+            </div>
+          {/if}
           {#if configured}
             <!-- 已配置:显示配了哪些端点,地址悬停可见 -->
             {#if configured.anthropicBaseUrl}
@@ -1316,6 +1341,13 @@
   }
 
   .provider-card { padding: 1rem 1.1rem; display: flex; flex-direction: column; gap: 0.75rem; transition: border-color 0.2s ease; }
+  .provider-card .usage-line {
+    font-size: 0.72rem;
+    color: var(--neon-cyan);
+    font-variant-numeric: tabular-nums;
+    padding: 0.2rem 0;
+    border-top: 1px solid var(--border-subtle);
+  }
   .provider-card.added { border-color: rgba(94,234,212,0.35); }
 
   /* 新增自定义服务商卡:虚线占位,居中加号 */

@@ -7,6 +7,8 @@
   import { DEFAULT_PROVIDER_ID } from '../../lib/api/config';
   import { snapshots_list, snapshots_restore, type SnapshotInfo } from '../../lib/api/snapshots';
   import { doctor_run, type DoctorReport, type CheckStatus } from '../../lib/api/doctor';
+  import { usageSummary, type UsageSummary } from '../../lib/api/usage';
+  import { sectionRequest } from '$lib/stores/section';
   import AgentLogo from '../../lib/components/AgentLogo.svelte';
   import { providers, loadProviders } from '../../lib/stores/config';
   import {
@@ -96,21 +98,27 @@
   }
 
   onMount(() => {
-    // 秒开:先渲染上次探测结果,真实探测后台进行
-    const cached = readStatusCache();
-    if (cached) {
-      agents = cached;
-      isLoading = false;
-    }
-    // 服务商列表/绑定与 agent 探测互不依赖:并行启动,不让 2s+ 的探测
-    // 拖住服务商选择器的首次渲染
-    void loadProviders();
-    // 漂移检测随页面加载即跑:顶部「全部恢复」条与卡片横幅依赖 overview,
-    // 必须在这里启动,否则漂移要等用户点开「同步详情」才可见(违背傻瓜式设计)。
-    void loadOverview();
-    agent_providers_get()
-      .then((b) => (bindings = b))
-      .catch((e) => console.warn('agent_providers_get failed', e));
+  // 秒开:先渲染上次探测结果,真实探测后台进行
+  const cached = readStatusCache();
+  if (cached) {
+    agents = cached;
+    isLoading = false;
+  }
+  // 服务商列表/绑定与 agent 探测互不依赖:并行启动,不让 2s+ 的探测
+  // 拖住服务商选择器的首次渲染
+  void loadProviders();
+  // 漂移检测随页面加载即跑:顶部「全部恢复」条与卡片横幅依赖 overview,
+  // 必须在这里启动,否则漂移要等用户点开「同步详情」才可见(违背傻瓜式设计)。
+  void loadOverview();
+  agent_providers_get()
+    .then((b) => (bindings = b))
+    .catch((e) => console.warn('agent_providers_get failed', e));
+  // 用量小行:只取近 30 天,失败静默(用户没扫过本地日志 = 没数据,正常)
+  usageSummary(30)
+    .then((s) => (usageSummaryData = s))
+    .catch(() => {
+      /* 没数据正常,不需要警告 */
+    });
     agent_fallbacks_get()
       .then((f) => (fallbacks = f))
       .catch((e) => console.warn('agent_fallbacks_get failed', e));
@@ -461,6 +469,26 @@
   let restoreConfirmId = $state<string | null>(null); // 待确认恢复的快照 id
   let restoringId = $state<string | null>(null);
   let restoreMsg = $state(''); // 最近一次恢复结果(成功摘要/失败原因)
+  let usageSummaryData = $state<UsageSummary | null>(null); // 近 30 天汇总(卡片小行用)
+  // 某 agent 近 30 天用量(由 usageSummaryData.by_agent 索引出)。无数据 = 未扫描或未启用。
+  function agentUsage(agentId: string) {
+    if (!usageSummaryData) return null;
+    return usageSummaryData.by_agent.find((a) => a.agent_id === agentId) ?? null;
+  }
+  function fmtTokens(n: number): string {
+    if (n >= 1_000_000) return (n / 1_000_000).toFixed(1) + 'M';
+    if (n >= 1_000) return (n / 1_000).toFixed(1) + 'k';
+    return String(n);
+  }
+  // 主用模型(按近 30 天 input 量排)
+  function topModel(agentId: string): { model: string; pct: number } | null {
+    const a = agentUsage(agentId);
+    if (!a) return null;
+    const sorted = [...a.by_model].sort((x, y) => y.totals.input - x.totals.input);
+    const total = sorted.reduce((s, m) => s + m.totals.input, 0);
+    if (total === 0 || sorted.length === 0) return null;
+    return { model: sorted[0].model, pct: (sorted[0].totals.input / total) * 100 };
+  }
 
   const snapRowEnd = $derived.by(() => {
     if (snapDetailId === null) return -1;
@@ -562,6 +590,9 @@
       {#if probing}<span class="spinner small"></span>{/if}
       {$_('agents.refresh')}
     </button>
+    <button class="refresh-btn" onclick={() => sectionRequest.set('usage')}>
+      {$_('agents.openUsage')}
+    </button>
   </header>
 
   {#if isLoading && agents.length === 0}
@@ -652,6 +683,16 @@
               {/if}
             </div>
           </div>
+          {#if agentUsage(a.id) && (agentUsage(a.id)!.totals.input + agentUsage(a.id)!.totals.cache_read + agentUsage(a.id)!.totals.cache_creation + agentUsage(a.id)!.totals.output) > 0}
+            {@const tm = topModel(a.id)}
+            {@const au = agentUsage(a.id)!}
+            <div class="usage-line" title={$_('agents.usageLineHint')}>
+              <span class="usage-month">{$_('agents.usageMonth', { values: { tokens: fmtTokens(au.totals.input + au.totals.cache_read + au.totals.cache_creation + au.totals.output) } })}</span>
+              {#if tm}
+                <span class="usage-model">{tm.model} · {Math.round(tm.pct)}%</span>
+              {/if}
+            </div>
+          {/if}
           {#if isDrifted(a.id)}
             {@const boundSpec = bindings[a.id] ? $providers.find((p) => p.id === bindings[a.id]) : null}
             {@const active = activeProviders[a.id] ?? null}
@@ -998,6 +1039,18 @@
     .agent-grid { grid-template-columns: 1fr; }
   }
   .agent-card { padding: 1.1rem; display: flex; flex-direction: column; gap: 0.7rem; }
+  .usage-line {
+    display: flex;
+    align-items: baseline;
+    gap: 0.5rem;
+    font-size: 0.72rem;
+    color: var(--text-secondary);
+    padding: 0.2rem 0;
+    border-top: 1px solid var(--border-subtle);
+    margin-top: auto;
+  }
+  .usage-month { font-weight: 500; color: var(--neon-cyan); font-variant-numeric: tabular-nums; }
+  .usage-model { font-family: var(--font-mono, ui-monospace, monospace); }
   .card-head { display: flex; align-items: center; gap: 0.8rem; }
   .head-info { display: flex; flex-direction: column; gap: 0.2rem; min-width: 0; }
   .title-line { display: flex; align-items: center; gap: 0.5rem; }
