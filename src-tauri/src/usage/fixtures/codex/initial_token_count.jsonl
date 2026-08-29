@@ -1,3 +1,3 @@
 {"type": "session_meta", "payload": {"id": "019e968d-b6c9-7ed1-975a-c0123fe455ad", "model_provider": "openai"}}
-{"type": "turn_context", "timestamp": "2026-06-05T06:52:45.875Z", "payload": {"model": "gpt-5.5"}}
-{"type": "token_count", "timestamp": "2026-06-05T06:54:31.741Z", "total": {"input": 17993, "cached": 2432, "output": 314, "reasoning": 27}}
+{"type": "turn_context", "payload": {"model": "gpt-5.5"}}
+{"type": "event_msg", "timestamp": "2026-06-05T06:54:31.741Z", "payload": {"type": "token_count", "info": {"total_token_usage": {"input_tokens": 17993, "cached_input_tokens": 2432, "output_tokens": 314, "reasoning_output_tokens": 27, "total_tokens": 20766}, "last_token_usage": {"input_tokens": 17993, "cached_input_tokens": 2432, "output_tokens": 314, "reasoning_output_tokens": 27, "total_tokens": 20766}, "model_context_window": 258400}, "rate_limits": {"limit_id": "codex_bengalfox", "limit_name": "GPT-5.3-Codex-Spark", "primary": {"used_percent": 0.0}, "secondary": null}}}
