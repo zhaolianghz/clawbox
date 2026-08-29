@@ -4,6 +4,23 @@ All notable changes to ClawBox are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/), and versions adhere to
 [Semantic Versioning](https://semver.org/).
 
+## [Unreleased] — Token 用量统计(路线图 #1)
+
+### Added
+- **Token 用量统计(`/usage` 页)** — 路线图 #1 落地。本机各 agent CLI 的真实
+  token 消耗,按天 × agent × 模型聚合,落 ClawBox 自有存储(`~/.clawbox/usage/`),
+  与原始 JSONL 解耦 → 抗 Claude Code 默认 30 天会话清理。
+- **UsageProvider trait** — 每 agent 一个 adapter(Claude Code + Codex v1)。
+  形状提取逐行容错,matched_ratio 低于 80% → UI 黄条提示;adapter 内多
+  revision + 故障隔离,format 升级最坏只丢变更后的新数据,旧桶不受影响。
+- **Codex 累积差值口径** — `token_count` 事件只给累积 `total_token_usage`,
+  按文件内 last_total 快照差值即 turn 增量;output 含 reasoning。
+- **Agents 页头部「用量」入口** + 每 agent 卡片本月消耗小条
+  (model · 占比%);Providers 页每 provider 卡片本月 token 消耗。
+- 三条 Tauri 命令:`usage_summary` / `usage_refresh` / `usage_provider_summary`。
+- Spec: `docs/superpowers/specs/2026-08-29-token-usage-design.md`
+- Plan: `docs/superpowers/plans/2026-08-29-token-usage.md`
+
 ## [0.3.2] - 2026-07-24
 
 ### Added
