@@ -110,6 +110,20 @@ fn normalize_provider_endpoints(p: &mut ProviderSpec) {
     }
     p.base_url = String::new();
     p.flavor = None;
+    normalize_provider_default_model(p);
+}
+
+/// defaultModel 为空但 models 非空 → 取第一个已知模型当默认。
+///
+/// 各 agent 适配器普遍以 default_model 为「有没有模型可用」的判据(kimi 的
+/// [models.x]/default_model、codex 的 model 等),空默认会让 agent 拿到只有
+/// 端点没有模型的配置(2026-08-29 kimi 绑定 route-deepseek 后显示无模型)。
+fn normalize_provider_default_model(p: &mut ProviderSpec) {
+    if p.default_model.trim().is_empty() {
+        if let Some(first) = p.models.iter().find(|m| !m.trim().is_empty()) {
+            p.default_model = first.trim().to_string();
+        }
+    }
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, Default)]
@@ -322,6 +336,10 @@ pub fn providers_set_at(
     let providers: Vec<ProviderSpec> =
         providers.into_iter().filter(|p| p.id != DEFAULT_PROVIDER_ID).collect();
     let mut config = load_config(home)?;
+    let mut providers = providers;
+    for p in &mut providers {
+        normalize_provider_default_model(p);
+    }
     let old = std::mem::replace(&mut config.providers, providers);
     let ids: HashSet<String> = config.providers.iter().map(|p| p.id.clone()).collect();
     config.agent_providers.retain(|_, pid| ids.contains(pid));
@@ -438,6 +456,18 @@ mod tests {
             enabled: true,
             flavor: None,
         }
+    }
+
+    #[test]
+    fn empty_default_model_falls_back_to_first_known_model() {
+        // route-deepseek 只勾了模型没设默认 → kimi 拿不到 [models.x]/default_model
+        let home = TempHome::new();
+        let mut p = spec("rd", "route-deepseek");
+        p.default_model = String::new();
+        p.models = vec!["deepseek-v4-pro-free".to_string()];
+        providers_set_at(home.path(), vec![p]).unwrap();
+        let cfg = load_config(home.path()).unwrap();
+        assert_eq!(cfg.providers[0].default_model, "deepseek-v4-pro-free");
     }
 
     #[test]

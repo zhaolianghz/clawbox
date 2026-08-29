@@ -201,7 +201,6 @@
   let editorOpen = $state(false);
   let editingId = $state<string | null>(null); // null = 新增
   let editingEntry = $state<ProviderCatalogEntry | null>(null); // 目录条目,提供官方地址一键填充
-  let editingOriginalName = $state(''); // 打开时的初始名,用于改端点后自动改名判断
 
   // 网格实际列数(auto-fill 随宽度变),浏览器解析后的真值 + ResizeObserver 跟踪;
   // 配置面板插入位置(行尾)依赖它。
@@ -343,7 +342,6 @@
     editorOpen = false;
     editingEntry = null;
     editingId = null;
-    editingOriginalName = '';
   }
 
   function openAdd(e: ProviderCatalogEntry) {
@@ -355,7 +353,6 @@
     editingId = null;
     editingEntry = e;
     formName = localize(e.name, $locale);
-    editingOriginalName = formName;
     formAnthropicUrl = anthropicHostOf(e) ?? '';
     formOpenaiUrl = openaiHostOf(e) ?? '';
     formApiKey = '';
@@ -377,7 +374,6 @@
     editingId = null;
     editingEntry = { id: CUSTOM_NEW_ID, name: { en: 'Custom Provider', zh: '自定义服务商' }, apiHost: '', category: 'custom', color: '#7c5cff' };
     formName = '';
-    editingOriginalName = '';
     formAnthropicUrl = '';
     formOpenaiUrl = '';
     formApiKey = '';
@@ -396,7 +392,6 @@
     editingId = p.id;
     editingEntry = e;
     formName = p.name;
-    editingOriginalName = p.name;
     // 空槽直接预填目录官方地址,免得用户还要手动找端点;不想要清空即可
     formAnthropicUrl = p.anthropicBaseUrl || (anthropicHostOf(e) ?? '');
     formOpenaiUrl = p.openaiBaseUrl || (openaiHostOf(e) ?? '');
@@ -421,18 +416,8 @@
       formError = $_('providers.form.endpointRequired');
       return;
     }
-    // 目录条目被改到非官方端点:名字还保持原样时,自动带上「自定义-」前缀,
-    // 让卡片如实体现在这不是官方直连(用户已自定义名字则尊重用户)
-    let finalName = name;
-    if (editingEntry && editingEntry.id !== CUSTOM_NEW_ID) {
-      const officialHosts = [anthropicHostOf(editingEntry), openaiHostOf(editingEntry)].filter(Boolean);
-      const nowHosts = [anthropicBaseUrl, openaiBaseUrl].filter(Boolean).map(hostOf);
-      const drifted = nowHosts.length > 0 && nowHosts.some((h) => !officialHosts.includes(h));
-      const prefixBase = $_('providers.form.customPrefix', { values: { name: '' } });
-      if (drifted && name === editingOriginalName && !name.startsWith(prefixBase)) {
-        finalName = $_('providers.form.customPrefix', { values: { name } });
-      }
-    }
+    // 名字一律尊重用户输入:不再因端点改动自动加「自定义-」前缀
+    const finalName = name;
     const data = {
       name: finalName,
       anthropicBaseUrl,
