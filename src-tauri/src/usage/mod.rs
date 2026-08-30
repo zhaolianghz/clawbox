@@ -15,6 +15,7 @@ pub mod claude_code;
 pub mod codex;
 pub mod store;
 pub mod aggregate;
+pub mod pricing;
 
 pub use store::{BucketTotals, MonthBucket};
 
