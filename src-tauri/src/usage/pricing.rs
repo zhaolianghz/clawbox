@@ -111,6 +111,10 @@ pub fn builtin_prices(model: &str) -> Option<ModelPrice> {
     if let Some(p) = kimi_prices(&m) {
         return Some(p);
     }
+    // MiniMax M3 / M2 系列(platform.minimax.io)
+    if let Some(p) = minimax_prices(&m) {
+        return Some(p);
+    }
     None
 }
 
@@ -119,7 +123,23 @@ fn claude_prices(m: &str) -> Option<ModelPrice> {
     let hit = |prefixes: &[&str]| -> bool {
         prefixes.iter().any(|p| m.starts_with(p))
     };
-    if hit(&["claude-opus-4-1"]) {
+    // Anthropic Fable 5/Mythos 5 (2026-06-09 发布,Mythos-class,定价是 Opus 4.x 的 2 倍)
+    if hit(&["claude-fable-5"]) || hit(&["claude-mythos-5"]) {
+        Some(ModelPrice {
+            input: 10.0,
+            cache_read: None,
+            cache_creation: None,
+            output: 50.0,
+        })
+    } else if hit(&["claude-opus-5"]) {
+        // Claude Opus 5 (2026-07-24,价格同 Opus 4.8,无 cache)
+        Some(ModelPrice {
+            input: 5.0,
+            cache_read: None,
+            cache_creation: None,
+            output: 25.0,
+        })
+    } else if hit(&["claude-opus-4-1"]) {
         // Claude Opus 4.1: input $15, output $75, cache_read $1.50, cache_write $18.75
         Some(ModelPrice {
             input: 15.0,
@@ -333,17 +353,31 @@ fn gemini_prices(m: &str) -> Option<ModelPrice> {
 }
 
 fn deepseek_prices(m: &str) -> Option<ModelPrice> {
-    // DeepSeek V3 / R1 统一价:$0.27 input(cache hit)/$0.55 cache miss/$1.10 output
-    // (官方页 2026-08 价,缓存命中按 input 单价算)
-    if m.starts_with("deepseek-v3") || m.starts_with("deepseek-r1") || m.starts_with("deepseek-v2") {
+    // DeepSeek V4 Pro (2026-04): $1.74/M input, $3.48/M output, $0.0145/M cache hit
+    // DeepSeek V4 Flash (2026-04): $0.14/M input, $0.28/M output, $0.014/M cache hit
+    // DeepSeek V3 / R1 / V2: $0.27/M input, $0.07/M cache hit, $1.10/M output
+    if m.starts_with("deepseek-v4-pro") {
+        Some(ModelPrice {
+            input: 1.74,
+            cache_read: Some(0.0145),
+            cache_creation: None,
+            output: 3.48,
+        })
+    } else if m.starts_with("deepseek-v4-flash") {
+        Some(ModelPrice {
+            input: 0.14,
+            cache_read: Some(0.014),
+            cache_creation: None,
+            output: 0.28,
+        })
+    } else if m.starts_with("deepseek-v3") || m.starts_with("deepseek-r1") || m.starts_with("deepseek-v2") {
         Some(ModelPrice {
             input: 0.27,
-            cache_read: Some(0.07), // 缓存命中单独定价($0.07/M,官方页)
+            cache_read: Some(0.07),
             cache_creation: None,
             output: 1.10,
         })
     } else if m.starts_with("deepseek") {
-        // 未知 deepseek 子模型给个保守价
         Some(ModelPrice {
             input: 0.27,
             cache_read: None,
@@ -356,9 +390,15 @@ fn deepseek_prices(m: &str) -> Option<ModelPrice> {
 }
 
 fn glm_prices(m: &str) -> Option<ModelPrice> {
-    // 智谱 GLM-4.5 / 4.6 系列:input $0.30 / output $2.50(v4.5 公开价)
-    // GLM-4-Flash:免费 / GLM-4-Air: $0.001/$0.001
-    if m.starts_with("glm-4-6") {
+    // 智谱 GLM-4.7(2026-04 更新价):input $0.60 / output $2.20 / cache_read $0.11
+    if m.starts_with("glm-4-7") || m.starts_with("glm-4.7") {
+        Some(ModelPrice {
+            input: 0.60,
+            cache_read: Some(0.11),
+            cache_creation: None,
+            output: 2.20,
+        })
+    } else if m.starts_with("glm-4-6") {
         Some(ModelPrice {
             input: 0.30,
             cache_read: None,
@@ -422,6 +462,53 @@ fn kimi_prices(m: &str) -> Option<ModelPrice> {
     }
 }
 
+fn minimax_prices(m: &str) -> Option<ModelPrice> {
+    // MiniMax M3 / M2.7 / M2.5 / M2.1 系列(platform.minimax.io Std tier ≤512K)
+    // Pay-as-you-go: input $0.30 / output $1.20 / cache_read $0.06 / cache_creation (无)
+    // >512K 输入上下文双倍;此处用 ≤512K 价(绝大多数请求这个范围)
+    if m.starts_with("minimax-m3")
+        || m.starts_with("MiniMax-m3")
+        || m.starts_with("MiniMax-M3")
+    {
+        Some(ModelPrice {
+            input: 0.30,
+            cache_read: Some(0.06),
+            cache_creation: None,
+            output: 1.20,
+        })
+    } else if m.starts_with("minimax-m2-7-highspeed")
+        || m.starts_with("MiniMax-M2.7-highspeed")
+    {
+        // M2.7-highspeed: $0.60 / $2.40
+        Some(ModelPrice {
+            input: 0.60,
+            cache_read: Some(0.03),
+            cache_creation: Some(0.375),
+            output: 2.40,
+        })
+    } else if m.starts_with("minimax-m2")
+        || m.starts_with("MiniMax-M2")
+    {
+        // M2.5 / M2.1 / M2.7 统一价: $0.30 / $1.20
+        Some(ModelPrice {
+            input: 0.30,
+            cache_read: Some(0.03),
+            cache_creation: Some(0.375),
+            output: 1.20,
+        })
+    } else if m.starts_with("MiniMax") {
+        // 兜底:未知 MiniMax 子模型给保守价
+        Some(ModelPrice {
+            input: 0.30,
+            cache_read: None,
+            cache_creation: None,
+            output: 1.20,
+        })
+    } else {
+        None
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -431,22 +518,75 @@ mod tests {
         // 主流必须命中
         assert!(builtin_prices("claude-opus-4-1-20250805").is_some());
         assert!(builtin_prices("claude-sonnet-4-5").is_some());
+        assert!(builtin_prices("claude-fable-5").is_some());
+        assert!(builtin_prices("claude-fable-5-20260609").is_some());
+        assert!(builtin_prices("claude-opus-5").is_some());
+        assert!(builtin_prices("claude-mythos-5").is_some());
+        assert!(builtin_prices("MiniMax-M3").is_some());
+        assert!(builtin_prices("minimax-m3").is_some());
+        assert!(builtin_prices("minimax-m2-7-highspeed").is_some());
         assert!(builtin_prices("gpt-4o").is_some());
         assert!(builtin_prices("gpt-5").is_some());
         assert!(builtin_prices("gpt-5-mini").is_some());
         assert!(builtin_prices("o4-mini").is_some());
         assert!(builtin_prices("gemini-2.5-pro").is_some());
         assert!(builtin_prices("deepseek-v3").is_some());
+        assert!(builtin_prices("deepseek-v4-pro").is_some());
+        assert!(builtin_prices("deepseek-v4-flash").is_some());
         assert!(builtin_prices("glm-4.5").is_some());
         assert!(builtin_prices("glm-4.6").is_some());
+        assert!(builtin_prices("glm-4.7").is_some());
         assert!(builtin_prices("kimi-k2.5").is_some());
 
         // 大小写不敏感
         assert!(builtin_prices("CLAUDE-OPUS-4-1").is_some());
 
         // 未知返回 None
-        assert!(builtin_prices("claude-fable-5").is_none());
-        assert!(builtin_prices("MiniMax-M3").is_none());
+        assert!(builtin_prices("some-totally-fake-model-xyz").is_none());
+    }
+
+    #[test]
+    fn claude_fable_5_pricing_is_doubled_vs_opus() {
+        // Fable 5 是 Opus 4.x 的 2 倍(input $10 vs $5,output $50 vs $25)
+        let fable = builtin_prices("claude-fable-5").unwrap();
+        assert_eq!(fable.input, 10.0);
+        assert_eq!(fable.output, 50.0);
+        let opus5 = builtin_prices("claude-opus-5").unwrap();
+        assert_eq!(opus5.input, 5.0);
+        assert_eq!(opus5.output, 25.0);
+        // Fable 没有 cache 价(官方未发布)
+        assert!(fable.cache_read.is_none());
+        assert!(fable.cache_creation.is_none());
+    }
+
+    #[test]
+    fn minimax_m3_pricing_matches_official_page() {
+        let m3 = builtin_prices("MiniMax-M3").unwrap();
+        assert_eq!(m3.input, 0.30);
+        assert_eq!(m3.output, 1.20);
+        assert_eq!(m3.cache_read, Some(0.06));
+        // 没有 cache_creation
+        assert_eq!(m3.cache_creation, None);
+    }
+
+    #[test]
+    fn deepseek_v4_pricing_distinguishes_pro_vs_flash() {
+        let pro = builtin_prices("deepseek-v4-pro").unwrap();
+        let flash = builtin_prices("deepseek-v4-flash").unwrap();
+        // Pro 是 Flash 的 10 倍价
+        assert!(pro.input > flash.input * 5.0);
+        assert_eq!(pro.input, 1.74);
+        assert_eq!(flash.input, 0.14);
+        // 4-1 / 4-pro-0813-ga 都能命中(版本快照后缀)
+        assert!(builtin_prices("deepseek-v4-pro-0813-ga").is_some());
+    }
+
+    #[test]
+    fn glm_4_7_pricing_matches_zhipu_official() {
+        let m = builtin_prices("glm-4.7").unwrap();
+        assert_eq!(m.input, 0.60);
+        assert_eq!(m.output, 2.20);
+        assert_eq!(m.cache_read, Some(0.11));
     }
 
     #[test]
