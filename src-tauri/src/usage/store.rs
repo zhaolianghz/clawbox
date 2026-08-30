@@ -11,7 +11,7 @@ use std::fs;
 use std::path::Path;
 
 /// 月桶 key = `agent_id:model`(BTreeMap 保证稳定遍历序)。
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct BucketTotals {
     #[serde(default)]
     pub input: u64,
@@ -23,6 +23,13 @@ pub struct BucketTotals {
     pub output: u64,
     #[serde(default)]
     pub events: u64,
+    /// 本桶内累计成本(USD)。**写入时**按 model id 直接查 builtin_prices 算,
+    /// 不感知 provider 的 alias/override(那俩是用户态,store 不依赖)。
+    /// 用户修改 alias 后,旧桶的 cost_usd 不会自动重算(v1 简化) —
+    /// 前端如需最新值,可在 UI 提供「按当前 alias 重算」按钮单独触发。
+    /// None = 写入时尚未知价(model 不在默认表里),前端显示"—"。
+    #[serde(default)]
+    pub cost_usd: Option<f64>,
 }
 
 impl BucketTotals {
@@ -32,6 +39,11 @@ impl BucketTotals {
         self.cache_creation += other.cache_creation;
         self.output += other.output;
         self.events += other.events;
+        // cost_usd 累加(None + Some = Some;Some + Some = Some;None + None = None)
+        self.cost_usd = match (self.cost_usd, other.cost_usd) {
+            (Some(a), Some(b)) => Some(a + b),
+            (a, b) => a.or(b),
+        };
     }
 }
 
@@ -175,12 +187,21 @@ pub fn append_event(
     b.seen_events.insert(key);
 
     let bucket_key = format!("{}:{}", agent_id, event.model);
+    let event_cost = super::pricing::builtin_prices(&event.model).map(|p| {
+        p.event_cost(
+            event.input_tokens,
+            event.cache_read_tokens,
+            event.cache_creation_tokens,
+            event.output_tokens,
+        )
+    });
     let delta = BucketTotals {
         input: event.input_tokens,
         cache_read: event.cache_read_tokens,
         cache_creation: event.cache_creation_tokens,
         output: event.output_tokens,
         events: 1,
+        cost_usd: event_cost,
     };
     let day_buckets = b.buckets.entry(day.to_string()).or_default();
     let entry = day_buckets.entry(bucket_key).or_default();
@@ -243,12 +264,21 @@ pub fn append_events_batch(
 
             let day = ev.ts.get(..10).unwrap_or("unknown");
             let bucket_key = format!("{}:{}", agent_id, ev.model);
+            let event_cost = super::pricing::builtin_prices(&ev.model).map(|p| {
+                p.event_cost(
+                    ev.input_tokens,
+                    ev.cache_read_tokens,
+                    ev.cache_creation_tokens,
+                    ev.output_tokens,
+                )
+            });
             let delta = BucketTotals {
                 input: ev.input_tokens,
                 cache_read: ev.cache_read_tokens,
                 cache_creation: ev.cache_creation_tokens,
                 output: ev.output_tokens,
                 events: 1,
+                cost_usd: event_cost,
             };
             let day_buckets = bucket.buckets.entry(day.to_string()).or_default();
             let entry = day_buckets.entry(bucket_key).or_default();
@@ -449,14 +479,37 @@ mod tests {
 
     #[test]
     fn bucket_totals_add_accumulates_all_fields() {
-        let mut a = BucketTotals { input: 1, cache_read: 2, cache_creation: 3, output: 4, events: 5 };
-        let b = BucketTotals { input: 10, cache_read: 20, cache_creation: 30, output: 40, events: 50 };
+        let mut a = BucketTotals { input: 1, cache_read: 2, cache_creation: 3, output: 4, events: 5, cost_usd: None };
+        let b = BucketTotals { input: 10, cache_read: 20, cache_creation: 30, output: 40, events: 50, cost_usd: None };
         a.add(&b);
         assert_eq!(a.input, 11);
         assert_eq!(a.cache_read, 22);
         assert_eq!(a.cache_creation, 33);
         assert_eq!(a.output, 44);
         assert_eq!(a.events, 55);
+    }
+
+    #[test]
+    fn bucket_totals_add_merges_cost_usd() {
+        // None + Some = Some
+        let mut a = BucketTotals { cost_usd: None, ..Default::default() };
+        let b = BucketTotals { cost_usd: Some(1.50), ..Default::default() };
+        a.add(&b);
+        assert_eq!(a.cost_usd, Some(1.50));
+        // Some + Some = sum
+        let c = BucketTotals { cost_usd: Some(0.75), ..Default::default() };
+        a.add(&c);
+        assert_eq!(a.cost_usd, Some(2.25));
+        // None + None = None
+        let mut d = BucketTotals { cost_usd: None, ..Default::default() };
+        let e = BucketTotals { cost_usd: None, ..Default::default() };
+        d.add(&e);
+        assert_eq!(d.cost_usd, None);
+        // Some + None: 保持 Some 不变
+        let mut f = BucketTotals { cost_usd: Some(5.0), ..Default::default() };
+        let g = BucketTotals { cost_usd: None, ..Default::default() };
+        f.add(&g);
+        assert_eq!(f.cost_usd, Some(5.0));
     }
 
     #[test]
