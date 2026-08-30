@@ -135,6 +135,14 @@ pub fn builtin_prices(model: &str) -> Option<ModelPrice> {
     if let Some(p) = minimax_prices(&m) {
         return Some(p);
     }
+    // 阿里云百炼 DashScope (Qwen 系列)
+    if let Some(p) = qwen_prices(&m) {
+        return Some(p);
+    }
+    // 字节跳动豆包 Doubao / Seed (火山方舟 Volcano Ark)
+    if let Some(p) = doubao_prices(&m) {
+        return Some(p);
+    }
     None
 }
 
@@ -714,6 +722,150 @@ fn minimax_prices(m: &str) -> Option<ModelPrice> {
     }
 }
 
+// ─────────────────────────────────────────────────────────────────────────
+//  Qwen(阿里云百炼 DashScope)  —  https://help.aliyun.com/zh/model-studio/model-pricing
+// ─────────────────────────────────────────────────────────────────────────
+//
+// 2026-05/08 价(¥ / 1M tokens,以下换算 USD 按 7.2:1)。
+// 国际站(bailian.console.aliyun.com)价更稳定,统一以"国际站美元口径"记录:
+//
+// | Model             | Input   | Output  | Notes |
+// | qwen3.8-max       | $1.67   | $3.75   | 最新旗舰 1M context,2026-08
+// | qwen3.7-max       | $1.25   | $3.75   | 2026-05, 50% promo
+// | qwen3.5-397b      | $0.60   | $3.60   | MoE 旗舰
+// | qwen3.5-plus      | $0.40   | $2.40   | ≤256K;>256K $1.25/$5.00
+// | qwen3.5-flash     | $0.10   | $0.40   | 1M 快
+// | qwen3.7-plus      | $0.32   | $1.28   | ≤32K; 多模态
+// | qwen3-max         | $1.20   | $6.00   | 262K, cache_read $0.12
+// | qwen-plus         | $0.40   | $1.20   | 老旗舰
+// | qwen-turbo        | $0.05   | $0.20   | 入门
+// | qwen3.5-omni-plus | $0.97   | $7.36   | 多模态旗舰
+// | qwen3.5-omni-flash| $0.31   | $2.50   | 多模态快
+// | qwen3.5-coder     | $0.40   | $2.40   | 编程专用
+// | qwen-long         | $0.14   | $0.56   | 1M 长文
+//
+// cache_read 字段:qwen3-max 给 0.12;qwen3.x 系列享受"上下文缓存折扣"
+// 但具体折扣率未官方公开到 USD 单价,按 input * 0.1 估算。
+
+fn qwen_prices(m: &str) -> Option<ModelPrice> {
+    let yuan = |y: f64| y / 7.2;
+    if m.starts_with("qwen3.8-max") || m.starts_with("qwen3-8-max") {
+        Some(ModelPrice { input: 1.67, cache_read: Some(0.17), cache_creation: None, output: 3.75 })
+    } else if m.starts_with("qwen3.7-max") || m.starts_with("qwen3-7-max") {
+        Some(ModelPrice { input: 1.25, cache_read: Some(0.13), cache_creation: None, output: 3.75 })
+    } else if m.starts_with("qwen3.5-397b") || m.starts_with("qwen3-5-397b") || m.starts_with("qwen3.5-max") {
+        Some(ModelPrice { input: 0.60, cache_read: Some(0.06), cache_creation: None, output: 3.60 })
+    } else if m.starts_with("qwen3.5-omni-plus") || m.starts_with("qwen3-5-omni-plus") {
+        Some(ModelPrice { input: 0.97, cache_read: Some(0.10), cache_creation: None, output: 7.36 })
+    } else if m.starts_with("qwen3.5-omni-flash") || m.starts_with("qwen3-5-omni-flash") {
+        Some(ModelPrice { input: 0.31, cache_read: Some(0.03), cache_creation: None, output: 2.50 })
+    } else if m.starts_with("qwen3.7-plus") || m.starts_with("qwen3-7-plus") {
+        // ≤32K 档;>32K 翻 3 倍
+        Some(ModelPrice { input: 0.32, cache_read: Some(0.03), cache_creation: None, output: 1.28 })
+    } else if m.starts_with("qwen3-max") || m.starts_with("qwen3.6-plus") {
+        Some(ModelPrice { input: 1.20, cache_read: Some(0.12), cache_creation: None, output: 6.00 })
+    } else if m.starts_with("qwen3.5-plus") || m.starts_with("qwen3-5-plus") {
+        Some(ModelPrice { input: 0.40, cache_read: Some(0.04), cache_creation: None, output: 2.40 })
+    } else if m.starts_with("qwen3.5-flash") || m.starts_with("qwen3-5-flash") {
+        Some(ModelPrice { input: 0.10, cache_read: Some(0.01), cache_creation: None, output: 0.40 })
+    } else if m.starts_with("qwen3.7-flash") || m.starts_with("qwen3-7-flash") {
+        // 2026 新品,极便宜
+        Some(ModelPrice { input: 0.03, cache_read: None, cache_creation: None, output: 0.13 })
+    } else if m.starts_with("qwen3.5-coder") || m.starts_with("qwen3-5-coder") || m.starts_with("qwen3-coder") {
+        Some(ModelPrice { input: 0.40, cache_read: None, cache_creation: None, output: 2.40 })
+    } else if m.starts_with("qwen3") {
+        // 兜底:未知 qwen3 子模型按 qwen3.5-flash 价
+        Some(ModelPrice { input: 0.10, cache_read: Some(0.01), cache_creation: None, output: 0.40 })
+    } else if m.starts_with("qwen-long") || m.starts_with("qwen_long") {
+        Some(ModelPrice { input: 0.14, cache_read: None, cache_creation: None, output: 0.56 })
+    } else if m.starts_with("qwen2.5-max") || m.starts_with("qwen2-5-max") {
+        Some(ModelPrice { input: 0.40, cache_read: None, cache_creation: None, output: 1.20 })
+    } else if m.starts_with("qwen2.5-plus") || m.starts_with("qwen2-5-plus") {
+        Some(ModelPrice { input: 0.07, cache_read: None, cache_creation: None, output: 0.28 })
+    } else if m.starts_with("qwen2.5-coder") || m.starts_with("qwen2-5-coder") || m.starts_with("qwen-coder") {
+        Some(ModelPrice { input: 0.07, cache_read: None, cache_creation: None, output: 0.28 })
+    } else if m.starts_with("qwen2.5") || m.starts_with("qwen2-5") {
+        Some(ModelPrice { input: 0.04, cache_read: None, cache_creation: None, output: 0.40 })
+    } else if m.starts_with("qwen-vl-max") || m.starts_with("qwen-vl-plus") {
+        Some(ModelPrice { input: 0.21, cache_read: None, cache_creation: None, output: 0.63 })
+    } else if m.starts_with("qwen-vl") {
+        Some(ModelPrice { input: 0.07, cache_read: None, cache_creation: None, output: 0.07 })
+    } else if m.starts_with("qwen-plus") {
+        Some(ModelPrice { input: 0.40, cache_read: None, cache_creation: None, output: 1.20 })
+    } else if m.starts_with("qwen-turbo") {
+        Some(ModelPrice { input: 0.05, cache_read: None, cache_creation: None, output: 0.20 })
+    } else if m.starts_with("qwen") {
+        // 兜底:未知 qwen 子模型按 qwen-turbo 价(便宜档)
+        Some(ModelPrice { input: 0.05, cache_read: None, cache_creation: None, output: 0.20 })
+    } else {
+        None
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+//  Doubao / Seed(字节跳动火山方舟 Volcano Ark)  —  https://www.volcengine.com/docs/82379
+// ─────────────────────────────────────────────────────────────────────────
+//
+// 2026 价(¥ / 1M tokens,以下换算 USD 按 7.2:1):
+//
+// | Model                  | Input | Output | Notes |
+// | doubao-seed-2.0-pro    | ¥3.2  | ¥16-48 | 0-32K 档(¥16)→ 256K 档(¥48)
+// | doubao-seed-2.0-lite   | ¥0.6  | ¥3.6   | 高吞吐
+// | doubao-seed-2.0-mini   | ¥0.2  | ¥2.0   | 入门
+// | doubao-seed-2.0-code   | ¥3.2  | ¥16-48 | 编程专用
+// | doubao-1.5-pro         | ¥0.7  | ¥1.75  | 老旗舰
+// | doubao-1.5-vision-pro  | ¥2.62 | ¥7.86  | 多模态
+// | doubao-1.5-lite        | ¥0.18 | ¥0.72  | 老款快
+// | seed-1.6-flash         | ¥0.124| ¥1.31  | 极便宜
+// | seed-1.6-thinking      | ¥0.7  | ¥7.0   | 推理
+//
+// cache_read:豆包官方"缓存命中价 = 输入价的 20%"。
+
+fn doubao_prices(m: &str) -> Option<ModelPrice> {
+    let yuan = |y: f64| y / 7.2;
+    if m.starts_with("doubao-seed-2.0-pro") || m.starts_with("doubao-seed-2-pro") {
+        // 默认 ≤32K 档(¥3.2/¥16);>32K 用比例自动升档(此处只给下限)
+        Some(ModelPrice { input: yuan(3.2), cache_read: Some(yuan(0.64)), cache_creation: None, output: yuan(16.0) })
+    } else if m.starts_with("doubao-seed-2.0-code") || m.starts_with("doubao-seed-2-code") {
+        Some(ModelPrice { input: yuan(3.2), cache_read: Some(yuan(0.64)), cache_creation: None, output: yuan(16.0) })
+    } else if m.starts_with("doubao-seed-2.0-lite") || m.starts_with("doubao-seed-2-lite") {
+        Some(ModelPrice { input: yuan(0.6), cache_read: Some(yuan(0.12)), cache_creation: None, output: yuan(3.6) })
+    } else if m.starts_with("doubao-seed-2.0-mini") || m.starts_with("doubao-seed-2-mini") {
+        Some(ModelPrice { input: yuan(0.2), cache_read: Some(yuan(0.04)), cache_creation: None, output: yuan(2.0) })
+    } else if m.starts_with("seed-2.0-pro") || m.starts_with("seed-2-pro") {
+        Some(ModelPrice { input: yuan(3.2), cache_read: Some(yuan(0.64)), cache_creation: None, output: yuan(16.0) })
+    } else if m.starts_with("seed-2.0-code") || m.starts_with("seed-2-code") {
+        Some(ModelPrice { input: yuan(3.2), cache_read: Some(yuan(0.64)), cache_creation: None, output: yuan(16.0) })
+    } else if m.starts_with("seed-2.0-lite") || m.starts_with("seed-2-lite") {
+        Some(ModelPrice { input: yuan(0.6), cache_read: Some(yuan(0.12)), cache_creation: None, output: yuan(3.6) })
+    } else if m.starts_with("seed-2.0-mini") || m.starts_with("seed-2-mini") {
+        Some(ModelPrice { input: yuan(0.2), cache_read: Some(yuan(0.04)), cache_creation: None, output: yuan(2.0) })
+    } else if m.starts_with("seed-1.6-thinking") || m.starts_with("seed-1-6-thinking") {
+        Some(ModelPrice { input: yuan(0.7), cache_read: Some(yuan(0.14)), cache_creation: None, output: yuan(7.0) })
+    } else if m.starts_with("seed-1.6-flash") || m.starts_with("seed-1-6-flash") {
+        Some(ModelPrice { input: yuan(0.124), cache_read: Some(yuan(0.025)), cache_creation: None, output: yuan(1.31) })
+    } else if m.starts_with("doubao-1.5-vision-pro") || m.starts_with("doubao-1-5-vision-pro") {
+        Some(ModelPrice { input: yuan(2.62), cache_read: None, cache_creation: None, output: yuan(7.86) })
+    } else if m.starts_with("doubao-1.5-pro") || m.starts_with("doubao-1-5-pro") {
+        Some(ModelPrice { input: yuan(0.7), cache_read: None, cache_creation: None, output: yuan(1.75) })
+    } else if m.starts_with("doubao-1.5-lite") || m.starts_with("doubao-1-5-lite") {
+        Some(ModelPrice { input: yuan(0.18), cache_read: None, cache_creation: None, output: yuan(0.72) })
+    } else if m.starts_with("doubao-pro") {
+        // 兜底:未知 doubao-pro 子模型按 1.5-pro 价
+        Some(ModelPrice { input: yuan(0.7), cache_read: None, cache_creation: None, output: yuan(1.75) })
+    } else if m.starts_with("doubao-lite") {
+        Some(ModelPrice { input: yuan(0.18), cache_read: None, cache_creation: None, output: yuan(0.72) })
+    } else if m.starts_with("seed") {
+        // 兜底:未知 seed 子模型按 1.6-flash 价
+        Some(ModelPrice { input: yuan(0.124), cache_read: Some(yuan(0.025)), cache_creation: None, output: yuan(1.31) })
+    } else if m.starts_with("doubao") {
+        // 兜底:未知 doubao 子模型按 lite 价
+        Some(ModelPrice { input: yuan(0.18), cache_read: None, cache_creation: None, output: yuan(0.72) })
+    } else {
+        None
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -806,6 +958,38 @@ mod tests {
         assert!(builtin_prices("MiniMax-M2.5").is_some());
         assert!(builtin_prices("MiniMax-M2.1").is_some());
         assert!(builtin_prices("MiniMax-VL-01").is_some());
+
+        // Qwen(百炼) 全系
+        assert!(builtin_prices("qwen3.8-max").is_some());
+        assert!(builtin_prices("qwen3.7-max").is_some());
+        assert!(builtin_prices("qwen3.5-397b").is_some());
+        assert!(builtin_prices("qwen3.5-omni-plus").is_some());
+        assert!(builtin_prices("qwen3.5-omni-flash").is_some());
+        assert!(builtin_prices("qwen3.7-plus").is_some());
+        assert!(builtin_prices("qwen3-max").is_some());
+        assert!(builtin_prices("qwen3.5-plus").is_some());
+        assert!(builtin_prices("qwen3.5-flash").is_some());
+        assert!(builtin_prices("qwen3.7-flash").is_some());
+        assert!(builtin_prices("qwen3.5-coder").is_some());
+        assert!(builtin_prices("qwen-long").is_some());
+        assert!(builtin_prices("qwen2.5-max").is_some());
+        assert!(builtin_prices("qwen2.5-plus").is_some());
+        assert!(builtin_prices("qwen2.5-coder").is_some());
+        assert!(builtin_prices("qwen-vl-max").is_some());
+        assert!(builtin_prices("qwen-plus").is_some());
+        assert!(builtin_prices("qwen-turbo").is_some());
+
+        // Doubao(豆包/Seed) 全系
+        assert!(builtin_prices("doubao-seed-2.0-pro").is_some());
+        assert!(builtin_prices("doubao-seed-2.0-code").is_some());
+        assert!(builtin_prices("doubao-seed-2.0-lite").is_some());
+        assert!(builtin_prices("doubao-seed-2.0-mini").is_some());
+        assert!(builtin_prices("seed-2.0-pro").is_some());
+        assert!(builtin_prices("seed-1.6-flash").is_some());
+        assert!(builtin_prices("seed-1.6-thinking").is_some());
+        assert!(builtin_prices("doubao-1.5-pro").is_some());
+        assert!(builtin_prices("doubao-1.5-vision-pro").is_some());
+        assert!(builtin_prices("doubao-1.5-lite").is_some());
 
         // 大小写不敏感
         assert!(builtin_prices("CLAUDE-OPUS-4-1").is_some());
@@ -972,6 +1156,47 @@ mod tests {
         let pp = ProviderPricing::default();
         let p = pp.resolve(Some(&pp), "some-fake-model");
         assert!(p.is_none());
+    }
+
+    #[test]
+    fn qwen_pricing_matches_bailian_intl_pricing() {
+        // qwen3.7-max 50% promo: $1.25/$3.75
+        let q37max = builtin_prices("qwen3.7-max").unwrap();
+        assert_eq!(q37max.input, 1.25);
+        assert_eq!(q37max.output, 3.75);
+
+        // qwen3.5-397b: $0.60/$3.60
+        let q397b = builtin_prices("qwen3.5-397b").unwrap();
+        assert_eq!(q397b.input, 0.60);
+        assert_eq!(q397b.output, 3.60);
+
+        // qwen3.5-flash: $0.10/$0.40
+        let qflash = builtin_prices("qwen3.5-flash").unwrap();
+        assert_eq!(qflash.input, 0.10);
+        assert_eq!(qflash.output, 0.40);
+
+        // qwen-turbo: $0.05/$0.20 (入门最便宜)
+        let turbo = builtin_prices("qwen-turbo").unwrap();
+        assert_eq!(turbo.input, 0.05);
+        assert_eq!(turbo.output, 0.20);
+    }
+
+    #[test]
+    fn doubao_pricing_matches_volcano_ark_pricing() {
+        // doubao-seed-2.0-pro 0-32K 档: ¥3.2/¥16 → ~$0.44/$2.22
+        let pro = builtin_prices("doubao-seed-2.0-pro").unwrap();
+        assert!((pro.input - 3.2 / 7.2).abs() < 0.01);
+        assert!((pro.output - 16.0 / 7.2).abs() < 0.01);
+
+        // doubao-1.5-pro: ¥0.7/¥1.75 → ~$0.10/$0.24
+        let p15 = builtin_prices("doubao-1.5-pro").unwrap();
+        assert!((p15.input - 0.7 / 7.2).abs() < 0.01);
+        assert!((p15.output - 1.75 / 7.2).abs() < 0.01);
+
+        // seed-1.6-flash: ¥0.124/¥1.31
+        let s16f = builtin_prices("seed-1.6-flash").unwrap();
+        assert!(s16f.input < 0.03, "seed-1.6-flash input 应该是最便宜的");
+        assert!(s16f.output < 0.20, "seed-1.6-flash output 应该是最便宜的");
     }
 
     #[test]
