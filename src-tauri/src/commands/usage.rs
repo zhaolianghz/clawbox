@@ -281,6 +281,7 @@ fn last_scan_health(home: &Path) -> aggregate::ParseHealth {
             } else {
                 Some(last.last_scan_at.clone())
             },
+            added_events_deduped: 0,
         }
     } else {
         aggregate::ParseHealth::default()
