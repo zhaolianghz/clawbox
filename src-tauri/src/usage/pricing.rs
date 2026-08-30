@@ -33,6 +33,15 @@
 
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
+use time::{Date, Month};
+
+/// 全局价表"核对日期": 2026-08-31。后续定期更新。
+/// 真实数据核对日期(本仓库维护,人工核对各厂商官方页);
+/// 90 天后 UI 会提示"可能已过期"但不阻止使用。
+fn snapshot_date_const() -> Date {
+    Date::from_calendar_date(2026, Month::August, 31)
+        .expect("SNAPSHOT_DATE invalid")
+}
 
 /// 单个 model 的官方公开价(USD per 1M tokens)。
 ///
@@ -53,6 +62,42 @@ pub struct ModelPrice {
     pub cache_creation: Option<f64>,
     /// 输出 token 单价(USD / 1M tokens)
     pub output: f64,
+}
+
+/// 一个 model 的官方公开价 + 核对日期(USD per 1M tokens)。
+///
+/// `verified_at`: 本仓库人工核对官方价的日期。90 天后 UI banner 提示。
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+pub struct PricedModel {
+    pub price: ModelPrice,
+    pub verified_at: Date,
+}
+
+impl PricedModel {
+    pub fn new(price: ModelPrice) -> Self {
+        Self { price, verified_at: snapshot_date_const() }
+    }
+
+    pub fn event_cost(
+        &self,
+        input: u64,
+        cache_read: u64,
+        cache_creation: u64,
+        output: u64,
+    ) -> f64 {
+        self.price.event_cost(input, cache_read, cache_creation, output)
+    }
+
+    /// 是否超过 90 天未核对(UI banner 用)
+    pub fn is_stale(&self, today: Date) -> bool {
+        let age_days = (today - self.verified_at).whole_days();
+        age_days > 90
+    }
+
+    /// 当前价表快照日期(对外公开)
+    pub fn snapshot_date() -> Date {
+        snapshot_date_const()
+    }
 }
 
 impl ModelPrice {
@@ -106,44 +151,102 @@ impl ProviderPricing {
             .get(model)
             .map(|s| s.as_str())
             .unwrap_or(model);
-        builtin_prices(canonical)
+        builtin_prices(canonical).map(|p| p.price)
     }
 }
 
 /// 全局入口:给定 model id 字符串(可能是 `claude-opus-4-1-20250805` 或
-/// `gpt-5-mini` 这种大小写不敏感的任意形式),返回官方公开价或 None。
-pub fn builtin_prices(model: &str) -> Option<ModelPrice> {
+/// `gpt-5-mini` 这种大小写不敏感的任意形式),返回官方公开价 + 核对日期或 None。
+pub fn builtin_prices(model: &str) -> Option<PricedModel> {
     let m = model.to_lowercase();
     if let Some(p) = claude_prices(&m) {
-        return Some(p);
+        return Some(PricedModel::new(p));
     }
     if let Some(p) = openai_prices(&m) {
-        return Some(p);
+        return Some(PricedModel::new(p));
     }
     if let Some(p) = gemini_prices(&m) {
-        return Some(p);
+        return Some(PricedModel::new(p));
     }
     if let Some(p) = deepseek_prices(&m) {
-        return Some(p);
+        return Some(PricedModel::new(p));
     }
     if let Some(p) = glm_prices(&m) {
-        return Some(p);
+        return Some(PricedModel::new(p));
     }
     if let Some(p) = kimi_prices(&m) {
-        return Some(p);
+        return Some(PricedModel::new(p));
     }
     if let Some(p) = minimax_prices(&m) {
-        return Some(p);
+        return Some(PricedModel::new(p));
     }
     // 阿里云百炼 DashScope (Qwen 系列)
     if let Some(p) = qwen_prices(&m) {
-        return Some(p);
+        return Some(PricedModel::new(p));
     }
     // 字节跳动豆包 Doubao / Seed (火山方舟 Volcano Ark)
     if let Some(p) = doubao_prices(&m) {
-        return Some(p);
+        return Some(PricedModel::new(p));
     }
     None
+}
+
+/// 当前价表快照日期(对外公开)
+pub fn snapshot_date() -> Date {
+    snapshot_date_const()
+}
+
+/// 列出所有已知的 (model_prefix, verified_at) 元数据。
+/// 给 UI 显示"我们已核对 N 个 model 价格"用。
+pub fn known_models() -> Vec<&'static str> {
+    // 静态列举 — 写价表时维护
+    vec![
+        // Claude
+        "claude-fable-5", "claude-mythos-5", "claude-opus-5",
+        "claude-opus-4-1", "claude-opus-4", "claude-sonnet-5",
+        "claude-sonnet-4-6", "claude-sonnet-4-5", "claude-sonnet-4",
+        "claude-haiku-4-5", "claude-haiku-3-5", "claude-3-opus",
+        "claude-3-sonnet", "claude-3-haiku",
+        // OpenAI
+        "gpt-5.6", "gpt-5.5", "gpt-5.4-mini", "gpt-5.4-nano", "gpt-5.4",
+        "gpt-5.2", "gpt-5.1", "gpt-5-mini", "gpt-5-nano", "gpt-5",
+        "gpt-4.1-nano", "gpt-4.1-mini", "gpt-4.1", "gpt-4o-mini", "gpt-4o",
+        "o4-mini", "o3-mini", "o3", "o1-mini", "o1",
+        "gpt-4-turbo", "gpt-4", "gpt-3.5-turbo",
+        // Gemini
+        "gemini-3.7-flash", "gemini-3.5-flash", "gemini-3.1-pro",
+        "gemini-3-flash", "gemini-2.5-pro", "gemini-2.5-flash",
+        "gemini-2.5-flash-lite", "gemini-2.0-flash",
+        "gemini-1.5-pro", "gemini-1.5-flash",
+        // DeepSeek
+        "deepseek-v4-pro", "deepseek-v4-flash", "deepseek-v3",
+        "deepseek-r1",
+        // GLM
+        "glm-5.3", "glm-5.2", "glm-5.1", "glm-5-turbo", "glm-5",
+        "glm-4.7-flashx", "glm-4.7-flash", "glm-4.7", "glm-4.6v",
+        "glm-4.6", "glm-4.5x", "glm-4.5-air", "glm-4.5", "glm-4-plus",
+        "glm-4-air", "glm-4-long", "glm-z1", "glm-4-flashx",
+        // Kimi
+        "kimi-k3", "kimi-k2.7-code", "kimi-k2.7", "kimi-k2.6",
+        "kimi-k2.5", "kimi-k2", "moonshot-v1-128k", "moonshot-v1-32k",
+        "moonshot-v1-8k",
+        // MiniMax
+        "MiniMax-M3", "MiniMax-M2.7-highspeed", "MiniMax-M2.7",
+        "MiniMax-M2.5-highspeed", "MiniMax-M2.5", "MiniMax-M2.1-highspeed",
+        "MiniMax-M2.1", "MiniMax-VL-01",
+        // Qwen 百炼
+        "qwen3.8-max", "qwen3.7-max", "qwen3.5-397b", "qwen3.5-omni-plus",
+        "qwen3.5-omni-flash", "qwen3.7-plus", "qwen3-max", "qwen3.5-plus",
+        "qwen3.5-flash", "qwen3.7-flash", "qwen3.5-coder",
+        "qwen-long", "qwen2.5-max", "qwen2.5-plus", "qwen2.5-coder",
+        "qwen-vl-max", "qwen-plus", "qwen-turbo",
+        // Doubao 豆包
+        "doubao-seed-2.0-pro", "doubao-seed-2.0-code", "doubao-seed-2.0-lite",
+        "doubao-seed-2.0-mini", "seed-2.0-pro", "seed-2.0-code",
+        "seed-2.0-lite", "seed-2.0-mini", "seed-1.6-thinking",
+        "seed-1.6-flash", "doubao-1.5-pro", "doubao-1.5-vision-pro",
+        "doubao-1.5-lite",
+    ]
 }
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -1002,16 +1105,16 @@ mod tests {
     fn claude_fable_5_pricing_doubles_opus() {
         // Fable 5 是 Opus 4.x 的 2 倍(input $10 vs $5, output $50 vs $25)
         let fable = builtin_prices("claude-fable-5").unwrap();
-        assert_eq!(fable.input, 10.00);
-        assert_eq!(fable.output, 50.00);
+        assert_eq!(fable.price.input, 10.00);
+        assert_eq!(fable.price.output, 50.00);
         // Fable 有 cache 字段(Anthropic 公开了)
-        assert_eq!(fable.cache_read, Some(1.00));
-        assert_eq!(fable.cache_creation, Some(12.50));
+        assert_eq!(fable.price.cache_read, Some(1.00));
+        assert_eq!(fable.price.cache_creation, Some(12.50));
 
         let opus5 = builtin_prices("claude-opus-5").unwrap();
-        assert_eq!(opus5.input, 5.00);
-        assert_eq!(opus5.output, 25.00);
-        assert_eq!(opus5.cache_read, Some(0.50));
+        assert_eq!(opus5.price.input, 5.00);
+        assert_eq!(opus5.price.output, 25.00);
+        assert_eq!(opus5.price.cache_read, Some(0.50));
     }
 
     #[test]
@@ -1019,8 +1122,8 @@ mod tests {
         // 4.5/4.6/4.7/4.8 价格统一(Anthropic 公开价)
         for v in &["claude-opus-4-5", "claude-opus-4-6", "claude-opus-4-7", "claude-opus-4-8"] {
             let p = builtin_prices(v).unwrap();
-            assert_eq!(p.input, 5.00, "{} input", v);
-            assert_eq!(p.output, 25.00, "{} output", v);
+            assert_eq!(p.price.input, 5.00, "{} input", v);
+            assert_eq!(p.price.output, 25.00, "{} output", v);
         }
     }
 
@@ -1028,14 +1131,14 @@ mod tests {
     fn gemini_pricing_context_tiers() {
         // 2.5 Pro ≤200K $1.25;2.5 Flash $0.30;Flash-Lite $0.10
         let pro = builtin_prices("gemini-2.5-pro").unwrap();
-        assert_eq!(pro.input, 1.25);
-        assert_eq!(pro.output, 10.00);
+        assert_eq!(pro.price.input, 1.25);
+        assert_eq!(pro.price.output, 10.00);
 
         let flash = builtin_prices("gemini-2.5-flash").unwrap();
-        assert_eq!(flash.input, 0.30);
+        assert_eq!(flash.price.input, 0.30);
 
         let lite = builtin_prices("gemini-2.5-flash-lite").unwrap();
-        assert_eq!(lite.input, 0.10);
+        assert_eq!(lite.price.input, 0.10);
     }
 
     #[test]
@@ -1043,9 +1146,9 @@ mod tests {
         let pro = builtin_prices("deepseek-v4-pro").unwrap();
         let flash = builtin_prices("deepseek-v4-flash").unwrap();
         // Pro 是 Flash 的 3 倍 input
-        assert!(pro.input > flash.input);
-        assert_eq!(pro.input, 0.66);
-        assert_eq!(flash.input, 0.22);
+        assert!(pro.price.input > flash.price.input);
+        assert_eq!(pro.price.input, 0.66);
+        assert_eq!(flash.price.input, 0.22);
         // 4-pro-0813-ga 都能命中(版本快照后缀)
         assert!(builtin_prices("deepseek-v4-pro-0813-ga").is_some());
     }
@@ -1053,34 +1156,34 @@ mod tests {
     #[test]
     fn glm_4_7_pricing_matches_zhipu_official() {
         let m = builtin_prices("glm-4.7").unwrap();
-        assert_eq!(m.input, 0.60);
-        assert_eq!(m.output, 2.20);
-        assert_eq!(m.cache_read, Some(0.11));
+        assert_eq!(m.price.input, 0.60);
+        assert_eq!(m.price.output, 2.20);
+        assert_eq!(m.price.cache_read, Some(0.11));
     }
 
     #[test]
     fn glm_flash_free_returns_zero_pricing() {
         let p = builtin_prices("glm-4.7-flash").unwrap();
-        assert_eq!(p.input, 0.0);
-        assert_eq!(p.output, 0.0);
+        assert_eq!(p.price.input, 0.0);
+        assert_eq!(p.price.output, 0.0);
     }
 
     #[test]
     fn minimax_m3_pricing_matches_official_page() {
         let m3 = builtin_prices("MiniMax-M3").unwrap();
-        assert_eq!(m3.input, 0.30);
-        assert_eq!(m3.output, 1.20);
-        assert_eq!(m3.cache_read, Some(0.06));
+        assert_eq!(m3.price.input, 0.30);
+        assert_eq!(m3.price.output, 1.20);
+        assert_eq!(m3.price.cache_read, Some(0.06));
         // 没有 cache_creation
-        assert_eq!(m3.cache_creation, None);
+        assert_eq!(m3.price.cache_creation, None);
     }
 
     #[test]
     fn kimi_k3_is_most_expensive_in_family() {
         let k3 = builtin_prices("kimi-k3").unwrap();
         let k2_6 = builtin_prices("kimi-k2.6").unwrap();
-        assert!(k3.input > k2_6.input);
-        assert!(k3.output > k2_6.output);
+        assert!(k3.price.input > k2_6.price.input);
+        assert!(k3.price.output > k2_6.price.output);
     }
 
     #[test]
@@ -1162,41 +1265,41 @@ mod tests {
     fn qwen_pricing_matches_bailian_intl_pricing() {
         // qwen3.7-max 50% promo: $1.25/$3.75
         let q37max = builtin_prices("qwen3.7-max").unwrap();
-        assert_eq!(q37max.input, 1.25);
-        assert_eq!(q37max.output, 3.75);
+        assert_eq!(q37max.price.input, 1.25);
+        assert_eq!(q37max.price.output, 3.75);
 
         // qwen3.5-397b: $0.60/$3.60
         let q397b = builtin_prices("qwen3.5-397b").unwrap();
-        assert_eq!(q397b.input, 0.60);
-        assert_eq!(q397b.output, 3.60);
+        assert_eq!(q397b.price.input, 0.60);
+        assert_eq!(q397b.price.output, 3.60);
 
         // qwen3.5-flash: $0.10/$0.40
         let qflash = builtin_prices("qwen3.5-flash").unwrap();
-        assert_eq!(qflash.input, 0.10);
-        assert_eq!(qflash.output, 0.40);
+        assert_eq!(qflash.price.input, 0.10);
+        assert_eq!(qflash.price.output, 0.40);
 
         // qwen-turbo: $0.05/$0.20 (入门最便宜)
         let turbo = builtin_prices("qwen-turbo").unwrap();
-        assert_eq!(turbo.input, 0.05);
-        assert_eq!(turbo.output, 0.20);
+        assert_eq!(turbo.price.input, 0.05);
+        assert_eq!(turbo.price.output, 0.20);
     }
 
     #[test]
     fn doubao_pricing_matches_volcano_ark_pricing() {
         // doubao-seed-2.0-pro 0-32K 档: ¥3.2/¥16 → ~$0.44/$2.22
         let pro = builtin_prices("doubao-seed-2.0-pro").unwrap();
-        assert!((pro.input - 3.2 / 7.2).abs() < 0.01);
-        assert!((pro.output - 16.0 / 7.2).abs() < 0.01);
+        assert!((pro.price.input - 3.2 / 7.2).abs() < 0.01);
+        assert!((pro.price.output - 16.0 / 7.2).abs() < 0.01);
 
         // doubao-1.5-pro: ¥0.7/¥1.75 → ~$0.10/$0.24
         let p15 = builtin_prices("doubao-1.5-pro").unwrap();
-        assert!((p15.input - 0.7 / 7.2).abs() < 0.01);
-        assert!((p15.output - 1.75 / 7.2).abs() < 0.01);
+        assert!((p15.price.input - 0.7 / 7.2).abs() < 0.01);
+        assert!((p15.price.output - 1.75 / 7.2).abs() < 0.01);
 
         // seed-1.6-flash: ¥0.124/¥1.31
         let s16f = builtin_prices("seed-1.6-flash").unwrap();
-        assert!(s16f.input < 0.03, "seed-1.6-flash input 应该是最便宜的");
-        assert!(s16f.output < 0.20, "seed-1.6-flash output 应该是最便宜的");
+        assert!(s16f.price.input < 0.03, "seed-1.6-flash input 应该是最便宜的");
+        assert!(s16f.price.output < 0.20, "seed-1.6-flash output 应该是最便宜的");
     }
 
     #[test]
@@ -1210,4 +1313,50 @@ mod tests {
         .resolve(None, "claude-opus-4-1")
         .is_none());
     }
+
+    #[test]
+    fn stale_price_over_90_days() {
+        use time::Month;
+        // 当前 SNAPSHOT_DATE 是 2026-08-31
+        // 加 91 天后 = 2026-12-01,应该 stale
+        let today = time::Date::from_calendar_date(2026, Month::December, 1).unwrap();
+        let p = builtin_prices("claude-fable-5").unwrap();
+        assert!(p.is_stale(today), "91 天后应该标记为 stale");
+    }
+
+    #[test]
+    fn fresh_price_under_90_days() {
+        use time::Month;
+        // SNAPSHOT_DATE + 30 天应新鲜
+        let today = time::Date::from_calendar_date(2026, Month::September, 30).unwrap();
+        let p = builtin_prices("claude-fable-5").unwrap();
+        assert!(!p.is_stale(today), "30 天后应仍新鲜");
+    }
+
+    #[test]
+    fn snapshot_date_is_2026_08_31() {
+        use time::Month;
+        let d = PricedModel::snapshot_date();
+        assert_eq!(d.year(), 2026);
+        assert_eq!(d.month(), Month::August);
+        assert_eq!(d.day(), 31);
+    }
+
+    #[test]
+    fn known_models_lists_nine_vendors() {
+        let models = known_models();
+        // 至少包含 9 家厂商的代表性 model
+        assert!(models.contains(&"claude-fable-5"));
+        assert!(models.contains(&"gpt-5"));
+        assert!(models.contains(&"gemini-2.5-pro"));
+        assert!(models.contains(&"deepseek-v4-pro"));
+        assert!(models.contains(&"glm-4.7"));
+        assert!(models.contains(&"kimi-k2.6"));
+        assert!(models.contains(&"MiniMax-M3"));
+        assert!(models.contains(&"qwen3.7-max"));
+        assert!(models.contains(&"doubao-seed-2.0-pro"));
+        // 至少 80 个
+        assert!(models.len() >= 80, "只有 {} 个 model", models.len());
+    }
+
 }
