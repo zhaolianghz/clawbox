@@ -52,6 +52,16 @@
     return String(n);
   }
 
+  /** USD 成本:None → 显示 "—";< 0.01 → 显示 <$0.01;否则 2 位小数 */
+  function fmtCost(c: number | null | undefined): string {
+    if (c == null) return $_('usage.costUnknown');
+    if (c === 0) return '$0.00';
+    if (c < 0.01) return '<$0.01';
+    if (c < 10) return '$' + c.toFixed(2);
+    if (c < 1000) return '$' + c.toFixed(1);
+    return '$' + c.toFixed(0);
+  }
+
   /** 按口径拆分展示(input/cache_read/cache_creation/output)。 */
   function totalsLine(t: { input: number; cache_read: number; cache_creation: number; output: number }): string {
     return `in ${fmtTokens(t.input)} · cr ${fmtTokens(t.cache_read)} · cc ${fmtTokens(t.cache_creation)} · out ${fmtTokens(t.output)}`;
@@ -140,6 +150,24 @@
     <div class="loading">{$_('usage.loading')}</div>
   {/if}
 
+  <!-- 价表 stale banner(age ≤ 30 天:绿色 / 30<a<60:黄 / ≥60:红) -->
+  {#if summary?.pricing_meta}
+    {@const pm = summary.pricing_meta}
+    {#if pm.is_stale}
+      <div class="banner stale-warn" role="status">
+        {$_('usage.staleBannerStale', { values: { age: pm.age_days, date: pm.snapshot_date } })}
+      </div>
+    {:else if pm.days_until_stale <= 7}
+      <div class="banner stale-soon" role="status">
+        {$_('usage.staleBannerWarn', { values: { age: pm.age_days } })}
+      </div>
+    {:else}
+      <div class="banner stale-fresh" role="status">
+        {$_('usage.staleBannerFresh', { values: { date: pm.snapshot_date, daysUntil: pm.days_until_stale } })}
+      </div>
+    {/if}
+  {/if}
+
   {#if summary}
     <!-- 4 张汇总卡 -->
     <div class="stat-grid">
@@ -162,6 +190,11 @@
         <div class="stat-label">{$_('usage.cardEvents')}</div>
         <div class="stat-value">{fmtTokens(summary.total.events)}</div>
         <div class="stat-sub">{$_('usage.eventsUnit')}</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">{$_('usage.cardCost30d')}</div>
+        <div class="stat-value">{fmtCost(summary.total.cost_usd)}</div>
+        <div class="stat-sub">{$_('usage.costUnit')}</div>
       </div>
     </div>
 
@@ -215,6 +248,7 @@
               <summary>
                 <span class="agent-name">{a.agent_id}</span>
                 <span class="agent-total">{fmtTokens(a.totals.input + a.totals.cache_read + a.totals.cache_creation + a.totals.output)} {$_('usage.tokensUnit')}</span>
+                {#if a.totals.cost_usd != null}<span class="agent-cost">{fmtCost(a.totals.cost_usd)}</span>{/if}
               </summary>
               <div class="agent-detail">
                 <div class="totals-line">{totalsLine(a.totals)}</div>
@@ -227,6 +261,7 @@
                       <th>{$_('usage.colCacheWrite')}</th>
                       <th>{$_('usage.colOutput')}</th>
                       <th>{$_('usage.colEvents')}</th>
+                      <th>{$_('usage.colCost')}</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -238,6 +273,7 @@
                         <td>{fmtTokens(m.totals.cache_creation)}</td>
                         <td>{fmtTokens(m.totals.output)}</td>
                         <td>{fmtTokens(m.events)}</td>
+                        <td class="cost-cell">{fmtCost(m.totals.cost_usd)}</td>
                       </tr>
                     {/each}
                   </tbody>
@@ -284,6 +320,32 @@
   .usage-page {
     max-width: 1100px;
     padding: 0 0.5rem;
+  }
+  /* 价表 stale banner — 编辑式克制,3 档颜色 */
+  .banner {
+    padding: 0.6rem 0.9rem;
+    border-radius: 4px;
+    font-size: 0.875rem;
+    margin-bottom: 1rem;
+    border-left: 3px solid currentColor;
+  }
+  .banner.stale-fresh {
+    background: rgba(124, 240, 140, 0.08);
+    color: #7cf08c;
+  }
+  .banner.stale-soon {
+    background: rgba(245, 197, 66, 0.10);
+    color: #f5c542;
+  }
+  .banner.stale-warn {
+    background: rgba(255, 110, 199, 0.10);
+    color: #ff6ec7;
+  }
+  /* 表格 cost 列等宽对齐 */
+  td.cost-cell {
+    min-width: 5.5rem;
+    text-align: right;
+    font-variant-numeric: tabular-nums;
   }
   .page-head {
     display: flex;
