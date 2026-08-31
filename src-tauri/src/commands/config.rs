@@ -1,4 +1,5 @@
 use crate::sync::ApplyResult;
+use crate::usage::pricing::ProviderPricing;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fs;
@@ -58,6 +59,17 @@ pub struct ProviderSpec {
     /// Configured model ids for this provider. Absent in pre-models configs.
     #[serde(default)]
     pub models: Vec<String>,
+    /// 中转 model 名 → 官方 model id 的别名映射。
+    /// 例: `{"route-gpt-4o": "gpt-4o", "teamorouter-claude-opus-4-1": "claude-opus-4-1"}`。
+    /// 用途:让中转站的别名也能按官方价算 cost_usd(model 不在 builtin_prices 时走 alias 二次查表)。
+    /// 留空 = 不做别名解析,该 provider 的 model 直接查 builtin。
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub model_aliases: BTreeMap<String, String>,
+    /// 该 provider 的价格覆盖 / 自定义。中转站场景下,某 model 真实定价不同于官方时
+    /// 通过 overrides 覆盖;alias 通过 ProviderPricing.resolve 走 builtin_prices 二次查表。
+    /// 留空 = 完全走 builtin_prices。
+    #[serde(default)]
+    pub pricing: ProviderPricing,
     #[serde(default = "default_true")]
     pub enabled: bool,
     /// 旧协议风格字段 "openai" | "anthropic"(读兼容,仅迁移时定槽;归一化
@@ -82,6 +94,8 @@ pub fn default_provider_spec() -> ProviderSpec {
         openai_base_url: String::new(),
         default_model: String::new(),
         models: vec![],
+        model_aliases: BTreeMap::new(),
+            pricing: ProviderPricing::default(),
         enabled: true,
         flavor: None,
     }
@@ -431,6 +445,8 @@ mod tests {
             openai_base_url: String::new(),
             default_model: String::new(),
             models: vec![],
+            model_aliases: BTreeMap::new(),
+            pricing: ProviderPricing::default(),
             enabled: true,
             flavor: None,
         });
@@ -453,6 +469,8 @@ mod tests {
             openai_base_url: "https://api.example.com/v1".to_string(),
             default_model: "model-x".to_string(),
             models: vec!["model-x".to_string(), "model-y".to_string()],
+            model_aliases: BTreeMap::new(),
+            pricing: ProviderPricing::default(),
             enabled: true,
             flavor: None,
         }

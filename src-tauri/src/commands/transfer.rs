@@ -8,6 +8,7 @@
 use super::config::{load_config, save_config, McpServerSpec, ProviderSpec};
 use super::config::real_home;
 use super::sync::skills_repo_install_at;
+use crate::usage::pricing::ProviderPricing;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -280,6 +281,8 @@ pub fn import_apply_at(home: &Path, path: &Path, picks: &TransferPicks) -> Resul
                 openai_base_url: inc.openai_base_url.clone(),
                 default_model: inc.default_model.clone(),
                 models: inc.models.clone(),
+                model_aliases: BTreeMap::new(),
+            pricing: ProviderPricing::default(),
                 enabled: inc.enabled,
                 flavor: None,
             });
@@ -348,6 +351,7 @@ pub async fn transfer_import_apply(path: String, picks: TransferPicks) -> Result
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::usage::pricing::ProviderPricing;
     use crate::sync::test_util::TempHome;
     use super::super::config::SkillSource;
 
@@ -361,6 +365,8 @@ mod tests {
             openai_base_url: openai.into(),
             default_model: "m1".into(),
             models: vec!["m1".into()],
+            model_aliases: BTreeMap::new(),
+            pricing: ProviderPricing::default(),
             enabled: true,
             flavor: None,
         }

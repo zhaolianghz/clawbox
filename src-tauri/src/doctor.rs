@@ -255,9 +255,10 @@ use crate::commands::provider_test::ProviderTestResult;
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::usage::pricing::ProviderPricing;
     use crate::agents::AgentKind;
     use crate::sync::test_util::TempHome;
-    use std::collections::HashMap;
+    use std::collections::{BTreeMap, HashMap};
 
     fn status(id: &str, installed: bool, missing: &[&str]) -> AgentStatus {
         AgentStatus {
@@ -325,6 +326,8 @@ mod tests {
             openai_base_url: "https://api.oa.example.com/v1".to_string(),
             default_model: "gpt-test".to_string(),
             models: vec![],
+            model_aliases: BTreeMap::new(),
+            pricing: ProviderPricing::default(),
             enabled: true,
             flavor: None,
         });

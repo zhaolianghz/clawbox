@@ -5,6 +5,7 @@
 use crate::commands::config::{load_config, real_home, save_config, Config, McpServerSpec, ProviderSpec};
 use crate::sync::{self, providers, AgentPlan, ApplyResult};
 use crate::sync::providers::{AdoptedProvider, Slot};
+use crate::usage::pricing::ProviderPricing;
 use serde::Serialize;
 use std::collections::{BTreeMap, HashMap};
 use std::path::Path;
@@ -324,7 +325,9 @@ pub fn agent_provider_adopt_at(home: &Path, agent_id: &str) -> Result<AdoptResul
                 openai_base_url: String::new(),
                 default_model: String::new(),
                 models: vec![],
-                enabled: true,
+            model_aliases: BTreeMap::new(),
+            pricing: ProviderPricing::default(),
+            enabled: true,
                 flavor: None,
             };
             apply_adopted_to_spec(&mut spec, &adopted);
@@ -816,6 +819,7 @@ pub async fn agent_sync_overview() -> Result<Vec<AgentSyncOverview>, String> {
 mod tests {
     use super::*;
     use crate::commands::config::{clawbox_config_path, ProviderSpec};
+    use crate::usage::pricing::ProviderPricing;
     use crate::sync::test_util::TempHome;
     use std::fs;
 
@@ -869,6 +873,8 @@ mod tests {
             openai_base_url: openai_url.to_string(),
             default_model: "model-a".to_string(),
             models: vec!["model-a".to_string()],
+            model_aliases: BTreeMap::new(),
+            pricing: ProviderPricing::default(),
             enabled: true,
             flavor: None,
         }

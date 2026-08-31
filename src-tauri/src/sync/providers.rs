@@ -3652,6 +3652,8 @@ pub fn apply_one(
 
 #[cfg(test)]
 mod tests {
+    use crate::usage::pricing::ProviderPricing;
+
     #[test]
     fn plan_all_default_binding_shows_remove_only_with_leftover_managed() {
         let home = TempHome::new();
@@ -3685,6 +3687,8 @@ mod tests {
             openai_base_url: openai_url.to_string(),
             default_model: "model-a".to_string(),
             models: vec!["model-a".to_string(), "model-b".to_string()],
+            model_aliases: BTreeMap::new(),
+            pricing: ProviderPricing::default(),
             enabled: true,
             flavor: None,
         }

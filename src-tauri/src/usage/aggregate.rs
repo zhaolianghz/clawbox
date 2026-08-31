@@ -15,7 +15,7 @@ use crate::usage::{
     store, BucketTotals, ParseStats, UsageError, UsageEvent, UsageProvider, UsageScan,
 };
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::fs;
 use std::path::Path;
 use std::sync::Mutex;
@@ -272,6 +272,7 @@ pub fn providers_meta_from_config(config: &Config) -> HashMap<String, (String, S
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::usage::pricing::ProviderPricing;
 
     #[test]
     fn needs_rescan_returns_true_when_no_cache_entry() {
@@ -308,6 +309,8 @@ mod tests {
             openai_base_url: "".into(),
             default_model: "".into(),
             models: vec![],
+            model_aliases: BTreeMap::new(),
+            pricing: ProviderPricing::default(),
             enabled: true,
             flavor: None,
         });

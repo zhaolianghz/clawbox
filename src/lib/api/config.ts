@@ -21,7 +21,32 @@ export interface ModelProvider {
   defaultModel: string;
   /** 已配置的模型 id 列表(旧配置无此字段,后端 serde default 补空数组) */
   models: string[];
+  /**
+   * 中转 model 名 → 官方 model id 别名映射。
+   * 例: `{"route-gpt-4o": "gpt-4o", "teamorouter-claude-opus-4-1": "claude-opus-4-1"}`
+   * 用途:让中转站 model 也能按官方价算 cost_usd。
+   * 后端省略空 map 字段(只有 alias 才出现)。
+   */
+  modelAliases?: Record<string, string>;
+  /** 该 provider 的价格覆盖/自定义。override > alias > builtin。 */
+  pricing?: ProviderPricing;
   enabled: boolean;
+}
+
+/** 单个 provider 的价格配置。中转站 override 单价 + 别名映射。 */
+export interface ProviderPricing {
+  /** 中转名 → 官方 canonical model 名 */
+  aliases: Record<string, string>;
+  /** model → 自定义 ModelPrice(覆盖默认 builtin_prices) */
+  overrides: Record<string, ModelPrice>;
+}
+
+/** 简化版 ModelPrice(用于 ProviderPricing.overrides) */
+export interface ModelPrice {
+  input: number;
+  cacheRead: number | null;
+  cacheCreation: number | null;
+  output: number;
 }
 
 // 与后端 ProviderTestResult(serde camelCase)对齐。

@@ -138,6 +138,14 @@ pub fn usage_summary(window_days: u32) -> Result<UsageSummary, String> {
 
     // 收集涉及的月份桶 + 每个月的快照(用于 provider 归属)
     let months = store::read_all(&home);
+
+    // provider_id → ProviderPricing(给 cost_usd 用 alias/override 二次查表)
+    let pricing_map: BTreeMap<String, pricing::ProviderPricing> = config
+        .providers
+        .iter()
+        .map(|p| (p.id.clone(), p.pricing.clone()))
+        .collect();
+
     if months.is_empty() {
         summary.parse_health = last_scan_health(&home);
         return Ok(summary);
@@ -172,7 +180,13 @@ pub fn usage_summary(window_days: u32) -> Result<UsageSummary, String> {
                     Some((a, mm)) => (a.to_string(), mm.to_string()),
                     None => continue,
                 };
-                let event_cost = pricing::builtin_prices(&model)
+                // cost = builtin_prices(model) 的价;provider 有 override/alias 时
+                // 走 ProviderPricing.resolve(优先级:override > alias > builtin)
+                let event_cost = agent_to_provider
+                    .get(&agent_id)
+                    .and_then(|pid| pricing_map.get(pid))
+                    .and_then(|pp| pp.resolve(Some(pp), &model))
+                    .or_else(|| pricing::builtin_prices(&model).map(|p| p.price))
                     .map(|p| {
                         p.event_cost(
                             totals.input,
@@ -417,6 +431,48 @@ mod tests {
         assert!(meta.age_days >= 0);
         // is_stale 在当前 SNAPSHOT_DATE + 30 天窗口内应为 false
         assert!(!meta.is_stale || meta.age_days > 30);
+    }
+
+    #[test]
+    fn pricing_provider_pricing_alias_resolves_to_builtin_price() {
+        // provider 配了 alias 映射:中转名 "route-claude-fable-5" → 官方 "claude-fable-5"
+        // 应该能查到官方价 ($10/$50)
+        use crate::usage::pricing::{builtin_prices, ModelPrice, ProviderPricing};
+        let mut pp = ProviderPricing::default();
+        pp.aliases
+            .insert("route-claude-fable-5".into(), "claude-fable-5".into());
+        let price = pp
+            .resolve(Some(&pp), "route-claude-fable-5")
+            .expect("alias 解析后应该找到价");
+        // 官方 claude-fable-5: $10 input / $50 output
+        assert!((price.input - 10.0).abs() < 1e-9, "input 应是 $10,实际 {}", price.input);
+        assert!((price.output - 50.0).abs() < 1e-9, "output 应是 $50,实际 {}", price.output);
+        // builtin 也有这个价(说明 alias 正确指向)
+        let builtin = builtin_prices("claude-fable-5").unwrap();
+        assert_eq!(price.input, builtin.price.input);
+    }
+
+    #[test]
+    fn pricing_provider_pricing_override_wins_over_alias() {
+        // override > alias 优先级
+        use crate::usage::pricing::{ModelPrice, ProviderPricing};
+        let mut pp = ProviderPricing::default();
+        pp.aliases
+            .insert("route-x".into(), "claude-fable-5".into());
+        pp.overrides.insert(
+            "route-x".into(),
+            ModelPrice { input: 99.0, cache_read: None, cache_creation: None, output: 99.0 },
+        );
+        let p = pp.resolve(Some(&pp), "route-x").unwrap();
+        assert!((p.input - 99.0).abs() < 1e-9, "override 胜出,实际 {}", p.input);
+    }
+
+    #[test]
+    fn pricing_provider_pricing_unknown_model_returns_none() {
+        // 都没命中(alias 也不指向 builtin) → None
+        use crate::usage::pricing::ProviderPricing;
+        let pp = ProviderPricing::default();
+        assert!(pp.resolve(Some(&pp), "totally-fake-model").is_none());
     }
 
     #[test]
