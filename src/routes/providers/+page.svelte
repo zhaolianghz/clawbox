@@ -59,10 +59,14 @@
     try { return new URL(url).host; } catch { return url; }
   }
 
-  function configuredEntry(e: ProviderCatalogEntry): ModelProvider | undefined {
+  function configuredEntries(e: ProviderCatalogEntry): ModelProvider[] {
     const byApi = configuredByHost.get(hostOf(e.apiHost)) ?? [];
     const byAnthropic = e.anthropicHost ? (configuredByHost.get(hostOf(e.anthropicHost)) ?? []) : [];
-    return byApi[0] ?? byAnthropic[0];
+    return [...new Map([...byApi, ...byAnthropic].map((p) => [p.id, p])).values()];
+  }
+
+  function configuredEntry(e: ProviderCatalogEntry): ModelProvider | undefined {
+    return configuredEntries(e)[0];
   }
 
   // ---------- 自定义服务商(目录里没有的存储条目)----------
@@ -117,6 +121,12 @@
       })
       .map(syntheticEntry)
   );
+
+  // 自定义卡片已经通过 provider id 唯一对应配置，不能再次按 Host 反查。
+  const configuredForEntry = (e: ProviderCatalogEntry): ModelProvider | undefined => {
+    const direct = $providers.find((p) => p.id === e.id);
+    return direct ?? configuredEntry(e);
+  };
 
   const filtered = $derived.by(() => {
     const q = query.trim().toLowerCase();
@@ -1024,7 +1034,7 @@
           <span class="add-label">{$_('providers.addCustom')}</span>
         </button>
       {:else}
-      {@const configured = configuredEntry(e)}
+      {@const configured = configuredForEntry(e)}
       {@const pUsage = providerUsageByName(localize(e.name, $locale))}
       <div
         class="provider-card glass-card"
