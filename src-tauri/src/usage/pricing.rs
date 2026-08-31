@@ -91,7 +91,12 @@ impl PricedModel {
     /// 是否超过 90 天未核对(UI banner 用)
     pub fn is_stale(&self, today: Date) -> bool {
         let age_days = (today - self.verified_at).whole_days();
-        age_days > 90
+        age_days > 30
+    }
+
+    /// 剩余多少天后会变 stale(UI 显示「剩余 N 天」)
+    pub fn days_until_stale(&self, today: Date) -> i64 {
+        30 - (today - self.verified_at).whole_days()
     }
 
     /// 当前价表快照日期(对外公开)
@@ -1315,22 +1320,31 @@ mod tests {
     }
 
     #[test]
-    fn stale_price_over_90_days() {
+    fn stale_price_over_30_days() {
         use time::Month;
         // 当前 SNAPSHOT_DATE 是 2026-08-31
-        // 加 91 天后 = 2026-12-01,应该 stale
-        let today = time::Date::from_calendar_date(2026, Month::December, 1).unwrap();
+        // 加 31 天后 = 2026-10-01,应该 stale
+        let today = time::Date::from_calendar_date(2026, Month::October, 1).unwrap();
         let p = builtin_prices("claude-fable-5").unwrap();
-        assert!(p.is_stale(today), "91 天后应该标记为 stale");
+        assert!(p.is_stale(today), "31 天后应该标记为 stale");
     }
 
     #[test]
-    fn fresh_price_under_90_days() {
+    fn fresh_price_under_30_days() {
         use time::Month;
-        // SNAPSHOT_DATE + 30 天应新鲜
-        let today = time::Date::from_calendar_date(2026, Month::September, 30).unwrap();
+        // SNAPSHOT_DATE + 10 天应新鲜
+        let today = time::Date::from_calendar_date(2026, Month::September, 10).unwrap();
         let p = builtin_prices("claude-fable-5").unwrap();
-        assert!(!p.is_stale(today), "30 天后应仍新鲜");
+        assert!(!p.is_stale(today), "10 天后应仍新鲜");
+    }
+
+    #[test]
+    fn days_until_stale_counts_down() {
+        use time::Month;
+        // 截至 SNAPSHOT_DATE + 15 天,还剩 15 天变 stale
+        let today = time::Date::from_calendar_date(2026, Month::September, 15).unwrap();
+        let p = builtin_prices("claude-fable-5").unwrap();
+        assert_eq!(p.days_until_stale(today), 15);
     }
 
     #[test]
