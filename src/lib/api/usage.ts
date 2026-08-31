@@ -7,6 +7,22 @@ export interface UsageTotals {
   cache_creation: number;
   output: number;
   events: number;
+  /** 折算成本(USD)。null = model 不在价表里;Some(0) = 官方免费。 */
+  cost_usd: number | null;
+}
+
+/** 价格表快照元信息,前端展示 stale banner 用。 */
+export interface PricingMeta {
+  /** 价表快照日期(YYYY-MM-DD) */
+  snapshot_date: string;
+  /** 当前距快照多少天 */
+  age_days: number;
+  /** 距 stale 还有多少天(可负,负数表示已 stale) */
+  days_until_stale: number;
+  /** 当前是否已 stale */
+  is_stale: boolean;
+  /** 覆盖 model 数(在价表里有官方价) */
+  covered_models: number;
 }
 
 /** 一个 model 的用量。 */
@@ -43,6 +59,8 @@ export interface UsageSummary {
   by_agent: AgentUsage[];
   parse_health: ParseHealth;
   window_days: number;
+  /** 价表快照元信息(banner / stale 提示)。缺省 = 后端还没填。 */
+  pricing_meta?: PricingMeta;
 }
 
 /** 单次刷新报告(对应 aggregate::RefreshReport 的核心字段)。 */

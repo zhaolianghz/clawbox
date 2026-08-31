@@ -9,11 +9,12 @@
 //! `crate::usage` 模块,这里不复制。
 
 use crate::commands::config::{load_config, real_home, CONFIG_LOCK};
+use crate::usage::pricing;
 use crate::usage::{aggregate, store};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap};
 use std::path::Path;
-use time::OffsetDateTime;
+use time::{Date, Month, OffsetDateTime};
 
 /// 一行汇总(前端展示)。
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
@@ -23,6 +24,8 @@ pub struct UsageTotals {
     pub cache_creation: u64,
     pub output: u64,
     pub events: u64,
+    /// 折算成本(USD)。None = model 不在价表里;Some(0.0) = 官方免费 model。
+    pub cost_usd: Option<f64>,
 }
 
 impl UsageTotals {
@@ -32,6 +35,50 @@ impl UsageTotals {
         self.cache_creation += other.cache_creation;
         self.output += other.output;
         self.events += other.events;
+        // cost_usd merge:Some+None=Some(已写优先),None+None=None,Some+Some=累加
+        match (self.cost_usd, other.cost_usd) {
+            (Some(a), Some(b)) => self.cost_usd = Some(a + b),
+            (None, Some(b)) => self.cost_usd = Some(b),
+            (Some(a), None) => self.cost_usd = Some(a),
+            (None, None) => self.cost_usd = None,
+        }
+    }
+}
+
+/// 价格表快照元信息,前端展示 stale banner 用。
+#[derive(Clone, Debug, Serialize)]
+pub struct PricingMeta {
+    /// 价表快照日期(YYYY-MM-DD)
+    pub snapshot_date: String,
+    /// 当前距快照多少天(基于 today)
+    pub age_days: i64,
+    /// 距 stale 还有多少天(可负,负数表示已 stale)
+    pub days_until_stale: i64,
+    /// 当前是否已 stale
+    pub is_stale: bool,
+    /// 覆盖 model 数(在价表里有官方价)
+    pub covered_models: u32,
+}
+
+impl PricingMeta {
+    pub fn snapshot(today: Date) -> Self {
+        let snap = pricing::PricedModel::snapshot_date();
+        let age = (today - snap).whole_days();
+        let sample = pricing::PricedModel::new(crate::usage::pricing::ModelPrice::default());
+        let days_until = sample.days_until_stale(today);
+        let covered = pricing::known_models().len() as u32;
+        PricingMeta {
+            snapshot_date: format!(
+                "{:04}-{:02}-{:02}",
+                snap.year(),
+                snap.month() as u8,
+                snap.day()
+            ),
+            age_days: age,
+            days_until_stale: days_until,
+            is_stale: age > days_until,
+            covered_models: covered,
+        }
     }
 }
 
@@ -43,6 +90,9 @@ pub struct UsageSummary {
     pub by_agent: Vec<AgentUsage>,
     pub parse_health: aggregate::ParseHealth,
     pub window_days: u32,
+    /// 价表快照元信息(banner 用)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pricing_meta: Option<PricingMeta>,
 }
 
 #[derive(Clone, Debug, Default, Serialize)]
@@ -122,12 +172,22 @@ pub fn usage_summary(window_days: u32) -> Result<UsageSummary, String> {
                     Some((a, mm)) => (a.to_string(), mm.to_string()),
                     None => continue,
                 };
+                let event_cost = pricing::builtin_prices(&model)
+                    .map(|p| {
+                        p.event_cost(
+                            totals.input,
+                            totals.cache_read,
+                            totals.cache_creation,
+                            totals.output,
+                        )
+                    });
                 let t = UsageTotals {
                     input: totals.input,
                     cache_read: totals.cache_read,
                     cache_creation: totals.cache_creation,
                     output: totals.output,
                     events: totals.events,
+                    cost_usd: event_cost,
                 };
                 summary.total.add(&t);
                 day_entry.entry(agent_id.clone()).or_default().entry(model.clone()).and_modify(|cur| cur.add(&t)).or_insert(t.clone());
@@ -189,6 +249,9 @@ pub fn usage_summary(window_days: u32) -> Result<UsageSummary, String> {
 
     // parse_health 用最近一个月的 last_scan_at(已有数据则有,否则默认)
     summary.parse_health = last_scan_health(&home);
+    // pricing meta — banner / stale 提示
+    let today = OffsetDateTime::now_utc().date();
+    summary.pricing_meta = Some(PricingMeta::snapshot(today));
     // 让前端可以按 agent 名查到 provider
     let _ = agent_to_provider; // 当前 by_agent 不内嵌 provider;前端可另查 usage_provider_summary
 
@@ -319,6 +382,7 @@ mod tests {
             cache_creation: 3,
             output: 4,
             events: 5,
+            cost_usd: Some(0.10),
         };
         let b = UsageTotals {
             input: 10,
@@ -326,6 +390,7 @@ mod tests {
             cache_creation: 30,
             output: 40,
             events: 50,
+            cost_usd: Some(0.20),
         };
         a.add(&b);
         assert_eq!(a.input, 11);
@@ -333,6 +398,25 @@ mod tests {
         assert_eq!(a.cache_creation, 33);
         assert_eq!(a.output, 44);
         assert_eq!(a.events, 55);
+        // cost_usd 也累加(0.10 + 0.20 = 0.30,f64 浮点误差 ~1e-16)
+        let c = a.cost_usd.expect("cost_usd 应该 Some");
+        assert!(
+            (c - 0.30).abs() < 1e-9,
+            "expected ~0.30, got {}",
+            c
+        );
+    }
+
+    #[test]
+    fn pricing_meta_snapshot_is_well_formed() {
+        use time::OffsetDateTime;
+        let today = OffsetDateTime::now_utc().date();
+        let meta = PricingMeta::snapshot(today);
+        assert!(!meta.snapshot_date.is_empty(), "snapshot_date 非空");
+        assert!(meta.covered_models >= 80, "至少 80 个 model,实际 {}", meta.covered_models);
+        assert!(meta.age_days >= 0);
+        // is_stale 在当前 SNAPSHOT_DATE + 30 天窗口内应为 false
+        assert!(!meta.is_stale || meta.age_days > 30);
     }
 
     #[test]

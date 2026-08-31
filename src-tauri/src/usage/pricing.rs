@@ -64,6 +64,17 @@ pub struct ModelPrice {
     pub output: f64,
 }
 
+impl Default for ModelPrice {
+    fn default() -> Self {
+        Self {
+            input: 0.0,
+            cache_read: None,
+            cache_creation: None,
+            output: 0.0,
+        }
+    }
+}
+
 /// 一个 model 的官方公开价 + 核对日期(USD per 1M tokens)。
 ///
 /// `verified_at`: 本仓库人工核对官方价的日期。90 天后 UI banner 提示。
@@ -102,6 +113,11 @@ impl PricedModel {
     /// 当前价表快照日期(对外公开)
     pub fn snapshot_date() -> Date {
         snapshot_date_const()
+    }
+
+    /// 价表里所有已注册 model id(给 UI banner 用,统计"已过时 model 数量")
+    pub fn model_ids() -> Vec<&'static str> {
+        known_models()
     }
 }
 
