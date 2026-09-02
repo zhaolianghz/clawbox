@@ -13,6 +13,10 @@ pub fn build_install_args(def: &AgentDef) -> Result<(String, Vec<String>), Strin
             args.push(package.to_string());
             Ok(("npm".to_string(), args))
         }
+        InstallMethod::Pipx { package } => Ok((
+            "pipx".to_string(),
+            vec!["install".to_string(), package.to_string()],
+        )),
         InstallMethod::Script { unix, windows } => {
             if cfg!(windows) {
                 // Windows: PowerShell 下载并执行安装脚本
@@ -66,6 +70,13 @@ pub fn run_install(def: &AgentDef) -> Result<String, String> {
 mod tests {
     use super::*;
     use crate::agents::find_agent;
+
+    #[test]
+    fn pipx_install_args() {
+        let (cmd, args) = build_install_args(find_agent("aider").unwrap()).unwrap();
+        assert_eq!(cmd, "pipx");
+        assert_eq!(args, vec!["install", "aider-chat"]);
+    }
 
     #[test]
     fn npm_install_args() {

@@ -6,6 +6,7 @@
   // 品牌色 + 首字母降级;命中 lobe-icons 的 agent 用真实 logo
   const BRAND: Record<string, { bg: string; fg: string; initial: string }> = {
     node: { bg: 'rgba(67, 133, 61, 0.18)', fg: '#8cc84b', initial: 'N' },
+    aider: { bg: 'rgba(245, 158, 11, 0.18)', fg: '#f59e0b', initial: 'A' },
     'claude-code': { bg: 'rgba(217, 119, 87, 0.18)', fg: '#d97757', initial: 'C' },
     codex: { bg: 'rgba(116, 170, 156, 0.18)', fg: '#74aa9c', initial: 'C' },
     openclaw: { bg: 'rgba(224, 83, 61, 0.18)', fg: '#e0533d', initial: 'O' },

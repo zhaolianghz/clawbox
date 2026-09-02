@@ -1070,7 +1070,7 @@ mod tests {
         config.memory_managed.insert("hermes".to_string(), vec!["block".to_string()]);
 
         let all = agent_sync_overview_at(home.path(), &config);
-        assert_eq!(all.len(), 15); // 注册表全覆盖
+        assert_eq!(all.len(), 16); // 注册表全覆盖
         let codex = overview_of(&all, "codex");
         assert_eq!((codex.providers[0].name.as_str(), codex.providers[0].state.as_str()), ("OA Relay", "synced"));
         assert!(codex.provider_config_path.ends_with("config.toml"));

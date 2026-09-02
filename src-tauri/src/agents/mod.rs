@@ -19,6 +19,7 @@ pub enum AgentKind {
 
 pub enum InstallMethod {
     Npm { package: &'static str, force: bool },
+    Pipx { package: &'static str },
     Script {
         /// Unix (macOS/Linux) installer URL, run via `curl -fsSL {url} | bash`.
         unix: &'static str,
@@ -54,6 +55,13 @@ static AGENTS: &[AgentDef] = &[
         kind: AgentKind::Runtime, install: InstallMethod::PlatformPkg,
         check_probe: &["--version"], fallback_paths: &[],
         depends_on: &[], docs_url: Some("https://nodejs.org"),
+    },
+    AgentDef {
+        id: "aider", label: "Aider", binary: "aider",
+        kind: AgentKind::NativeCli,
+        install: InstallMethod::Pipx { package: "aider-chat" },
+        check_probe: &["--version"], fallback_paths: &["~/.local/bin/aider"],
+        depends_on: &[], docs_url: Some("https://aider.chat"),
     },
     AgentDef {
         id: "claude-code", label: "Claude Code", binary: "claude",
@@ -435,6 +443,7 @@ pub fn install_command_display(def: &AgentDef) -> Option<String> {
         } else {
             format!("npm install -g {}", package)
         }),
+        InstallMethod::Pipx { package } => Some(format!("pipx install {}", package)),
         InstallMethod::Script { unix, windows } => Some(if cfg!(windows) {
             format!("irm {} | iex", windows)
         } else {
@@ -500,11 +509,11 @@ mod tests {
     #[test]
     fn registry_has_exactly_15_unique_entries() {
         let ids: Vec<_> = agents().iter().map(|a| a.id).collect();
-        assert_eq!(ids.len(), 16);
+        assert_eq!(ids.len(), 17);
         let mut dedup = ids.clone();
         dedup.sort();
         dedup.dedup();
-        assert_eq!(dedup.len(), 16, "duplicate agent ids");
+        assert_eq!(dedup.len(), 17, "duplicate agent ids");
     }
 
     #[test]

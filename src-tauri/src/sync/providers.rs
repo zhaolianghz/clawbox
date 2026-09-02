@@ -3367,6 +3367,66 @@ impl ProviderAdapter for DshProviderAdapter {
     }
 }
 
+// ---- Aider adapter ----------------------------------------------------------
+
+struct AiderProviderAdapter;
+
+impl AiderProviderAdapter {
+    fn read(&self, home: &Path) -> Result<serde_yaml::Value, String> {
+        let path = self.config_path(home);
+        if !path.exists() { return Ok(serde_yaml::Value::Mapping(serde_yaml::Mapping::new())); }
+        let text = std::fs::read_to_string(&path).map_err(|e| format!("failed to read {}: {}", path.display(), e))?;
+        if text.trim().is_empty() { return Ok(serde_yaml::Value::Mapping(serde_yaml::Mapping::new())); }
+        serde_yaml::from_str(&text).map_err(|e| format!("failed to parse {}: {}", path.display(), e))
+    }
+    fn desired(&self, spec: &ProviderSpec) -> Option<BTreeMap<String, String>> {
+        let (base, base_key, key_key) = if !spec.openai_base_url.trim().is_empty() {
+            (&spec.openai_base_url, "openai-api-base", "openai-api-key")
+        } else if !spec.anthropic_base_url.trim().is_empty() {
+            (&spec.anthropic_base_url, "anthropic-api-base", "anthropic-api-key")
+        } else { return None };
+        if spec.default_model.trim().is_empty() || spec.api_key.trim().is_empty() { return None; }
+        Some(BTreeMap::from([("model".into(), spec.default_model.trim().into()), (base_key.into(), base.trim().into()), (key_key.into(), spec.api_key.trim().into())]))
+    }
+    fn write(&self, home: &Path, doc: &serde_yaml::Value) -> Result<(), String> {
+        let path = self.config_path(home);
+        std::fs::create_dir_all(path.parent().unwrap()).map_err(|e| e.to_string())?;
+        let text = serde_yaml::to_string(doc).map_err(|e| e.to_string())?;
+        let tmp = path.with_extension("yml.tmp");
+        std::fs::write(&tmp, text).map_err(|e| e.to_string())?;
+        std::fs::rename(&tmp, &path).map_err(|e| e.to_string())
+    }
+}
+
+impl ProviderAdapter for AiderProviderAdapter {
+    fn agent_id(&self) -> &'static str { "aider" }
+    fn config_path(&self, home: &Path) -> PathBuf { home.join(".aider.conf.yml") }
+    fn plan(&self, home: &Path, providers: &[ProviderSpec], active_id: Option<&str>, _managed: &[String]) -> Result<Vec<ChangeItem>, String> {
+        let current = self.read(home)?;
+        let cur = current.as_mapping().cloned().unwrap_or_default();
+        let Some(spec) = active_spec(providers, active_id) else { return Ok(vec![]); };
+        let Some(desired) = self.desired(spec) else { return Ok(vec![ChangeItem { name: spec.name.clone(), action: "skip".into(), detail: "Aider endpoint, API key, and model are required".into() }]); };
+        let same = desired.iter().all(|(k, v)| cur.get(serde_yaml::Value::String(k.clone())).and_then(serde_yaml::Value::as_str) == Some(v));
+        Ok(vec![ChangeItem { name: spec.name.clone(), action: if same { "unchanged" } else if cur.is_empty() { "add" } else { "update" }.into(), detail: String::new() }])
+    }
+    fn apply(&self, home: &Path, providers: &[ProviderSpec], active_id: Option<&str>, managed: &[String]) -> Result<usize, String> {
+        let mut doc = self.read(home)?;
+        let Some(spec) = active_spec(providers, active_id) else { return Ok(0); };
+        let desired = self.desired(spec);
+        let root = doc.as_mapping_mut().ok_or_else(|| "Aider config must be a YAML mapping".to_string())?;
+        let mut changed = 0;
+        if let Some(desired) = desired {
+            for key in managed { if !desired.contains_key(key) && root.remove(serde_yaml::Value::String(key.clone())).is_some() { changed += 1; } }
+            for (key, value) in desired { let k = serde_yaml::Value::String(key); let v = serde_yaml::Value::String(value); if root.get(&k) != Some(&v) { root.insert(k, v); changed += 1; } }
+        } else {
+            for key in managed { if root.remove(serde_yaml::Value::String(key.clone())).is_some() { changed += 1; } }
+        }
+        if changed > 0 { self.write(home, &doc)?; }
+        Ok(changed)
+    }
+    fn deployed_names(&self, providers: &[ProviderSpec], active_id: Option<&str>) -> Vec<String> { active_spec(providers, active_id).and_then(|s| self.desired(s)).map(|d| d.into_keys().collect()).unwrap_or_default() }
+}
+
 // ---- 占位适配器与注册表 ------------------------------------------------------
 
 /// v1 暂不管理服务商配置的 agent(配置格式未确认,不猜)。
@@ -3418,6 +3478,7 @@ pub fn adapters() -> &'static [Box<dyn ProviderAdapter>] {
                 Box::new(OpenclawProviderAdapter),
                 Box::new(OpencodeProviderAdapter),
                 Box::new(codebuddy()),
+                Box::new(AiderProviderAdapter),
                 Box::new(UnsupportedProviderAdapter { id: "cursor-agent" }),
                 Box::new(KimiProviderAdapter),
                 Box::new(UnsupportedProviderAdapter { id: "qodercli" }),
@@ -5313,7 +5374,7 @@ mod tests {
             );
         }
         assert!(find_adapter("node").is_none());
-        assert_eq!(adapters().len(), 15);
+        assert_eq!(adapters().len(), 16);
         let supported: Vec<&str> = adapters()
             .iter()
             .filter(|a| a.supported())
@@ -5321,7 +5382,7 @@ mod tests {
             .collect();
         assert_eq!(
             supported,
-            vec!["claude-code", "codex", "openclaw", "opencode", "codebuddy", "kimi", "hermes", "gemini", "cline", "pi", "dsh"]
+            vec!["claude-code", "codex", "openclaw", "opencode", "codebuddy", "aider", "kimi", "hermes", "gemini", "cline", "pi", "dsh"]
         );
     }
 
@@ -5338,11 +5399,13 @@ mod tests {
         let bindings =
             std::collections::HashMap::from([("claude-code".to_string(), "p-anth".to_string())]);
         let plans = plan_all(home.path(), &providers, &bindings, &Default::default());
-        assert_eq!(plans.len(), 15);
+        assert_eq!(plans.len(), 16);
         let cc = plans.iter().find(|p| p.agent_id == "claude-code").unwrap();
         assert!(cc.error.is_some());
         let oc = plans.iter().find(|p| p.agent_id == "opencode").unwrap();
         assert!(oc.error.is_none());
+        let aider = plans.iter().find(|p| p.agent_id == "aider").unwrap();
+        assert!(aider.supported && aider.error.is_none());
         let kimi = plans.iter().find(|p| p.agent_id == "kimi").unwrap();
         assert!(kimi.supported && kimi.error.is_none());
         for id in ["cursor-agent", "qodercli"] {

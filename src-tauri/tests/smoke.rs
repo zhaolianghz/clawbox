@@ -104,7 +104,7 @@ fn memory_status_runs_against_live_backends() {
 fn agent_registry_detection_is_consistent_with_direct_probes() {
     ensure_path();
     let statuses = clawbox_lib::agents::list_agent_status();
-    assert_eq!(statuses.len(), 16);
+    assert_eq!(statuses.len(), 17);
 
     // Every status must agree with probing the binary directly.
     for s in &statuses {
