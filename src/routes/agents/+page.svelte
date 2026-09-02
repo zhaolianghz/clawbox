@@ -35,6 +35,13 @@
   // PATH 解析是否降级(shell 超时→备用目录)。降级时顶部提示:已装 agent 可能误报未安装(GH#3)。
   let pathDegraded = $state(false);
 
+  // 这些 CLI 目前没有 ProviderAdapter，无法在 ClawBox 中配置服务商；
+  // 保留在其它能力页的注册，仅从 Agent 管理页隐藏，避免展示不可用的配置入口。
+  const PROVIDER_UNSUPPORTED_AGENTS = new Set(['cursor-agent', 'qodercli', 'qwen-code', 'trae-agent']);
+  function configurableAgents(list: AgentStatus[]): AgentStatus[] {
+    return list.filter((a) => a.kind !== 'runtime' && !PROVIDER_UNSUPPORTED_AGENTS.has(a.id));
+  }
+
   // 一键体检:顶部内联报告面板,只读,重新体检按钮复用
   let doctorReport = $state<DoctorReport | null>(null);
   let doctorRunning = $state(false);
@@ -75,7 +82,7 @@
     try {
       const all = await agents_list();
       // Node.js 是运行时依赖,不是 agent;仅用于依赖检测,不在 agent 列表里展示。
-      agents = all.filter((a) => a.kind !== 'runtime');
+      agents = configurableAgents(all);
       try {
         localStorage.setItem(STATUS_CACHE_KEY, JSON.stringify(agents));
       } catch { /* storage 满/禁用则下次仍走全屏加载 */ }
@@ -101,7 +108,7 @@
   // 秒开:先渲染上次探测结果,真实探测后台进行
   const cached = readStatusCache();
   if (cached) {
-    agents = cached;
+    agents = configurableAgents(cached);
     isLoading = false;
   }
   // 服务商列表/绑定与 agent 探测互不依赖:并行启动,不让 2s+ 的探测
