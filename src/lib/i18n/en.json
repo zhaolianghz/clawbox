@@ -542,6 +542,16 @@
     "applyFailed": "Apply failed"
   },
   "usage": {
+    "eyebrow": "Usage analytics",
+    "synced": "Synced",
+    "primaryMetric": "Total usage · {days} days",
+    "perDay": "average per day",
+    "chartHint": "Daily token consumption trend",
+    "periodLabel": "Time range",
+    "compositionTitle": "Token composition",
+    "compositionHint": "Distribution across input, cache, and output",
+    "agentHint": "Usage share and model details by agent",
+    "priceVerified": "Price table verified {date}",
     "title": "Token Usage",
     "subtitle": "Local token consumption aggregated from agent CLI logs.",
     "refresh": "Refresh",

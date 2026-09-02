@@ -542,6 +542,16 @@
     "applyFailed": "应用失败"
   },
   "usage": {
+    "eyebrow": "用量分析",
+    "synced": "同步于",
+    "primaryMetric": "近 {days} 天总用量",
+    "perDay": "每日平均",
+    "chartHint": "每日 token 消耗趋势",
+    "periodLabel": "时间范围",
+    "compositionTitle": "Token 构成",
+    "compositionHint": "输入、缓存与输出的用量分布",
+    "agentHint": "按 Agent 查看占比与模型明细",
+    "priceVerified": "价表已核对：{date}",
     "title": "Token 用量",
     "subtitle": "本机各 agent CLI 的真实 token 消耗,聚合自本地会话日志。",
     "refresh": "刷新",

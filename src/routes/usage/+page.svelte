@@ -1,571 +1,101 @@
 <script lang="ts">
-  // /usage — Token 用量统计页(路线图 #1)。
-  // 设计:四张汇总卡(今日 / 7 / 30 / 全部) + 按天堆叠柱状图(SVG 自写) +
-  // 按 agent 折叠列表。空状态与降级(matched_ratio < 0.8)用顶栏徽章提示。
   import { onMount } from 'svelte';
   import { _ } from 'svelte-i18n';
-  import {
-    usageSummary,
-    usageRefresh,
-    type UsageSummary,
-    type UsageRefreshReport,
-    type DayUsage,
-  } from '$lib/api/usage';
+  import { usageSummary, usageRefresh, type UsageSummary, type UsageRefreshReport, type UsageTotals } from '$lib/api/usage';
 
+  type Period = 7 | 30 | 90;
+  let period = $state<Period>(30);
   let summary = $state<UsageSummary | null>(null);
   let lastRefresh = $state<UsageRefreshReport | null>(null);
   let loading = $state(false);
   let refreshing = $state(false);
   let error = $state<string | null>(null);
+  const AGENT_COLORS = ['#67e8c8', '#8fa8ff', '#d6a8ff', '#f5c542', '#ff9f7a', '#8de0ed'];
 
-  async function loadSummary() {
-    loading = true;
-    error = null;
-    try {
-      summary = await usageSummary(30);
-    } catch (e) {
-      error = String(e);
-    } finally {
-      loading = false;
-    }
+  async function loadSummary(days = period) {
+    loading = true; error = null;
+    try { summary = await usageSummary(days); } catch (e) { error = String(e); } finally { loading = false; }
   }
-
   async function refresh() {
-    refreshing = true;
-    error = null;
-    try {
-      lastRefresh = await usageRefresh();
-      await loadSummary();
-    } catch (e) {
-      error = String(e);
-    } finally {
-      refreshing = false;
-    }
+    refreshing = true; error = null;
+    try { lastRefresh = await usageRefresh(); await loadSummary(); } catch (e) { error = String(e); } finally { refreshing = false; }
   }
+  function setPeriod(value: Period) { period = value; loadSummary(value); }
+  onMount(() => loadSummary());
 
-  onMount(loadSummary);
-
-  /** 把原始数字格式化成「1.2M」「12k」风格,前端不再依赖外部库。 */
+  function totalTokens(t: UsageTotals) { return t.input + t.cache_read + t.cache_creation + t.output; }
   function fmtTokens(n: number): string {
-    if (n >= 1_000_000) return (n / 1_000_000).toFixed(1) + 'M';
-    if (n >= 1_000) return (n / 1_000).toFixed(1) + 'k';
+    if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
+    if (n >= 1_000) return `${(n / 1_000).toFixed(1)}k`;
     return String(n);
   }
-
-  /** USD 成本:None → 显示 "—";< 0.01 → 显示 <$0.01;否则 2 位小数 */
   function fmtCost(c: number | null | undefined): string {
     if (c == null) return $_('usage.costUnknown');
-    if (c === 0) return '$0.00';
-    if (c < 0.01) return '<$0.01';
-    if (c < 10) return '$' + c.toFixed(2);
-    if (c < 1000) return '$' + c.toFixed(1);
-    return '$' + c.toFixed(0);
+    if (c === 0) return '$0.00'; if (c < 0.01) return '<$0.01';
+    return c < 10 ? `$${c.toFixed(2)}` : c < 1000 ? `$${c.toFixed(1)}` : `$${c.toFixed(0)}`;
   }
-
-  /** 按口径拆分展示(input/cache_read/cache_creation/output)。 */
-  function totalsLine(t: { input: number; cache_read: number; cache_creation: number; output: number }): string {
-    return `in ${fmtTokens(t.input)} · cr ${fmtTokens(t.cache_read)} · cc ${fmtTokens(t.cache_creation)} · out ${fmtTokens(t.output)}`;
-  }
-
-  /** 给柱状图生成颜色 — 按 agent 索引取色,稳态硬编码而非随机(避免重渲色变)。 */
-  const AGENT_COLORS = ['#00f5ff', '#ff6ec7', '#7cf08c', '#f5c542', '#c47cff', '#ff8e54'];
-  function colorForAgent(agentId: string, agents: string[]): string {
-    const idx = agents.indexOf(agentId);
-    return AGENT_COLORS[idx >= 0 ? idx % AGENT_COLORS.length : 0];
-  }
-
-  /** SVG 堆叠柱状图 — 接收 by_day + by_agent 列表,渲染每天一柱。 */
-  let chartBox = $state<{ w: number; h: number } | null>(null);
-  function setupChart(node: SVGSVGElement) {
-    const update = () => {
-      const r = node.getBoundingClientRect();
-      chartBox = { w: Math.max(320, r.width), h: 220 };
-    };
-    update();
-    const ro = new ResizeObserver(update);
-    ro.observe(node);
-    return { destroy: () => ro.disconnect() };
-  }
-
-  function chartSegments(day: DayUsage, agents: string[]): Array<{ y: number; h: number; color: string; agent: string }> {
-    const total = day.by_agent.reduce((s, a) => s + (a.totals.input + a.totals.cache_read + a.totals.cache_creation + a.totals.output), 0);
-    if (total === 0 || !chartBox) return [];
-    const usable = chartBox.h - 20;
-    let y = 0;
-    return day.by_agent.map((a) => {
-      const v = a.totals.input + a.totals.cache_read + a.totals.cache_creation + a.totals.output;
-      const h = (v / total) * usable;
-      const seg = { y, h, color: colorForAgent(a.agent_id, agents), agent: a.agent_id };
-      y += h;
-      return seg;
-    });
-  }
-
   function relTime(iso: string | null | undefined): string {
-    if (!iso) return $_('usage.never');
-    const t = new Date(iso);
-    if (Number.isNaN(t.getTime())) return iso;
-    const diff = Date.now() - t.getTime();
-    if (diff < 60_000) return $_('usage.justNow');
-    const mins = Math.floor(diff / 60_000);
-    if (mins < 60) return `${mins}m ago`;
-    const hours = Math.floor(mins / 60);
-    if (hours < 24) return `${hours}h ago`;
-    const days = Math.floor(hours / 24);
-    return `${days}d ago`;
+    if (!iso) return $_('usage.never'); const t = new Date(iso).getTime(); if (Number.isNaN(t)) return iso;
+    const mins = Math.floor((Date.now() - t) / 60000); if (mins < 1) return $_('usage.justNow');
+    if (mins < 60) return `${mins}m ago`; if (mins < 1440) return `${Math.floor(mins / 60)}h ago`; return `${Math.floor(mins / 1440)}d ago`;
   }
+  function colorForAgent(id: string) { return AGENT_COLORS[Math.max(0, (summary?.by_agent.findIndex(a => a.agent_id === id) ?? 0)) % AGENT_COLORS.length]; }
 
-  // 图表所需:全部 agent 顺序(用于颜色索引)
-  let agentOrder = $derived(summary ? summary.by_agent.map((a) => a.agent_id) : []);
+  let days = $derived(summary?.by_day.slice(-period) ?? []);
+  let maxDay = $derived(Math.max(...days.map(d => totalTokens(d.totals)), 1));
+  let points = $derived(days.map((d, i) => {
+    const x = days.length <= 1 ? 50 : (i / (days.length - 1)) * 100;
+    const y = 92 - (totalTokens(d.totals) / maxDay) * 76;
+    return { ...d, x, y };
+  }));
+  let linePath = $derived(points.map((p, i) => `${i ? 'L' : 'M'} ${p.x} ${p.y}`).join(' '));
+  let areaPath = $derived(points.length ? `${linePath} L 100 100 L 0 100 Z` : '');
+  let composition = $derived(summary ? [
+    { key: 'input', label: $_('usage.colInput'), value: summary.total.input },
+    { key: 'cache_read', label: $_('usage.colCacheRead'), value: summary.total.cache_read },
+    { key: 'cache_creation', label: $_('usage.colCacheWrite'), value: summary.total.cache_creation },
+    { key: 'output', label: $_('usage.colOutput'), value: summary.total.output },
+  ] : []);
+  let compositionTotal = $derived(composition.reduce((sum, item) => sum + item.value, 0) || 1);
 </script>
 
 <div class="usage-page">
   <header class="page-head">
-    <div>
-      <h1>{$_('usage.title')}</h1>
-      <p class="subtitle">{$_('usage.subtitle')}</p>
-    </div>
+    <div><div class="eyebrow">{$_('usage.eyebrow')}</div><h1>{$_('usage.title')}</h1><p class="subtitle">{$_('usage.subtitle')}</p></div>
     <div class="head-actions">
-      {#if summary?.parse_health}
-        {#if summary.parse_health.matched_ratio < 0.8 && summary.parse_health.matched_ratio > 0}
-          <span class="health-badge warn" title={$_('usage.healthWarnHint')}>
-            ⚠ {$_('usage.healthWarn', { values: { ratio: Math.round(summary.parse_health.matched_ratio * 100) } })}
-          </span>
-        {:else if summary.parse_health.matched_ratio >= 0.8 && summary.parse_health.last_scan_at}
-          <span class="health-badge ok">✓ {$_('usage.healthOk')}</span>
-        {/if}
-      {/if}
-      <span class="last-scan">{relTime(summary?.parse_health.last_scan_at)}</span>
-      <button class="action-btn wide primary" onclick={refresh} disabled={refreshing}>
-        {#if refreshing}<span class="spinner small"></span>{/if}
-        {$_('usage.refresh')}
-      </button>
+      {#if summary?.parse_health && summary.parse_health.matched_ratio < 0.8 && summary.parse_health.matched_ratio > 0}<span class="health-badge warn" title={$_('usage.healthWarnHint')}>⚠ {$_('usage.healthWarn', { values: { ratio: Math.round(summary.parse_health.matched_ratio * 100) } })}</span>{:else if summary?.parse_health?.last_scan_at}<span class="health-badge ok">● {$_('usage.healthOk')}</span>{/if}
+      <span class="last-scan">{$_('usage.synced')} {relTime(summary?.parse_health.last_scan_at)}</span>
+      <button class="refresh-btn" onclick={refresh} disabled={refreshing} aria-label={$_('usage.refresh')}>{#if refreshing}<span class="spinner"></span>{/if}↻</button>
     </div>
   </header>
 
-  {#if error}
-    <div class="error-line">{error}</div>
-  {/if}
-  {#if loading && !summary}
-    <div class="loading">{$_('usage.loading')}</div>
-  {/if}
-
-  <!-- 价表 stale banner(age ≤ 30 天:绿色 / 30<a<60:黄 / ≥60:红) -->
-  {#if summary?.pricing_meta}
-    {@const pm = summary.pricing_meta}
-    {#if pm.is_stale}
-      <div class="banner stale-warn" role="status">
-        {$_('usage.staleBannerStale', { values: { age: pm.age_days, date: pm.snapshot_date } })}
-      </div>
-    {:else if pm.days_until_stale <= 7}
-      <div class="banner stale-soon" role="status">
-        {$_('usage.staleBannerWarn', { values: { age: pm.age_days } })}
-      </div>
-    {:else}
-      <div class="banner stale-fresh" role="status">
-        {$_('usage.staleBannerFresh', { values: { date: pm.snapshot_date, daysUntil: pm.days_until_stale } })}
-      </div>
-    {/if}
-  {/if}
+  {#if error}<div class="error-line" role="alert">{error}</div>{/if}
+  {#if loading && !summary}<div class="loading">{$_('usage.loading')}</div>{/if}
+  {#if summary?.pricing_meta}{@const pm = summary.pricing_meta}<div class="price-note {pm.is_stale ? 'stale' : ''}" role="status">{pm.is_stale ? $_('usage.staleBannerStale', { values: { age: pm.age_days, date: pm.snapshot_date } }) : $_('usage.priceVerified', { values: { date: pm.snapshot_date } })}</div>{/if}
 
   {#if summary}
-    <!-- 4 张汇总卡 -->
-    <div class="stat-grid">
-      <div class="stat-card">
-        <div class="stat-label">{$_('usage.cardToday')}</div>
-        <div class="stat-value">{fmtTokens(todayTokens(summary))}</div>
-        <div class="stat-sub">{$_('usage.tokensUnit')}</div>
-      </div>
-      <div class="stat-card">
-        <div class="stat-label">{$_('usage.card7d')}</div>
-        <div class="stat-value">{fmtTokens(windowTokens(summary, 7))}</div>
-        <div class="stat-sub">{$_('usage.tokensUnit')}</div>
-      </div>
-      <div class="stat-card">
-        <div class="stat-label">{$_('usage.card30d')}</div>
-        <div class="stat-value">{fmtTokens(summary.total.input + summary.total.cache_read + summary.total.cache_creation + summary.total.output)}</div>
-        <div class="stat-sub">{$_('usage.tokensUnit')}</div>
-      </div>
-      <div class="stat-card">
-        <div class="stat-label">{$_('usage.cardEvents')}</div>
-        <div class="stat-value">{fmtTokens(summary.total.events)}</div>
-        <div class="stat-sub">{$_('usage.eventsUnit')}</div>
-      </div>
-      <div class="stat-card">
-        <div class="stat-label">{$_('usage.cardCost30d')}</div>
-        <div class="stat-value">{fmtCost(summary.total.cost_usd)}</div>
-        <div class="stat-sub">{$_('usage.costUnit')}</div>
-      </div>
+    <section class="hero-grid">
+      <div class="hero-stat"><div class="stat-label">{$_('usage.primaryMetric', { values: { days: period } })}</div><strong>{fmtTokens(totalTokens(summary.total))}</strong><span>{$_('usage.tokensUnit')}</span><div class="hero-foot">{fmtTokens(totalTokens(summary.total) / Math.max(days.length, 1))} {$_('usage.perDay')}</div></div>
+      <div class="mini-stat"><span>{$_('usage.cardCost30d')}</span><strong>{fmtCost(summary.total.cost_usd)}</strong><small>{$_('usage.costUnit')}</small></div>
+      <div class="mini-stat"><span>{$_('usage.cardEvents')}</span><strong>{fmtTokens(summary.total.events)}</strong><small>{$_('usage.eventsUnit')}</small></div>
+    </section>
+
+    <section class="card chart-card">
+      <div class="section-head"><div><h2>{$_('usage.chartTitle')}</h2><p>{$_('usage.chartHint')}</p></div><div class="periods" role="group" aria-label={$_('usage.periodLabel')}>{#each [7, 30, 90] as value}<button class:active={period === value} onclick={() => setPeriod(value as Period)}>{value}D</button>{/each}</div></div>
+      {#if points.length}<div class="chart-wrap"><div class="chart-y"><span>{fmtTokens(maxDay)}</span><span>{fmtTokens(maxDay / 2)}</span><span>0</span></div><svg class="usage-chart" viewBox="0 0 100 100" preserveAspectRatio="none" aria-label={$_('usage.chartTitle')} role="img"><defs><linearGradient id="usage-fill" x1="0" x2="0" y1="0" y2="1"><stop offset="0" stop-color="#67e8c8" stop-opacity=".28"/><stop offset="1" stop-color="#67e8c8" stop-opacity="0"/></linearGradient></defs><path d={areaPath} fill="url(#usage-fill)"/><path d={linePath} fill="none" stroke="#67e8c8" stroke-width="1.2" vector-effect="non-scaling-stroke"/>{#each points as point (point.date)}<circle cx={point.x} cy={point.y} r="1.5" fill="#101b21" stroke="#67e8c8" stroke-width="1" vector-effect="non-scaling-stroke"><title>{point.date}: {fmtTokens(totalTokens(point.totals))}</title></circle>{/each}</svg></div><div class="chart-labels">{#each points as point (point.date)}<span>{point.date.slice(5)}</span>{/each}</div>{:else}<div class="empty">{$_('usage.emptyChart')}</div>{/if}
+    </section>
+
+    <div class="lower-grid">
+      <section class="card composition"><div class="section-head"><div><h2>{$_('usage.compositionTitle')}</h2><p>{$_('usage.compositionHint')}</p></div></div><div class="composition-bar">{#each composition as item}<span class={item.key} style={`width:${(item.value / compositionTotal) * 100}%`} title={`${item.label}: ${fmtTokens(item.value)}`}></span>{/each}</div><div class="composition-list">{#each composition as item}<div><span class="legend-dot {item.key}"></span><span>{item.label}</span><strong>{fmtTokens(item.value)}</strong><small>{Math.round((item.value / compositionTotal) * 100)}%</small></div>{/each}</div></section>
+      <section class="card"><div class="section-head"><div><h2>{$_('usage.byAgentTitle')}</h2><p>{$_('usage.agentHint')}</p></div></div>{#if summary.by_agent.length}<div class="agent-list">{#each summary.by_agent as agent (agent.agent_id)}{@const value = totalTokens(agent.totals)}<details class="agent-row" open={summary.by_agent.length <= 2}><summary><span class="agent-name"><i style={`background:${colorForAgent(agent.agent_id)}`}></i>{agent.agent_id}</span><span class="agent-share">{Math.round((value / Math.max(totalTokens(summary.total), 1)) * 100)}%</span><strong>{fmtTokens(value)}</strong></summary><div class="agent-bar"><span style={`width:${(value / Math.max(totalTokens(summary.total), 1)) * 100}%;background:${colorForAgent(agent.agent_id)}`}></span></div><div class="agent-detail"><div class="totals-line">in {fmtTokens(agent.totals.input)} · cache {fmtTokens(agent.totals.cache_read + agent.totals.cache_creation)} · out {fmtTokens(agent.totals.output)} · {fmtCost(agent.totals.cost_usd)}</div><table class="model-table"><thead><tr><th>{$_('usage.colModel')}</th><th>{$_('usage.colInput')}</th><th>{$_('usage.colOutput')}</th><th>{$_('usage.colCost')}</th></tr></thead><tbody>{#each agent.by_model as model (model.model)}<tr><td><code>{model.model}</code></td><td>{fmtTokens(model.totals.input)}</td><td>{fmtTokens(model.totals.output)}</td><td>{fmtCost(model.totals.cost_usd)}</td></tr>{/each}</tbody></table></div></details>{/each}</div>{:else}<div class="empty">{$_('usage.emptyAgent')}</div>{/if}</section>
     </div>
-
-    <!-- 按天堆叠柱状图 -->
-    {#if summary.by_day.length > 0}
-      <section class="card">
-        <h2>{$_('usage.chartTitle')}</h2>
-        <svg class="usage-chart" use:setupChart viewBox="0 0 {chartBox?.w ?? 600} {chartBox?.h ?? 220}" preserveAspectRatio="none">
-          {#if chartBox}
-            {#each summary.by_day as day, i (day.date)}
-              {@const bw = chartBox.w / Math.max(summary.by_day.length, 1)}
-              {@const x = i * bw}
-              {#each chartSegments(day, agentOrder) as seg, si (si)}
-                <rect
-                  x={x + 2}
-                  y={seg.y}
-                  width={bw - 4}
-                  height={seg.h}
-                  fill={seg.color}
-                  opacity="0.85"
-                >
-                  <title>{seg.agent}: {day.date}</title>
-                </rect>
-              {/each}
-              <text x={x + bw / 2} y={chartBox.h - 4} text-anchor="middle" font-size="10" fill="currentColor" opacity="0.6">
-                {day.date.slice(5)}
-              </text>
-            {/each}
-          {/if}
-        </svg>
-        <div class="chart-legend">
-          {#each agentOrder as a (a)}
-            <span class="legend-item">
-              <span class="legend-dot" style="background:{colorForAgent(a, agentOrder)}"></span>
-              {a}
-            </span>
-          {/each}
-        </div>
-      </section>
-    {:else}
-      <div class="empty">{$_('usage.emptyChart')}</div>
-    {/if}
-
-    <!-- 按 agent 折叠列表 -->
-    {#if summary.by_agent.length > 0}
-      <section class="card">
-        <h2>{$_('usage.byAgentTitle')}</h2>
-        <div class="agent-list">
-          {#each summary.by_agent as a (a.agent_id)}
-            <details class="agent-row" open={agentOrder.length <= 3}>
-              <summary>
-                <span class="agent-name">{a.agent_id}</span>
-                <span class="agent-total">{fmtTokens(a.totals.input + a.totals.cache_read + a.totals.cache_creation + a.totals.output)} {$_('usage.tokensUnit')}</span>
-                {#if a.totals.cost_usd != null}<span class="agent-cost">{fmtCost(a.totals.cost_usd)}</span>{/if}
-              </summary>
-              <div class="agent-detail">
-                <div class="totals-line">{totalsLine(a.totals)}</div>
-                <table class="model-table">
-                  <thead>
-                    <tr>
-                      <th>{$_('usage.colModel')}</th>
-                      <th>{$_('usage.colInput')}</th>
-                      <th>{$_('usage.colCacheRead')}</th>
-                      <th>{$_('usage.colCacheWrite')}</th>
-                      <th>{$_('usage.colOutput')}</th>
-                      <th>{$_('usage.colEvents')}</th>
-                      <th>{$_('usage.colCost')}</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {#each a.by_model as m (m.model)}
-                      <tr>
-                        <td><code>{m.model}</code></td>
-                        <td>{fmtTokens(m.totals.input)}</td>
-                        <td>{fmtTokens(m.totals.cache_read)}</td>
-                        <td>{fmtTokens(m.totals.cache_creation)}</td>
-                        <td>{fmtTokens(m.totals.output)}</td>
-                        <td>{fmtTokens(m.events)}</td>
-                        <td class="cost-cell">{fmtCost(m.totals.cost_usd)}</td>
-                      </tr>
-                    {/each}
-                  </tbody>
-                </table>
-              </div>
-            </details>
-          {/each}
-        </div>
-      </section>
-    {:else}
-      <div class="empty">{$_('usage.emptyAgent')}</div>
-    {/if}
-
-    {#if lastRefresh}
-      <div class="refresh-info">
-        {$_('usage.refreshed', { values: { events: lastRefresh.added_events, buckets: lastRefresh.added_buckets } })}
-      </div>
-    {/if}
+    {#if lastRefresh}<div class="refresh-info">{$_('usage.refreshed', { values: { events: lastRefresh.added_events, buckets: lastRefresh.added_buckets } })}</div>{/if}
   {/if}
 </div>
 
-<script lang="ts" module>
-  // 模块级工具:今日 / N 天窗口汇总(避免组件重渲时重复定义)
-  export function todayTokens(s: UsageSummary): number {
-    if (s.by_day.length === 0) return 0;
-    const today = new Date().toISOString().slice(0, 10);
-    const last = s.by_day[s.by_day.length - 1];
-    if (last.date !== today) return 0;
-    return last.totals.input + last.totals.cache_read + last.totals.cache_creation + last.totals.output;
-  }
-
-  export function windowTokens(s: UsageSummary, days: number): number {
-    const cutoff = Date.now() - days * 86_400_000;
-    let sum = 0;
-    for (const d of s.by_day) {
-      const t = new Date(d.date).getTime();
-      if (t >= cutoff) sum += d.totals.input + d.totals.cache_read + d.totals.cache_creation + d.totals.output;
-    }
-    return sum;
-  }
-</script>
-
 <style>
-  .usage-page {
-    max-width: 1100px;
-    padding: 0 0.5rem;
-  }
-  /* 价表 stale banner — 编辑式克制,3 档颜色 */
-  .banner {
-    padding: 0.6rem 0.9rem;
-    border-radius: 4px;
-    font-size: 0.875rem;
-    margin-bottom: 1rem;
-    border-left: 3px solid currentColor;
-  }
-  .banner.stale-fresh {
-    background: rgba(124, 240, 140, 0.08);
-    color: #7cf08c;
-  }
-  .banner.stale-soon {
-    background: rgba(245, 197, 66, 0.10);
-    color: #f5c542;
-  }
-  .banner.stale-warn {
-    background: rgba(255, 110, 199, 0.10);
-    color: #ff6ec7;
-  }
-  /* 表格 cost 列等宽对齐 */
-  td.cost-cell {
-    min-width: 5.5rem;
-    text-align: right;
-    font-variant-numeric: tabular-nums;
-  }
-  .page-head {
-    display: flex;
-    justify-content: space-between;
-    align-items: flex-end;
-    margin-bottom: 1.25rem;
-    gap: 1rem;
-  }
-  .page-head h1 {
-    margin: 0 0 0.2rem 0;
-    font-size: 1.5rem;
-    font-weight: 600;
-    color: var(--text-primary);
-  }
-  .subtitle {
-    margin: 0;
-    font-size: 0.85rem;
-    color: var(--text-secondary);
-  }
-  .head-actions {
-    display: flex;
-    gap: 0.6rem;
-    align-items: center;
-  }
-  .last-scan {
-    font-size: 0.8rem;
-    color: var(--text-secondary);
-  }
-  .health-badge {
-    font-size: 0.75rem;
-    padding: 0.2rem 0.5rem;
-    border-radius: 999px;
-    border: 1px solid;
-  }
-  .health-badge.ok {
-    border-color: var(--neon-cyan);
-    color: var(--neon-cyan);
-  }
-  .health-badge.warn {
-    border-color: #f5c542;
-    color: #f5c542;
-  }
-  .stat-grid {
-    display: grid;
-    grid-template-columns: repeat(4, 1fr);
-    gap: 0.75rem;
-    margin-bottom: 1.25rem;
-  }
-  .stat-card {
-    padding: 0.9rem 1rem;
-    background: var(--bg-secondary);
-    border: 1px solid var(--border-subtle);
-    border-radius: var(--radius-md);
-  }
-  .stat-label {
-    font-size: 0.72rem;
-    color: var(--text-secondary);
-    margin-bottom: 0.3rem;
-    text-transform: uppercase;
-    letter-spacing: 0.04em;
-  }
-  .stat-value {
-    font-size: 1.6rem;
-    font-weight: 600;
-    color: var(--text-primary);
-  }
-  .stat-sub {
-    font-size: 0.7rem;
-    color: var(--text-secondary);
-    margin-top: 0.15rem;
-  }
-  .card {
-    padding: 1rem 1.1rem;
-    background: var(--bg-secondary);
-    border: 1px solid var(--border-subtle);
-    border-radius: var(--radius-md);
-    margin-bottom: 1rem;
-  }
-  .card h2 {
-    margin: 0 0 0.6rem 0;
-    font-size: 1rem;
-    font-weight: 600;
-    color: var(--text-primary);
-  }
-  .usage-chart {
-    width: 100%;
-    height: 220px;
-    display: block;
-  }
-  .chart-legend {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 0.6rem;
-    margin-top: 0.5rem;
-    font-size: 0.78rem;
-    color: var(--text-secondary);
-  }
-  .legend-item {
-    display: inline-flex;
-    align-items: center;
-    gap: 0.3rem;
-  }
-  .legend-dot {
-    display: inline-block;
-    width: 10px;
-    height: 10px;
-    border-radius: 2px;
-  }
-  .agent-list {
-    display: flex;
-    flex-direction: column;
-    gap: 0.4rem;
-  }
-  .agent-row {
-    border: 1px solid var(--border-subtle);
-    border-radius: var(--radius-md);
-    padding: 0.5rem 0.75rem;
-    background: var(--bg-tertiary);
-  }
-  .agent-row summary {
-    cursor: pointer;
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    list-style: none;
-  }
-  .agent-row summary::-webkit-details-marker { display: none; }
-  .agent-row summary::before {
-    content: '▸';
-    margin-right: 0.4rem;
-    transition: transform 0.15s;
-    color: var(--text-secondary);
-  }
-  .agent-row[open] summary::before {
-    transform: rotate(90deg);
-  }
-  .agent-name {
-    font-weight: 500;
-    color: var(--text-primary);
-  }
-  .agent-total {
-    font-size: 0.85rem;
-    color: var(--neon-cyan);
-    font-variant-numeric: tabular-nums;
-  }
-  .agent-detail {
-    margin-top: 0.6rem;
-    padding-top: 0.6rem;
-    border-top: 1px solid var(--border-subtle);
-  }
-  .totals-line {
-    font-size: 0.78rem;
-    color: var(--text-secondary);
-    margin-bottom: 0.4rem;
-    font-variant-numeric: tabular-nums;
-  }
-  .model-table {
-    width: 100%;
-    border-collapse: collapse;
-    font-size: 0.8rem;
-  }
-  .model-table th, .model-table td {
-    padding: 0.3rem 0.5rem;
-    text-align: right;
-    border-bottom: 1px solid var(--border-subtle);
-    font-variant-numeric: tabular-nums;
-  }
-  .model-table th:first-child, .model-table td:first-child {
-    text-align: left;
-  }
-  .model-table th {
-    color: var(--text-secondary);
-    font-weight: 500;
-    font-size: 0.72rem;
-  }
-  .model-table code {
-    background: transparent;
-    color: var(--text-primary);
-    font-size: 0.78rem;
-  }
-  .empty {
-    padding: 2rem;
-    text-align: center;
-    color: var(--text-secondary);
-    background: var(--bg-secondary);
-    border: 1px dashed var(--border-subtle);
-    border-radius: var(--radius-md);
-  }
-  .error-line {
-    padding: 0.6rem 0.8rem;
-    background: rgba(255, 100, 100, 0.1);
-    border: 1px solid rgba(255, 100, 100, 0.4);
-    border-radius: var(--radius-md);
-    color: #ff6b6b;
-    font-size: 0.85rem;
-    margin-bottom: 1rem;
-  }
-  .loading {
-    padding: 2rem;
-    text-align: center;
-    color: var(--text-secondary);
-  }
-  .refresh-info {
-    margin-top: 1rem;
-    padding: 0.5rem 0.8rem;
-    background: rgba(0, 245, 255, 0.06);
-    border-radius: var(--radius-md);
-    font-size: 0.78rem;
-    color: var(--text-secondary);
-  }
-  .spinner.small {
-    display: inline-block;
-    width: 12px;
-    height: 12px;
-    border: 2px solid var(--border-subtle);
-    border-top-color: var(--neon-cyan);
-    border-radius: 50%;
-    animation: spin 0.8s linear infinite;
-    margin-right: 0.4rem;
-    vertical-align: -2px;
-  }
-  @keyframes spin { to { transform: rotate(360deg); } }
+  .usage-page{max-width:1120px;padding:0 .5rem;color:var(--text-primary)}
+  .page-head{display:flex;justify-content:space-between;align-items:flex-end;gap:1rem;margin-bottom:1.75rem}.eyebrow{font-size:.68rem;letter-spacing:.14em;text-transform:uppercase;color:#67e8c8;margin-bottom:.45rem}.page-head h1{margin:0 0 .25rem;font-size:1.7rem;font-weight:650}.subtitle{margin:0;color:var(--text-secondary);font-size:.85rem}.head-actions{display:flex;align-items:center;gap:.65rem}.last-scan{color:var(--text-secondary);font-size:.75rem}.health-badge{font-size:.72rem}.health-badge.ok{color:#67e8c8}.health-badge.warn{color:#f5c542}.refresh-btn{border:1px solid var(--border-subtle);background:var(--bg-secondary);color:var(--text-primary);width:2rem;height:2rem;border-radius:6px;cursor:pointer;font-size:1.1rem}.refresh-btn:hover{border-color:#67e8c8;color:#67e8c8}.price-note{padding:.55rem .75rem;margin-bottom:1rem;border-left:2px solid #67e8c8;background:rgba(103,232,200,.06);font-size:.75rem;color:var(--text-secondary)}.price-note.stale{border-color:#f5c542;color:#f5c542}.error-line{padding:.6rem .8rem;margin-bottom:1rem;background:rgba(255,100,100,.1);border:1px solid rgba(255,100,100,.35);border-radius:6px;color:#ff8585;font-size:.82rem}.loading,.empty{padding:2rem;text-align:center;color:var(--text-secondary)}
+  .hero-grid{display:grid;grid-template-columns:2fr 1fr 1fr;gap:.75rem;margin-bottom:1rem}.hero-stat,.mini-stat,.card{background:var(--bg-secondary);border:1px solid var(--border-subtle);border-radius:8px}.hero-stat{padding:1.25rem 1.35rem;background:linear-gradient(120deg,rgba(103,232,200,.11),var(--bg-secondary) 55%)}.stat-label,.mini-stat span{display:block;color:var(--text-secondary);font-size:.7rem;letter-spacing:.06em;text-transform:uppercase}.hero-stat strong{display:inline-block;font-size:2.8rem;line-height:1.15;margin-top:.3rem;font-weight:650;letter-spacing:-.04em}.hero-stat>span{margin-left:.45rem;color:var(--text-secondary);font-size:.75rem}.hero-foot{margin-top:.5rem;color:#67e8c8;font-size:.75rem}.mini-stat{padding:1.15rem 1.1rem;display:flex;flex-direction:column;justify-content:center}.mini-stat strong{font-size:1.5rem;margin:.45rem 0 .15rem;font-variant-numeric:tabular-nums}.mini-stat small{color:var(--text-secondary);font-size:.72rem}.card{padding:1.1rem 1.2rem;margin-bottom:1rem}.section-head{display:flex;justify-content:space-between;align-items:flex-start;gap:1rem;margin-bottom:1rem}.card h2{margin:0;font-size:.95rem;font-weight:600}.section-head p{margin:.25rem 0 0;color:var(--text-secondary);font-size:.73rem}.periods{display:flex;border:1px solid var(--border-subtle);border-radius:6px;overflow:hidden}.periods button{border:0;border-right:1px solid var(--border-subtle);background:transparent;color:var(--text-secondary);padding:.35rem .65rem;font-size:.7rem;cursor:pointer}.periods button:last-child{border:0}.periods button.active{background:rgba(103,232,200,.13);color:#67e8c8}.chart-wrap{height:230px;display:flex;gap:.65rem}.chart-y{width:2.4rem;display:flex;flex-direction:column;justify-content:space-between;text-align:right;color:var(--text-secondary);font-size:.65rem;padding:0 0 .2rem}.usage-chart{width:calc(100% - 3rem);height:100%;background:repeating-linear-gradient(to bottom,transparent 0,transparent calc(50% - 1px),var(--border-subtle) 50%,transparent calc(50% + 1px));overflow:visible}.chart-labels{margin-left:3rem;display:flex;justify-content:space-between;color:var(--text-secondary);font-size:.65rem}.lower-grid{display:grid;grid-template-columns:.9fr 1.1fr;gap:0 1rem}.composition-bar{height:9px;display:flex;overflow:hidden;border-radius:99px;background:var(--bg-tertiary);margin:.7rem 0 1rem}.composition-bar span{min-width:2px}.input{background:#67e8c8}.cache_read{background:#8fa8ff}.cache_creation{background:#d6a8ff}.output{background:#f5c542}.composition-list{display:grid;gap:.65rem}.composition-list div{display:grid;grid-template-columns:auto 1fr auto auto;gap:.45rem;align-items:center;font-size:.76rem}.composition-list strong{font-variant-numeric:tabular-nums}.composition-list small{width:2.4rem;text-align:right;color:var(--text-secondary)}.legend-dot{width:7px;height:7px;border-radius:50%}.agent-list{display:flex;flex-direction:column;gap:.35rem}.agent-row{padding:.6rem .7rem;border:1px solid var(--border-subtle);border-radius:6px;background:var(--bg-tertiary)}.agent-row summary{display:grid;grid-template-columns:1fr auto auto;gap:.8rem;align-items:center;cursor:pointer;list-style:none;font-size:.78rem}.agent-row summary::-webkit-details-marker{display:none}.agent-name{display:flex;align-items:center;gap:.45rem;font-weight:550}.agent-name i{width:7px;height:7px;border-radius:50%}.agent-share{color:var(--text-secondary);font-size:.7rem}.agent-row strong{font-variant-numeric:tabular-nums;color:#67e8c8}.agent-bar{height:3px;background:var(--bg-secondary);border-radius:3px;margin:.55rem 0}.agent-bar span{display:block;height:100%;border-radius:3px}.agent-detail{border-top:1px solid var(--border-subtle);padding-top:.6rem;margin-top:.6rem}.totals-line{font-size:.7rem;color:var(--text-secondary);margin-bottom:.5rem}.model-table{width:100%;border-collapse:collapse;font-size:.72rem}.model-table th,.model-table td{padding:.3rem .35rem;text-align:right;border-bottom:1px solid var(--border-subtle);font-variant-numeric:tabular-nums}.model-table th:first-child,.model-table td:first-child{text-align:left}.model-table th{color:var(--text-secondary);font-weight:500;font-size:.65rem}.model-table code{font-size:.7rem;color:var(--text-primary);background:transparent}.refresh-info{font-size:.72rem;color:var(--text-secondary);padding:.55rem}.spinner{display:inline-block;width:10px;height:10px;border:2px solid var(--border-subtle);border-top-color:#67e8c8;border-radius:50%;animation:spin .8s linear infinite}@keyframes spin{to{transform:rotate(360deg)}}
+  @media(max-width:760px){.page-head{align-items:flex-start;flex-direction:column}.head-actions{width:100%;justify-content:flex-end}.hero-grid,.lower-grid{grid-template-columns:1fr}.hero-stat strong{font-size:2.3rem}.chart-wrap{height:190px}.model-table{display:block;overflow-x:auto;white-space:nowrap}}
 </style>
