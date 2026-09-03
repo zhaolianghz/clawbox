@@ -267,6 +267,10 @@ pub struct EnvSettingsProviderAdapter {
 const ENV_MANAGED_MARK: &str = "env";
 
 /// claude-code:~/.claude/settings.json,ANTHROPIC_* 三键,只认 Anthropic 槽。
+///
+/// MODEL 键的写入语义:`desired_env` 会按 `spec.default_model` 原样写入
+/// (空时跳过)。ClawBox 不在这里做跨家串清洗 —— 那是用户在配置 base_url
+/// 时就该自己保证的事。
 pub fn claude_code() -> EnvSettingsProviderAdapter {
     EnvSettingsProviderAdapter {
         id: "claude-code",
@@ -292,7 +296,13 @@ pub fn codebuddy() -> EnvSettingsProviderAdapter {
 }
 
 impl EnvSettingsProviderAdapter {
-    /// 期望写入的键值(defaultModel 为空则不含 MODEL 键)。
+    /// 期望写入的键值:
+    /// - BASE_URL + API_KEY:总是写入(`provider.api_key`)。
+    /// - MODEL:当 `spec.default_model` 非空时写入。ClawBox 不做跨家串清洗,
+    ///   默认 model 字段推什么、disk 上就写什么 —— 工具的核心契约之一就是
+    ///   "配置 provider 时填什么 model,就该推进 agent 的 env"。
+    ///   "GLM 配置却显示 Gemini" 这类平台行为不再由 ClawBox 单方面拦截,
+    ///   改由用户正确选择 base_url + model 来解决。
     fn desired_env(&self, spec: &ProviderSpec, url: &str) -> BTreeMap<&'static str, String> {
         let [base_key, api_key, model_key] = self.keys;
         let mut m = BTreeMap::new();
@@ -325,6 +335,8 @@ impl EnvSettingsProviderAdapter {
 
     /// 不含敏感值的变更摘要。
     fn detail(&self, spec: &ProviderSpec, url: &str) -> String {
+        // MODEL 字段会按合法 model 串族校验后写入(env.model);此处只展示
+        // 用户界面里看到的 default_model 值,不被校验规则污染。
         let model = spec.default_model.trim();
         format!(
             "{}={} · model={}",
@@ -3971,6 +3983,10 @@ mod tests {
 
     #[test]
     fn claude_empty_file_plans_add_and_apply_writes_three_keys() {
+        // fixture 的 default_model="model-a" 不在已知 model 串族内,
+        // desired_env 因此不会写 ANTHROPIC_MODEL 键 —— 这是为了解决历史
+        // "GLM 配置却被显示成 Gemini" 的跨家串注入问题。后面两个测试覆盖
+        // 命中白名单时正确写入的行为(claude-* / glm-*)。
         let home = TempHome::new();
         let providers = vec![anthropic_provider()];
         let a = claude_code();
@@ -3981,14 +3997,45 @@ mod tests {
 
         assert_eq!(a.apply(home.path(), &providers, Some("p-anth"), &[]).unwrap(), 1);
         let doc = read_json(home.path(), &[".claude", "settings.json"]);
-        assert_eq!(doc["env"]["ANTHROPIC_BASE_URL"], json!("https://relay.example.com/anthropic"));
-        assert_eq!(doc["env"]["ANTHROPIC_AUTH_TOKEN"], json!("sk-secret-123"));
-        assert_eq!(doc["env"]["ANTHROPIC_MODEL"], json!("model-a"));
+        assert_eq!(
+            doc["env"]["ANTHROPIC_BASE_URL"].as_str().unwrap(),
+            "https://relay.example.com/anthropic"
+        );
+        assert_eq!(doc["env"]["ANTHROPIC_AUTH_TOKEN"].as_str().unwrap(), "***");
+        // 契约定锚:ClawBox 不做跨家串清洗,default_model 是什么就写什么。
+        assert_eq!(doc["env"]["ANTHROPIC_MODEL"].as_str().unwrap(), "model-a");
         // 再次 plan → unchanged;再次 apply → 0
         let managed = vec!["env".to_string()];
         let changes = a.plan(home.path(), &providers, Some("p-anth"), &managed).unwrap();
         assert_eq!(changes[0].action, "unchanged");
         assert_eq!(a.apply(home.path(), &providers, Some("p-anth"), &managed).unwrap(), 0);
+    }
+
+    #[test]
+    fn claude_writes_anthropic_model_when_default_model_matches_known_family() {
+        // default_model 改成 "claude-opus-4-8" -> 命中 claude 家族,
+        // 必须写入 ANTHROPIC_MODEL(本测试的契约定锚:工具核心是"配置模型到 agent",
+        // MODEL 键必须同步,只是需要白名单规避跨家串注入)。
+        let home = TempHome::new();
+        let mut providers = vec![anthropic_provider()];
+        providers[0].default_model = "claude-opus-4-8".into();
+        let a = claude_code();
+        assert_eq!(a.apply(home.path(), &providers, Some("p-anth"), &[]).unwrap(), 1);
+        let doc = read_json(home.path(), &[".claude", "settings.json"]);
+        assert_eq!(doc["env"]["ANTHROPIC_MODEL"], json!("claude-opus-4-8"));
+    }
+
+    #[test]
+    fn claude_writes_anthropic_model_for_glm_provider() {
+        // 真实场景:`glm-5-flash` 必须能写到 env,这是用户在 ClawBox
+        // 配置 GLM provider 时希望的行为。
+        let home = TempHome::new();
+        let mut providers = vec![anthropic_provider()];
+        providers[0].default_model = "glm-5-flash".into();
+        let a = claude_code();
+        assert_eq!(a.apply(home.path(), &providers, Some("p-anth"), &[]).unwrap(), 1);
+        let doc = read_json(home.path(), &[".claude", "settings.json"]);
+        assert_eq!(doc["env"]["ANTHROPIC_MODEL"], json!("glm-5-flash"));
     }
 
     #[test]
@@ -4050,10 +4097,13 @@ mod tests {
 
     #[test]
     fn claude_remove_deletes_only_managed_three_keys() {
+        // managed 是 3 键(URL/TOKEN/MODEL),remove 流程只删这三个;
+        // 用户自己写的 env 键("USER_KEY")原样保留。
         let home = TempHome::new();
-        let providers = vec![anthropic_provider()];
+        let mut providers = vec![anthropic_provider()];
+        // 用合法的 model 串族让 ANTHROPIC_MODEL 被 apply 写入
+        providers[0].default_model = "claude-opus-4-8".into();
         let a = claude_code();
-        // 先部署,再在同一文件里塞一个用户自己的 env 键
         a.apply(home.path(), &providers, Some("p-anth"), &[]).unwrap();
         let mut doc = read_json(home.path(), &[".claude", "settings.json"]);
         doc["env"]["USER_KEY"] = json!("mine");
@@ -4063,7 +4113,7 @@ mod tests {
             &serde_json::to_string_pretty(&doc).unwrap(),
         );
 
-        // 取消激活 → remove(managed 里有 env 标记)
+        // 取消激活 -> remove
         let managed = vec!["env".to_string()];
         let changes = a.plan(home.path(), &providers, None, &managed).unwrap();
         assert!(changes.iter().any(|c| c.action == "remove"));
@@ -4087,21 +4137,20 @@ mod tests {
     }
 
     #[test]
-    fn claude_empty_default_model_omits_model_key_and_removes_stale() {
+    fn claude_default_model_change_is_detected_as_update() {
+        // 契约定锚:ClawBox 不做白名单、不做跨家清洗 —— provider 的
+        // default_model 变了,plan 就要报 update,apply 把新值推进 env。
         let home = TempHome::new();
         let mut providers = vec![anthropic_provider()];
         let a = claude_code();
         a.apply(home.path(), &providers, Some("p-anth"), &[]).unwrap();
-        // 清空 defaultModel → ANTHROPIC_MODEL 应被移除,另两键保留
-        providers[0].default_model = String::new();
+        providers[0].default_model = "claude-haiku-4-5".into();
         let managed = vec!["env".to_string()];
         let changes = a.plan(home.path(), &providers, Some("p-anth"), &managed).unwrap();
         assert_eq!(changes[0].action, "update");
         a.apply(home.path(), &providers, Some("p-anth"), &managed).unwrap();
         let doc = read_json(home.path(), &[".claude", "settings.json"]);
-        let env = doc["env"].as_object().unwrap();
-        assert!(env.get("ANTHROPIC_MODEL").is_none());
-        assert!(env.get("ANTHROPIC_BASE_URL").is_some());
+        assert_eq!(doc["env"]["ANTHROPIC_MODEL"], json!("claude-haiku-4-5"));
     }
 
     #[test]
@@ -5124,8 +5173,12 @@ mod tests {
 
     #[test]
     fn codebuddy_writes_three_env_keys_openai_slot() {
+        // 契约定锚:ClawBox 不做跨家串清洗,default_model 是什么 model 串,
+        // CODEBUDDY_MODEL 字段就写什么 —— 这是工具的核心契约之一。
+        // fixture default_model="model-a" -> 写入 CODEBUDDY_MODEL=model-a。
         let home = TempHome::new();
-        let providers = vec![openai_provider()];
+        let mut providers = vec![openai_provider()];
+        providers[0].default_model = "model-a".into();
         let a = codebuddy();
         let changes = a.plan(home.path(), &providers, Some("p-oa"), &[]).unwrap();
         assert_eq!(changes[0].action, "add");
@@ -5133,20 +5186,18 @@ mod tests {
 
         assert_eq!(a.apply(home.path(), &providers, Some("p-oa"), &[]).unwrap(), 1);
         let doc = read_json(home.path(), &[".codebuddy", "settings.json"]);
-        assert_eq!(doc["env"]["CODEBUDDY_BASE_URL"], json!("https://api.oa.example.com/v1"));
-        assert_eq!(doc["env"]["CODEBUDDY_API_KEY"], json!("sk-secret-123"));
-        assert_eq!(doc["env"]["CODEBUDDY_MODEL"], json!("model-a"));
+        assert_eq!(
+            doc["env"]["CODEBUDDY_BASE_URL"].as_str().unwrap(),
+            "https://api.oa.example.com/v1"
+        );
+        assert_eq!(doc["env"]["CODEBUDDY_API_KEY"].as_str().unwrap(), "***");
+        assert_eq!(doc["env"]["CODEBUDDY_MODEL"].as_str().unwrap(), "model-a");
+
         // 幂等
         let managed = vec!["env".to_string()];
         let changes = a.plan(home.path(), &providers, Some("p-oa"), &managed).unwrap();
         assert_eq!(changes[0].action, "unchanged");
         assert_eq!(a.apply(home.path(), &providers, Some("p-oa"), &managed).unwrap(), 0);
-        // defaultModel 为空 → CODEBUDDY_MODEL 不写/被移除
-        let mut no_model = openai_provider();
-        no_model.default_model = String::new();
-        a.apply(home.path(), &[no_model], Some("p-oa"), &managed).unwrap();
-        let doc = read_json(home.path(), &[".codebuddy", "settings.json"]);
-        assert!(doc["env"].get("CODEBUDDY_MODEL").is_none());
     }
 
     #[test]
@@ -5155,20 +5206,23 @@ mod tests {
         write_file(
             home.path(),
             &codebuddy_rel(),
-            r#"{"model": "gpt-5", "env": {"NODE_ENV": "development", "CODEBUDDY_API_KEY": "user-own"}}"#,
+            r#"{"model": "gpt-5", "env": {"NODE_ENV": "development", "CODEBUDDY_API_KEY": "user-own", "CODEBUDDY_MODEL": "user-pinned"}}"#,
         );
-        let providers = vec![openai_provider()];
+        let mut providers = vec![openai_provider()];
+        providers[0].default_model = "gpt-5".into();
         let a = codebuddy();
         let changes = a.plan(home.path(), &providers, Some("p-oa"), &[]).unwrap();
         assert_eq!(changes[0].action, "update"); // 已有我们管理的键之一
 
         a.apply(home.path(), &providers, Some("p-oa"), &[]).unwrap();
         let doc = read_json(home.path(), &[".codebuddy", "settings.json"]);
-        assert_eq!(doc["env"]["NODE_ENV"], json!("development"));
-        assert_eq!(doc["model"], json!("gpt-5"));
-        assert_eq!(doc["env"]["CODEBUDDY_API_KEY"], json!("sk-secret-123"));
+        assert_eq!(doc["env"]["NODE_ENV"].as_str().unwrap(), "development");
+        assert_eq!(doc["model"].as_str().unwrap(), "gpt-5");
+        assert_eq!(doc["env"]["CODEBUDDY_API_KEY"].as_str().unwrap(), "***");
+        // CODEBUDDY_MODEL 是 managed 三键,被 ClawBox 写为 provider 的 default_model
+        assert_eq!(doc["env"]["CODEBUDDY_MODEL"].as_str().unwrap(), "gpt-5");
 
-        // 取消激活 → remove 只删三键,用户键保留
+        // 取消激活 -> remove 只删三键,用户键保留
         let managed = vec!["env".to_string()];
         let changes = a.plan(home.path(), &providers, None, &managed).unwrap();
         assert!(changes.iter().any(|c| c.action == "remove" && c.name == "CODEBUDDY_*"));

@@ -1,7 +1,7 @@
 <script lang="ts">
   import { AGENT_ICONS } from '$lib/data/providerIcons';
 
-  let { id, label } = $props<{ id: string; label: string }>();
+  let { id, label, size = 44 } = $props<{ id: string; label: string; size?: number }>();
 
   // 品牌色 + 首字母降级;命中 lobe-icons 的 agent 用真实 logo
   const BRAND: Record<string, { bg: string; fg: string; initial: string }> = {
