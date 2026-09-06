@@ -1,0 +1,11 @@
+// Kimi Code CLI 的 wire.jsonl 格式(Kimi 的"通信线"协议):
+// 每行一个 message,顶层 type 字段,`usage` 字段在 assistant 类型时携带 token。
+// 字段名沿用 Kimi 官方 docs(注意 inputOther 而非 input,cache 字段名也不一样)。
+
+{"type":"session","version":1,"id":"wd-clawbox-001","createdAt":1787000000000,"cwd":"/Users/skyzhao/code/sky-project/clawbox","model":"kimi-k2.5"}
+{"type":"user","id":"u1","seq":0,"time":1787000010000,"content":"hello"}
+{"type":"assistant","id":"a1","seq":1,"time":1787000020000,"model":"kimi-k2.5","usage":{"inputOther":100,"output":50,"inputCacheRead":0,"inputCacheCreation":0},"content":"hi"}
+{"type":"model_change","id":"mc1","seq":2,"time":1787000030000,"model":"claude-sonnet-4-5"}
+{"type":"assistant","id":"a2","seq":3,"time":1787000040000,"model":"claude-sonnet-4-5","usage":{"inputOther":1500,"output":300,"inputCacheRead":500,"inputCacheCreation":100},"content":"second"}
+{"type":"user","id":"u2","seq":4,"time":1787000050000,"content":"again"}
+{"type":"assistant","id":"a3","seq":5,"time":1787000060000,"usage":{"inputOther":200,"output":80,"inputCacheRead":0,"inputCacheCreation":0},"content":"third"}

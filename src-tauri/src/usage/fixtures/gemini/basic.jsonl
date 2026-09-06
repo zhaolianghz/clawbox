@@ -1,0 +1,10 @@
+// Gemini CLI telemetry logs(JSONL,每行一条 event,token 在 type=token 事件里)。
+// 字段名按 Gemini 官方 telemetry docs。
+// 注意:必须先在 ~/.gemini/settings.json 启用 telemetry 才会有这些日志。
+
+{"event.name":"session.start","session.id":"gem-1","timestamp":"2026-08-30T10:00:00.000Z"}
+{"event.name":"gemini_cli.user.message","session.id":"gem-1","timestamp":"2026-08-30T10:00:01.000Z"}
+{"event.name":"gemini_cli.token.usage","event.id":"evt-001","session.id":"gem-1","timestamp":"2026-08-30T10:00:05.000Z","attributes":{"model":"gemini-2.5-flash","input_tokens":1500,"output_tokens":400,"cached_tokens":0,"thought_tokens":50}}
+{"event.name":"gemini_cli.token.usage","event.id":"evt-002","session.id":"gem-1","timestamp":"2026-08-30T10:00:10.000Z","attributes":{"model":"gemini-2.5-flash","input_tokens":800,"output_tokens":150,"cached_tokens":200,"thought_tokens":0}}
+{"event.name":"gemini_cli.token.usage","event.id":"evt-003","session.id":"gem-1","timestamp":"2026-08-30T10:01:00.000Z","attributes":{"model":"gemini-3.7-flash","input_tokens":3000,"output_tokens":500,"cached_tokens":0,"thought_tokens":100}}
+{"event.name":"session.end","session.id":"gem-1","timestamp":"2026-08-30T10:01:30.000Z"}

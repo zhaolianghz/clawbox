@@ -1,0 +1,9 @@
+// Qwen Code CLI 的 chat JSONL:每行一个 event,type=usage.record 的有 token 数字。
+// 字段名按 Qwen 官方 docs(usageMetadata.*)。
+
+{"type":"session","sessionId":"qwen-001","timestamp":"2026-08-30T10:00:00.000Z","model":"qwen3.5-coder"}
+{"type":"user","sessionId":"qwen-001","timestamp":"2026-08-30T10:00:01.000Z","content":"hello"}
+{"type":"assistant","sessionId":"qwen-001","timestamp":"2026-08-30T10:00:05.000Z","model":"qwen3.5-coder","usageMetadata":{"promptTokenCount":1200,"candidatesTokenCount":350,"totalTokenCount":1550,"cachedContentTokenCount":200}}
+{"type":"assistant","sessionId":"qwen-001","timestamp":"2026-08-30T10:00:10.000Z","model":"qwen3.5-coder","usageMetadata":{"promptTokenCount":800,"candidatesTokenCount":120,"totalTokenCount":920,"cachedContentTokenCount":100}}
+{"type":"model_change","sessionId":"qwen-001","timestamp":"2026-08-30T10:01:00.000Z","model":"claude-sonnet-4-5"}
+{"type":"assistant","sessionId":"qwen-001","timestamp":"2026-08-30T10:01:05.000Z","model":"claude-sonnet-4-5","usageMetadata":{"promptTokenCount":3000,"candidatesTokenCount":500,"totalTokenCount":3500,"cachedContentTokenCount":0}}

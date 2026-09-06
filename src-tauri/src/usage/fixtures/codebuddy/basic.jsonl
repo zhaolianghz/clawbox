@@ -1,0 +1,8 @@
+// CodeBuddy CLI 的 .codebuddy/projects/<cwd>/.jsonl 格式:
+// type=message 且 role=assistant 时携带 usage(input_tokens / output_tokens / cache)。
+
+{"type":"session","sessionId":"cb-001","timestamp":"2026-08-30T10:00:00.000Z","cwd":"/tmp/proj","model":"glm-4.7"}
+{"type":"message","sessionId":"cb-001","timestamp":"2026-08-30T10:00:05.000Z","role":"user","content":"hi"}
+{"type":"message","sessionId":"cb-001","timestamp":"2026-08-30T10:00:10.000Z","role":"assistant","model":"glm-4.7","usage":{"input_tokens":1200,"output_tokens":300,"cache_read_input_tokens":0}}
+{"type":"message","sessionId":"cb-001","timestamp":"2026-08-30T10:00:15.000Z","role":"assistant","model":"glm-4.7","usage":{"input_tokens":800,"output_tokens":150,"cache_read_input_tokens":200}}
+{"type":"message","sessionId":"cb-001","timestamp":"2026-08-30T10:00:20.000Z","role":"assistant","model":"claude-sonnet-4-5","usage":{"input_tokens":500,"output_tokens":100,"cache_read_input_tokens":0}}

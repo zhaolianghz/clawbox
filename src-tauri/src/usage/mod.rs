@@ -1,8 +1,9 @@
 //! Token 用量统计 — 本机各 agent CLI 的真实 token 消耗。
 //!
-//! 设计：`UsageProvider` trait 每 agent 一个 adapter(Claude Code / Codex),
-//! 扫描各自本地 JSONL/会话日志,按天按 agent 按模型聚合,落 ClawBox 自有
-//! 存储(`~/.clawbox/usage/`),与原始格式解耦,抗 30 天会话清理。
+//! 设计：`UsageProvider` trait 每 agent 一个 adapter(Claude Code / Codex /
+//! Hermes / Pi / OpenCode),扫描各自本地 JSONL/SQLite 日志,按天按 agent 按
+//! 模型聚合,落 ClawBox 自有存储(`~/.clawbox/usage/`),与原始格式解耦,
+//! 抗 30 天会话清理。
 //!
 //! Spec: `docs/superpowers/specs/2026-08-29-token-usage-design.md`
 //! 数据源容错策略: 逐行解析 + 形状提取 + 容错 + 故障隔离(各 adapter 独立
@@ -13,6 +14,22 @@ use std::path::{Path, PathBuf};
 
 pub mod claude_code;
 pub mod codex;
+pub mod hermes;
+pub mod pi;
+pub mod opencode;
+pub mod qoder;
+pub mod kimi;
+pub mod qwen_code;
+pub mod codebuddy;
+pub mod openclaw;
+pub mod gemini;
+// B 批次: 本地无 token 日志,available() 永远 false,让 UI 知道这些
+// agent 存在但本机暂无数据。
+pub mod aider;
+pub mod cline;
+pub mod cursor_agent;
+pub mod trae_agent;
+pub mod dsh;
 pub mod store;
 pub mod aggregate;
 pub mod pricing;
@@ -143,11 +160,35 @@ pub trait UsageProvider: Send + Sync {
     fn scan(&self, home: &Path) -> Result<UsageScan, UsageError>;
 }
 
-/// 所有 provider 列表(v1: Claude Code + Codex;后续 agent 留位)。
+/// 所有 provider 列表。覆盖 `src-tauri/src/agents/mod.rs` 里除了 `node`
+/// 之外的全部 agent(共 16 个),适配 spec 设计「只读本机真实文件」:
+/// - **A 组(本地有真实 token 日志)**:Claude Code / Codex / Hermes / Pi /
+///   OpenCode / Qoder CLI / Kimi / Qwen Code / CodeBuddy / OpenClaw / Gemini
+/// - **B 组(本地暂无数据,`available()` 永远 false)**:Aider / Cline /
+///   Cursor Agent / Trae Agent / dsh — UI 上以"无本地数据"形式列出,
+///   不会出现在 `by_agent` 数组里。
+///
+/// 各 adapter 的解析口径与数据源路径见各文件顶部注释。`UsageProvider`
+/// trait 契约 + 容错策略统一遵循文档头说明。
 pub fn all_providers() -> Vec<Box<dyn UsageProvider>> {
     vec![
         Box::new(claude_code::ClaudeCodeUsageProvider),
         Box::new(codex::CodexUsageProvider),
+        Box::new(hermes::HermesUsageProvider),
+        Box::new(pi::PiUsageProvider),
+        Box::new(opencode::OpenCodeUsageProvider),
+        Box::new(qoder::QoderUsageProvider),
+        Box::new(kimi::KimiUsageProvider),
+        Box::new(qwen_code::QwenCodeUsageProvider),
+        Box::new(codebuddy::CodeBuddyUsageProvider),
+        Box::new(openclaw::OpenClawUsageProvider),
+        Box::new(gemini::GeminiUsageProvider),
+        // B 组
+        Box::new(aider::AiderUsageProvider),
+        Box::new(cline::ClineUsageProvider),
+        Box::new(cursor_agent::CursorAgentUsageProvider),
+        Box::new(trae_agent::TraeAgentUsageProvider),
+        Box::new(dsh::DshUsageProvider),
     ]
 }
 
