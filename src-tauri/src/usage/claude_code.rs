@@ -2,7 +2,8 @@
 //!
 //! 形状提取(避免紧耦合 schema):每行 JSON,只看 `type == "assistant"`
 //! 且 `message.role == "assistant"` 且 `message.usage` 非空。其它行一律
-//! 跳过。模型字段从 `message.model` 取,空则归 "unknown"。
+//! 跳过。模型字段从 `message.model` 取,空则归 "unknown"。占位模型
+//! `"<synthetic>"`(API 错误行)不计入用量。
 //!
 //! 去重: 内存 HashSet 按 `(session_id, message.id)` 去重 — 同一 message
 //! 在 sidechain 多次出现只算一次(借鉴 ccusage 成熟口径)。
@@ -91,6 +92,13 @@ fn parse_file(path: &Path, events: &mut Vec<UsageEvent>, stats: &mut ParseStats)
             .and_then(|v| v.as_str())
             .unwrap_or("unknown")
             .to_string();
+        // Claude Code 遇 API 错误(认证失败/限流/非法请求等)会落一条
+        // isApiErrorMessage 行,此时 message.model 是占位符 "<synthetic>",
+        // 没有真实模型应答、usage 全为 0。这类行不该计入用量 → 直接跳过。
+        if model == "<synthetic>" {
+            stats.lines_skipped += 1;
+            continue;
+        }
         let ts = entry
             .get("timestamp")
             .and_then(|v| v.as_str())
@@ -275,6 +283,25 @@ mod tests {
         // 去重后必须 unique,数量 < 文件原始行数
         assert_eq!(ids.len(), scan.events.len(), "events not unique");
         assert!(scan.events.len() < scan.stats.lines_total + scan.events.len());
+    }
+
+    #[test]
+    fn synthetic_error_rows_are_skipped() {
+        // API 错误行(message.model == "<synthetic>")不产生真实用量,应被跳过,
+        // 不进入 events,也不计入 lines_matched。
+        let tmp = LocalHome::new();
+        let dest = tmp.path().join(".claude/projects/proj1");
+        std::fs::create_dir_all(&dest).unwrap();
+        let path = dest.join("err.jsonl");
+        std::fs::write(
+            &path,
+            "{\"type\":\"assistant\",\"sessionId\":\"s1\",\"isApiErrorMessage\":true,\"error\":\"rate_limit\",\"message\":{\"id\":\"m1\",\"role\":\"assistant\",\"model\":\"<synthetic>\",\"usage\":{\"input_tokens\":0,\"output_tokens\":0}}}\n",
+        )
+        .unwrap();
+        let scan = ClaudeCodeUsageProvider.scan(tmp.path()).unwrap();
+        assert_eq!(scan.events.len(), 0, "synthetic rows must not become events");
+        assert_eq!(scan.stats.lines_matched, 0);
+        assert_eq!(scan.stats.lines_skipped, 1);
     }
 
     #[test]

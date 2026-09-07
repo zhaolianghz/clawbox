@@ -141,6 +141,10 @@ pub fn refresh(
     let mut parse_health = ParseHealth::default();
     let now = crate::usage::utc_now_string();
 
+    // 清掉历史累进来的占位模型桶(Claude Code API 错误行 model=="<synthetic>").
+    // parse 端的过滤挡住新数据;这里兜底处理已落盘的存量,幂等。
+    store::prune_synthetic_models(home).map_err(|s| UsageError::new("aggregate", "store", s))?;
+
     for sp in &scanned {
         parse_health
             .per_agent

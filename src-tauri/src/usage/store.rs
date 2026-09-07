@@ -309,6 +309,34 @@ fn parse_day_to_year_month(day: &str) -> Result<(i32, u8), String> {
         .map_err(|e| format!("month: {}", e))?;
     Ok((y, m))
 }
+
+/// 清掉历史累进来、已无意义的占位模型桶。
+///
+/// Claude Code 在 API 错误时落 `model == "<synthetic>"` 的行(usage 全 0,
+/// 无真实模型应答)。v1 早期它被当成普通 event 累进了月桶,留下
+/// `claude-code:<synthetic>` 这样的键。这里扫全部月桶,把模型部分为
+/// `<synthetic>` 的桶删掉并重写。幂等:没有命中时不写盘。
+pub fn prune_synthetic_models(home: &Path) -> Result<usize, String> {
+    let mut removed = 0usize;
+    for mut bucket in read_all(home) {
+        let mut changed = false;
+        for day_buckets in bucket.buckets.values_mut() {
+            let keys: Vec<String> = day_buckets.keys().cloned().collect();
+            for k in keys {
+                if k.ends_with(":<synthetic>") {
+                    day_buckets.remove(&k);
+                    removed += 1;
+                    changed = true;
+                }
+            }
+        }
+        if changed {
+            write_month(home, &bucket)?;
+        }
+    }
+    Ok(removed)
+}
+
 /// 读取所有月份桶(返回按月份顺序的 vec)。
 pub fn read_all(home: &Path) -> Vec<MonthBucket> {
     let dir = super::usage_dir(home);
@@ -379,6 +407,42 @@ mod tests {
         fn drop(&mut self) {
             let _ = std::fs::remove_dir_all(&self.0);
         }
+    }
+
+    #[test]
+    fn prune_synthetic_models_removes_placeholder_buckets() {
+        let tmp = LocalHome::new();
+        // 造一个含 `<synthetic>` 桶和正常桶的月文件
+        append_bucket(
+            tmp.path(),
+            2026,
+            8,
+            "2026-08-29",
+            "claude-code:<synthetic>",
+            &BucketTotals { events: 5, ..Default::default() },
+        )
+        .unwrap();
+        append_bucket(
+            tmp.path(),
+            2026,
+            8,
+            "2026-08-29",
+            "claude-code:claude-sonnet-4-5",
+            &BucketTotals { input: 100, events: 1, ..Default::default() },
+        )
+        .unwrap();
+
+        let removed = prune_synthetic_models(tmp.path()).unwrap();
+        assert_eq!(removed, 1, "should remove the one synthetic bucket");
+
+        let b = read_month(tmp.path(), 2026, 8);
+        let day = b.buckets.get("2026-08-29").unwrap();
+        assert!(!day.contains_key("claude-code:<synthetic>"), "synthetic key must be gone");
+        assert!(day.contains_key("claude-code:claude-sonnet-4-5"), "real model must remain");
+
+        // 再跑一次 → 幂等,移除 0
+        let removed2 = prune_synthetic_models(tmp.path()).unwrap();
+        assert_eq!(removed2, 0);
     }
 
     #[test]
