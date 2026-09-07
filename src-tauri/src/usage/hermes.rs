@@ -326,6 +326,7 @@ impl UsageProvider for HermesUsageProvider {
                 Some(r) => r,
                 None => break,
             };
+            stats.lines_total += 1;
             match row {
                 Ok((sid, model, _bp, task, i, o, cr, cw, r, ls)) => {
                     if sid.is_empty() || model.is_empty() {

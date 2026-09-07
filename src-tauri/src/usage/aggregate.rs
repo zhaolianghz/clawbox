@@ -165,17 +165,18 @@ pub fn refresh(
     }
 
     // 写 agent_to_provider 快照到本月桶
-    if !providers_meta.is_empty() {
-        let (y, m) = current_year_month();
-        let mut bucket = store::read_month(home, y, m);
-        for (agent, (provider_name, _provider_id)) in providers_meta {
-            bucket
-                .agent_to_provider_at_scan
-                .insert(agent.clone(), provider_name.clone());
-        }
-        bucket.last_scan_at = now.clone();
-        store::write_month(home, &bucket).map_err(|s| UsageError::new("aggregate", "store", s))?;
+    // last_scan_at 无条件更新(无 meta 时也要记录「这次扫描完成了」,
+    // 否则旧时间戳会让 UI 黄条永远 stale);
+    // agent_to_provider 快照只在该字段非空时写,避免覆盖既有绑定。
+    let (y, m) = current_year_month();
+    let mut bucket = store::read_month(home, y, m);
+    for (agent, (provider_name, _provider_id)) in providers_meta {
+        bucket
+            .agent_to_provider_at_scan
+            .insert(agent.clone(), provider_name.clone());
     }
+    bucket.last_scan_at = now.clone();
+    store::write_month(home, &bucket).map_err(|s| UsageError::new("aggregate", "store", s))?;
 
     let cache = Cache {
         version: CACHE_VERSION,
