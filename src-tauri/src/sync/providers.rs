@@ -637,6 +637,9 @@ impl CodexProviderAdapter {
             .unwrap_or(Value::Null);
         let auth = load_json(&self.auth_path(home))?;
         let key = auth.get("OPENAI_API_KEY").cloned().unwrap_or(Value::Null);
+        // auth_mode 必须纳入等价比较:codex 只在 "apikey" 时把上面那把 key 当
+        // 凭据用;为 "chatgpt" 时会改用 ChatGPT OAuth token,上游直接 401。
+        let auth_mode = auth.get("auth_mode").cloned().unwrap_or(Value::Null);
         // 目录文件当前内容(缺失=Null),纳入等价比较:模型增删会触发 update。
         let catalog = {
             let p = self.catalog_path(home);
@@ -654,6 +657,7 @@ impl CodexProviderAdapter {
             "model_provider": model_provider,
             "model": model,
             "OPENAI_API_KEY": key,
+            "auth_mode": auth_mode,
             "catalog": catalog,
         }))
     }
@@ -666,10 +670,15 @@ impl CodexProviderAdapter {
                 "name": spec.name,
                 "base_url": url,
                 "wire_api": "responses",
+                // 自定义 provider 必须显式声明才会附加 auth.json 的凭据;
+                // 缺了它 codex 一个 Authorization 头都不发(上游 401)。
+                "requires_openai_auth": true,
             },
             "model_provider": CODEX_PROVIDER_KEY,
             "model": if model.is_empty() { current["model"].clone() } else { json!(model) },
             "OPENAI_API_KEY": json!(spec.api_key.trim()),
+            // 同 require_openai_auth:为 "chatgpt" 时 codex 改送 OAuth token。
+            "auth_mode": "apikey",
             "catalog": Self::catalog_doc(&Self::catalog_slugs(spec)),
         })
     }
@@ -783,6 +792,7 @@ impl ProviderAdapter for CodexProviderAdapter {
                 // codex 0.5x 起移除了 chat completions,只认 responses
                 // (https://github.com/openai/codex/discussions/7782;写 "chat" 会让 codex 启动即退出)
                 t["wire_api"] = value("responses");
+                t["requires_openai_auth"] = value(true);
                 doc["model_providers"][CODEX_PROVIDER_KEY] = Item::Table(t);
                 doc["model_provider"] = value(CODEX_PROVIDER_KEY);
                 let model = spec.default_model.trim();
@@ -812,12 +822,15 @@ impl ProviderAdapter for CodexProviderAdapter {
                 std::fs::write(&path, doc.to_string())
                     .map_err(|e| format!("failed to write {}: {}", path.display(), e))?;
 
-                // API key 合并写入 auth.json,只动 OPENAI_API_KEY 一个键。
+                // API key 合并写入 auth.json,只动 OPENAI_API_KEY / auth_mode
+                // 两个键(其余键,含 ChatGPT tokens,原样保留)。
                 let auth_path = self.auth_path(home);
                 let mut auth = load_json(&auth_path)?;
-                auth.as_object_mut()
-                    .unwrap()
-                    .insert("OPENAI_API_KEY".to_string(), json!(spec.api_key.trim()));
+                let obj = auth.as_object_mut().unwrap();
+                obj.insert("OPENAI_API_KEY".to_string(), json!(spec.api_key.trim()));
+                // 必须同时置 "apikey":否则 codex 会拿 ChatGPT OAuth token 去请求
+                // 我们的第三方端点(实测 401 "api key: ****xxxx is invalid")。
+                obj.insert("auth_mode".to_string(), json!("apikey"));
                 write_json(&auth_path, &auth)?;
                 Ok(1)
             }
@@ -861,6 +874,19 @@ impl ProviderAdapter for CodexProviderAdapter {
                     }
                     std::fs::write(&path, doc.to_string())
                         .map_err(|e| format!("failed to write {}: {}", path.display(), e))?;
+                }
+                // 解绑:把 auth_mode 还给 ChatGPT 登录态。否则残留的
+                // auth_mode="apikey" + 第三方 key 会让 codex 拿它去连
+                // api.openai.com,用户的 ChatGPT 登录失效。只动我们写过的那个值。
+                let auth_path = self.auth_path(home);
+                if auth_path.exists() {
+                    let mut auth = load_json(&auth_path)?;
+                    if let Some(obj) = auth.as_object_mut() {
+                        if obj.get("auth_mode").and_then(|v| v.as_str()) == Some("apikey") {
+                            obj.insert("auth_mode".to_string(), json!("chatgpt"));
+                            write_json(&auth_path, &auth)?;
+                        }
+                    }
                 }
                 Ok(removed as usize)
             }
@@ -4187,11 +4213,14 @@ mod tests {
         assert!(text.contains("[model_providers.clawbox]"), "{}", text);
         assert!(text.contains("base_url = \"https://api.oa.example.com/v1\""), "{}", text);
         assert!(text.contains("wire_api = \"responses\""), "{}", text);
+        assert!(text.contains("requires_openai_auth = true"), "{}", text);
         assert!(text.contains("model_provider = \"clawbox\""), "{}", text);
         assert!(text.contains("model = \"model-a\""), "{}", text);
         assert!(!text.contains("sk-secret"), "config.toml must not contain the key");
         let auth = read_json(home.path(), &[".codex", "auth.json"]);
         assert_eq!(auth["OPENAI_API_KEY"], json!("sk-secret-123"));
+        // auth_mode 必须一并改写,否则 codex 会改送 ChatGPT OAuth token
+        assert_eq!(auth["auth_mode"], json!("apikey"));
 
         // 幂等
         let managed = vec!["clawbox".to_string()];
@@ -4223,6 +4252,45 @@ mod tests {
         let auth = read_json(home.path(), &[".codex", "auth.json"]);
         assert_eq!(auth["tokens"]["refresh"], json!("keep-me"));
         assert_eq!(auth["OPENAI_API_KEY"], json!("sk-secret-123"));
+        assert_eq!(auth["auth_mode"], json!("apikey"));
+    }
+
+    #[test]
+    fn codex_legacy_deploy_without_requires_openai_auth_is_flagged_and_repaired() {
+        // 2026-09-13 现场事故:旧版下发漏了 requires_openai_auth + auth_mode,
+        // codex 一个 Authorization 头都不发 → 上游 401 Authentication Fails。
+        // 旧配置必须被判为 update 并修好,否则用户升级后依旧报错。
+        let home = TempHome::new();
+        write_file(
+            home.path(),
+            &codex_rel(),
+            "model_provider = \"clawbox\"\nmodel = \"model-a\"\n\n[model_providers.clawbox]\nname = \"OA\"\nbase_url = \"https://api.oa.example.com/v1\"\nwire_api = \"responses\"\n",
+        );
+        write_file(
+            home.path(),
+            &PathBuf::from(".codex").join("auth.json"),
+            r#"{"auth_mode": "chatgpt", "OPENAI_API_KEY": "sk-secret-123", "tokens": {"a": "keep"}}"#,
+        );
+        let providers = vec![openai_provider()];
+        let a = CodexProviderAdapter;
+        let managed = vec!["clawbox".to_string()];
+
+        assert_eq!(
+            a.plan(home.path(), &providers, Some("p-oa"), &managed).unwrap()[0].action,
+            "update"
+        );
+        assert_eq!(a.apply(home.path(), &providers, Some("p-oa"), &managed).unwrap(), 1);
+        let text = std::fs::read_to_string(home.path().join(codex_rel())).unwrap();
+        assert!(text.contains("requires_openai_auth = true"), "{}", text);
+        let auth = read_json(home.path(), &[".codex", "auth.json"]);
+        assert_eq!(auth["auth_mode"], json!("apikey"));
+        assert_eq!(auth["tokens"]["a"], json!("keep"), "ChatGPT tokens must survive");
+
+        // 修好后幂等(不再反复 update)
+        assert_eq!(
+            a.plan(home.path(), &providers, Some("p-oa"), &managed).unwrap()[0].action,
+            "unchanged"
+        );
     }
 
     #[test]
@@ -4272,9 +4340,10 @@ mod tests {
         let text = std::fs::read_to_string(home.path().join(codex_rel())).unwrap();
         assert!(!text.contains("[model_providers.clawbox]"), "{}", text);
         assert!(!text.contains("model_provider"), "{}", text);
-        // auth.json 的 key 不在 remove 范围
+        // auth.json 的 key 不在 remove 范围;但 auth_mode 要还给 ChatGPT 登录态
         let auth = read_json(home.path(), &[".codex", "auth.json"]);
         assert_eq!(auth["OPENAI_API_KEY"], json!("sk-secret-123"));
+        assert_eq!(auth["auth_mode"], json!("chatgpt"));
 
         // 用户自己把 model_provider 指到别家:remove 不碰顶层键
         write_file(
