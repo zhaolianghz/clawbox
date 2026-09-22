@@ -280,10 +280,12 @@ mod tests {
     }
 
     fn seed_db(home: &Path, sql_filename: &str) {
-        // 在测试里强制走 macOS 路径布局,但 home 起点换成 tmp
-        let dir = home.join("Library/Application Support/Qoder/SharedClientCache/cache/db");
-        std::fs::create_dir_all(&dir).unwrap();
-        let db = dir.join("local.db");
+        // 用 adapter 自己解析出来的路径建库。db_path 是按平台 #[cfg] 分支的
+        // (macos: Library/Application Support / linux: .config / windows:
+        // AppData/Roaming),写死 macOS 布局会让本测试在 Linux CI 上扫不到库,
+        // 恒返回 0 event。
+        let db = db_path(home).expect("每个受支持平台都有 db 路径");
+        std::fs::create_dir_all(db.parent().unwrap()).unwrap();
         let conn = Connection::open(&db).unwrap();
         conn.execute_batch(&fixture_sql(sql_filename)).unwrap();
     }
