@@ -37,7 +37,7 @@ use time::{Date, Month};
 
 /// 全局价表"核对日期": 2026-08-31。后续定期更新。
 /// 真实数据核对日期(本仓库维护,人工核对各厂商官方页);
-/// 90 天后 UI 会提示"可能已过期"但不阻止使用。
+/// 30 天后 UI 会提示"可能已过期"但不阻止使用。
 fn snapshot_date_const() -> Date {
     Date::from_calendar_date(2026, Month::August, 31)
         .expect("SNAPSHOT_DATE invalid")
@@ -77,7 +77,7 @@ impl Default for ModelPrice {
 
 /// 一个 model 的官方公开价 + 核对日期(USD per 1M tokens)。
 ///
-/// `verified_at`: 本仓库人工核对官方价的日期。90 天后 UI banner 提示。
+/// `verified_at`: 本仓库人工核对官方价的日期。30 天后 UI banner 提示。
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 pub struct PricedModel {
     pub price: ModelPrice,
@@ -99,7 +99,7 @@ impl PricedModel {
         self.price.event_cost(input, cache_read, cache_creation, output)
     }
 
-    /// 是否超过 90 天未核对(UI banner 用)
+    /// 是否超过 30 天未核对(UI banner 用)
     pub fn is_stale(&self, today: Date) -> bool {
         let age_days = (today - self.verified_at).whole_days();
         age_days > 30

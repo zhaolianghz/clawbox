@@ -66,6 +66,9 @@ impl PricingMeta {
         let age = (today - snap).whole_days();
         let sample = pricing::PricedModel::new(crate::usage::pricing::ModelPrice::default());
         let days_until = sample.days_until_stale(today);
+        // 必须复用 PricedModel::is_stale(age > 30)。写成 `age > days_until` 是
+        // 错的:days_until = 30 - age,于是变成 age > 15,横幅会提前 15 天弹。
+        let is_stale = sample.is_stale(today);
         let covered = pricing::known_models().len() as u32;
         PricingMeta {
             snapshot_date: format!(
@@ -76,7 +79,7 @@ impl PricingMeta {
             ),
             age_days: age,
             days_until_stale: days_until,
-            is_stale: age > days_until,
+            is_stale,
             covered_models: covered,
         }
     }
