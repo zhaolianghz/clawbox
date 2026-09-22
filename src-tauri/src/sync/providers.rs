@@ -4050,7 +4050,8 @@ mod tests {
             doc["env"]["ANTHROPIC_BASE_URL"].as_str().unwrap(),
             "https://relay.example.com/anthropic"
         );
-        assert_eq!(doc["env"]["ANTHROPIC_AUTH_TOKEN"].as_str().unwrap(), "***");
+        // fixture 的 key 是假值 "sk-secret-123"(非真密钥),断言就是它。
+        assert_eq!(doc["env"]["ANTHROPIC_AUTH_TOKEN"].as_str().unwrap(), "sk-secret-123");
         // 契约定锚:ClawBox 不做跨家串清洗,default_model 是什么就写什么。
         assert_eq!(doc["env"]["ANTHROPIC_MODEL"].as_str().unwrap(), "model-a");
         // 再次 plan → unchanged;再次 apply → 0
@@ -5304,7 +5305,7 @@ mod tests {
             doc["env"]["CODEBUDDY_BASE_URL"].as_str().unwrap(),
             "https://api.oa.example.com/v1"
         );
-        assert_eq!(doc["env"]["CODEBUDDY_API_KEY"].as_str().unwrap(), "***");
+        assert_eq!(doc["env"]["CODEBUDDY_API_KEY"].as_str().unwrap(), "sk-secret-123");
         assert_eq!(doc["env"]["CODEBUDDY_MODEL"].as_str().unwrap(), "model-a");
 
         // 幂等
@@ -5332,7 +5333,7 @@ mod tests {
         let doc = read_json(home.path(), &[".codebuddy", "settings.json"]);
         assert_eq!(doc["env"]["NODE_ENV"].as_str().unwrap(), "development");
         assert_eq!(doc["model"].as_str().unwrap(), "gpt-5");
-        assert_eq!(doc["env"]["CODEBUDDY_API_KEY"].as_str().unwrap(), "***");
+        assert_eq!(doc["env"]["CODEBUDDY_API_KEY"].as_str().unwrap(), "sk-secret-123");
         // CODEBUDDY_MODEL 是 managed 三键,被 ClawBox 写为 provider 的 default_model
         assert_eq!(doc["env"]["CODEBUDDY_MODEL"].as_str().unwrap(), "gpt-5");
 
