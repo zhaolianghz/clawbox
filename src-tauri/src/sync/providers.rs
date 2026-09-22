@@ -692,6 +692,32 @@ impl CodexProviderAdapter {
         )
     }
 
+    /// 解绑时把 auth.json 还原成 ChatGPT 登录态,返回是否真的改了。
+    ///
+    /// 下发时我们写了 `OPENAI_API_KEY`(第三方 key)+ `auth_mode="apikey"`。
+    /// 两者都必须撤掉:codex 的内置 `openai` provider 会用 `OPENAI_API_KEY`
+    /// 顶掉 ChatGPT 登录,把第三方 key 发去 api.openai.com(实测 401
+    /// `invalid_api_key`)。只在我们写过的 `auth_mode="apikey"` 上动手,用户
+    /// 自配的 apikey 模式不动;原值已由下发前快照保留(touch_paths 含
+    /// auth.json)。
+    fn restore_auth(&self, home: &Path) -> Result<bool, String> {
+        let auth_path = self.auth_path(home);
+        if !auth_path.exists() {
+            return Ok(false);
+        }
+        let mut auth = load_json(&auth_path)?;
+        let Some(obj) = auth.as_object_mut() else {
+            return Ok(false);
+        };
+        if obj.get("auth_mode").and_then(|v| v.as_str()) != Some("apikey") {
+            return Ok(false);
+        }
+        obj.remove("OPENAI_API_KEY");
+        obj.insert("auth_mode".to_string(), json!("chatgpt"));
+        write_json(&auth_path, &auth)?;
+        Ok(true)
+    }
+
     /// remove 是否有事可做:clawbox 表存在,或顶层 model_provider 指向我们。
     fn has_our_entries(&self, home: &Path) -> Result<bool, String> {
         let doc = self.load_toml(home)?;
@@ -835,8 +861,14 @@ impl ProviderAdapter for CodexProviderAdapter {
                 Ok(1)
             }
             Target::Skip { .. } => {
-                if !managed.iter().any(|m| m == CODEX_PROVIDER_KEY) || !self.has_our_entries(home)? {
+                // 记账说下发过就必须收尾。auth.json 的还原与 config.toml 里我们
+                // 那张表是否还在无关(用户可能手改/删过)。
+                if !managed.iter().any(|m| m == CODEX_PROVIDER_KEY) {
                     return Ok(0);
+                }
+                let auth_changed = self.restore_auth(home)?;
+                if !self.has_our_entries(home)? {
+                    return Ok(auth_changed as usize);
                 }
                 let mut doc = self.load_toml(home)?;
                 let mut removed = false;
@@ -875,20 +907,11 @@ impl ProviderAdapter for CodexProviderAdapter {
                     std::fs::write(&path, doc.to_string())
                         .map_err(|e| format!("failed to write {}: {}", path.display(), e))?;
                 }
-                // 解绑:把 auth_mode 还给 ChatGPT 登录态。否则残留的
+                // 解绑:把 auth.json 还给 ChatGPT 登录态。否则残留的
                 // auth_mode="apikey" + 第三方 key 会让 codex 拿它去连
                 // api.openai.com,用户的 ChatGPT 登录失效。只动我们写过的那个值。
-                let auth_path = self.auth_path(home);
-                if auth_path.exists() {
-                    let mut auth = load_json(&auth_path)?;
-                    if let Some(obj) = auth.as_object_mut() {
-                        if obj.get("auth_mode").and_then(|v| v.as_str()) == Some("apikey") {
-                            obj.insert("auth_mode".to_string(), json!("chatgpt"));
-                            write_json(&auth_path, &auth)?;
-                        }
-                    }
-                }
-                Ok(removed as usize)
+                let auth_changed = self.restore_auth(home)?;
+                Ok((removed || auth_changed) as usize)
             }
         }
     }
@@ -4340,9 +4363,10 @@ mod tests {
         let text = std::fs::read_to_string(home.path().join(codex_rel())).unwrap();
         assert!(!text.contains("[model_providers.clawbox]"), "{}", text);
         assert!(!text.contains("model_provider"), "{}", text);
-        // auth.json 的 key 不在 remove 范围;但 auth_mode 要还给 ChatGPT 登录态
+        // auth.json:我们写的 key 与 auth_mode 都必须撤掉,否则内置 openai
+        // provider 会把第三方 key 发去 api.openai.com
         let auth = read_json(home.path(), &[".codex", "auth.json"]);
-        assert_eq!(auth["OPENAI_API_KEY"], json!("sk-secret-123"));
+        assert!(auth.get("OPENAI_API_KEY").is_none(), "{}", auth);
         assert_eq!(auth["auth_mode"], json!("chatgpt"));
 
         // 用户自己把 model_provider 指到别家:remove 不碰顶层键
@@ -4356,6 +4380,27 @@ mod tests {
         assert!(text.contains("model_provider = \"ollama\""));
         assert!(text.contains("model = \"llama3\""));
         assert!(!text.contains("clawbox"));
+    }
+
+    #[test]
+    fn codex_remove_restores_auth_even_when_table_already_gone() {
+        // 用户手改/删掉 config.toml 里的 clawbox 表后再解绑:auth.json 仍须还原。
+        // 否则 auth_mode="apikey" + 第三方 key 会让 codex 拿它去连 api.openai.com
+        // (实测 401 invalid_api_key)。
+        let home = TempHome::new();
+        let providers = vec![openai_provider()];
+        let a = CodexProviderAdapter;
+        a.apply(home.path(), &providers, Some("p-oa"), &[]).unwrap();
+        // 手工抹掉我们下发的内容,只留用户自有配置
+        write_file(home.path(), &codex_rel(), "model = \"gpt-5.6-sol\"\n");
+
+        let managed = vec!["clawbox".to_string()];
+        assert_eq!(a.apply(home.path(), &providers, None, &managed).unwrap(), 1);
+        let auth = read_json(home.path(), &[".codex", "auth.json"]);
+        assert!(auth.get("OPENAI_API_KEY").is_none(), "{}", auth);
+        assert_eq!(auth["auth_mode"], json!("chatgpt"));
+        // 幂等:再解一次不再改任何东西
+        assert_eq!(a.apply(home.path(), &providers, None, &managed).unwrap(), 0);
     }
 
     #[test]
