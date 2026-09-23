@@ -79,7 +79,11 @@ static AGENTS: &[AgentDef] = &[
         id: "codex", label: "Codex", binary: "codex",
         kind: AgentKind::NativeCli,
         install: InstallMethod::Npm { package: "@openai/codex", force: false },
-        check_probe: &["--version"], fallback_paths: &[],
+        check_probe: &["--version"],
+        // Codex 也随 ChatGPT 桌面版分发,落在 app bundle 里:既不在 PATH、也不是
+        // npm 全局安装,常规四步都够不着 → 明明在用却显示「未安装」。
+        // (macOS 专有位置;其它平台不存在就是一次无谓的 stat。)
+        fallback_paths: &["/Applications/ChatGPT.app/Contents/Resources/codex"],
         depends_on: &[], docs_url: Some("https://developers.openai.com/codex/cli"),
     },
     AgentDef {
@@ -203,16 +207,24 @@ pub fn find_agent(id: &str) -> Option<&'static AgentDef> {
 
 /// Resolve `~` and `~user` to an absolute path. Returns None if the entry
 /// doesn't start with `~` or the home dir is unavailable.
-fn expand_home(p: &str) -> Option<PathBuf> {
-    let rest = p.strip_prefix('~')?;
-    let home = dirs::home_dir()?;
-    Some(if rest.is_empty() {
-        home
-    } else {
-        // rest begins with the platform separator (we only emit unix-style
-        // "~/.local/..." entries); trim leading '/' defensively.
-        home.join(rest.trim_start_matches('/'))
-    })
+fn expand_path(p: &str) -> Option<PathBuf> {
+    if let Some(rest) = p.strip_prefix('~') {
+        let home = dirs::home_dir()?;
+        return Some(if rest.is_empty() {
+            home
+        } else {
+            // rest begins with the platform separator (we only emit unix-style
+            // "~/.local/..." entries); trim leading '/' defensively.
+            home.join(rest.trim_start_matches('/'))
+        });
+    }
+    // 绝对路径原样透传:app bundle 内的二进制(如 ChatGPT.app 里带的 codex)
+    // 没有 ~ 可展开,只能字面声明。fallback_paths 的文档一直是这么承诺的,
+    // 但早先的实现只认 ~ 前缀,导致这类条目静默失效。
+    if Path::new(p).is_absolute() {
+        return Some(PathBuf::from(p));
+    }
+    None
 }
 
 /// Whether a path is an executable file (unix: executable bit; windows: any
@@ -351,6 +363,13 @@ fn nvm_global_bin() -> Option<PathBuf> {
         .map(|v| v.join("bin"))
 }
 
+/// 版本探测的看门狗。必须容得下那些启动时会做自更新/安装修复的 CLI:hermes
+/// 处于「中断的更新」状态时每次调用固定花 ~10.6s,原先的 10s 预算每次都在它
+/// 返回前把进程杀掉 → `version()` 得到 None → 明明装了却报「未安装」。
+/// 仍需有界,以免真挂死的二进制冻住状态列表;探测走 rayon 并行,所以墙钟耗时
+/// 约等于本值而非 N 倍。
+const VERSION_PROBE_TIMEOUT: Duration = Duration::from_secs(30);
+
 impl AgentDef {
     /// Resolve the absolute binary path, trying in order:
     ///   1. the process PATH (the common, fast case)
@@ -368,7 +387,7 @@ impl AgentDef {
             return Some(abs);
         }
         for fb in self.fallback_paths {
-            if let Some(p) = expand_home(fb) {
+            if let Some(p) = expand_path(fb) {
                 if let Some(hit) = resolve_exe_file(&p) {
                     return Some(hit);
                 }
@@ -397,9 +416,9 @@ impl AgentDef {
     }
 
     /// Probe the binary for its version string.
-    /// Bounded by a 10s watchdog: a hung `--version` (interactive prompt,
-    /// self-update check) must not stall list_agent_status' rayon collect
-    /// and freeze the frontend spinner forever.
+    /// Bounded by [`VERSION_PROBE_TIMEOUT`]: a hung `--version` (interactive
+    /// prompt, self-update check) must not stall list_agent_status' rayon
+    /// collect and freeze the frontend spinner forever.
     pub fn version(&self) -> Option<String> {
         // Resolve up front so detection survives a minimal GUI PATH — we may
         // have to run an absolute fallback path instead of relying on PATH
@@ -412,7 +431,7 @@ impl AgentDef {
             .stderr(Stdio::null())
             .spawn()
             .ok()?;
-        let out = crate::path_env::wait_with_timeout(child, Duration::from_secs(10))?;
+        let out = crate::path_env::wait_with_timeout(child, VERSION_PROBE_TIMEOUT)?;
         if !out.status.success() {
             return None;
         }
@@ -569,13 +588,33 @@ mod tests {
     }
 
     #[test]
-    fn expand_home_resolves_tilde_prefix() {
+    fn expand_path_resolves_tilde_and_passes_absolute_through() {
         let home = dirs::home_dir().expect("home dir available in test env");
-        assert_eq!(expand_home("~/foo/bar"), Some(home.join("foo/bar")));
-        assert_eq!(expand_home("~"), Some(home));
-        // absolute / non-tilde paths are not expanded (return None here).
-        assert_eq!(expand_home("/usr/bin"), None);
-        assert_eq!(expand_home("claude"), None);
+        assert_eq!(expand_path("~/foo/bar"), Some(home.join("foo/bar")));
+        assert_eq!(expand_path("~"), Some(home));
+        // 绝对路径原样透传
+        #[cfg(unix)]
+        assert_eq!(
+            expand_path("/Applications/ChatGPT.app/Contents/Resources/codex"),
+            Some(PathBuf::from(
+                "/Applications/ChatGPT.app/Contents/Resources/codex"
+            ))
+        );
+        // 裸名字不是路径 —— 拒绝,免得把 "claude" 当成 cwd 下的相对路径
+        assert_eq!(expand_path("claude"), None);
+    }
+
+    /// 真机端到端(不隔离 home):验证本机已装的 agent 确实能被认出。
+    /// 默认 ignore —— 不是每台开发机都装了这些。手动跑:
+    ///   cargo test --lib real_machine -- --ignored --nocapture
+    #[test]
+    #[ignore]
+    fn real_machine_detects_codex_and_hermes() {
+        for id in ["codex", "hermes"] {
+            let def = AGENTS.iter().find(|a| a.id == id).expect("registered");
+            println!("{}: resolve={:?} version={:?}", id, def.resolve(), def.version());
+            assert!(def.is_installed(), "{} 装了却报未安装", id);
+        }
     }
 
     #[test]
