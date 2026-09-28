@@ -292,12 +292,18 @@
     }
   }
 
-  /** 拉取模型用的槽:anthropic 槽优先,取第一个非空端点 */
+  /** 拉取模型用的槽:OpenAI 优先。
+   *
+   * Anthropic 协议没有列模型接口 —— 官方有 `GET /v1/models`,但第三方
+   * anthropic 网关普遍不实现(实测 MiMo 的 /anthropic 下所有 models 路径均
+   * 404)。打不通时 provider_test 会降级为「可达性探针」,那条路径的 models
+   * 恒为空。所以先试能真正列列表的 OpenAI 槽(拿不到时 Rust 侧还会回退到同
+   * host 的 /v1/models),只在没配 OpenAI 端点时才退回 Anthropic。 */
   function fetchSlot(): { url: string; flavor: ProviderFlavor } | null {
-    const a = slotUrl('anthropic');
-    if (a) return { url: a, flavor: 'anthropic' };
     const o = slotUrl('openai');
     if (o) return { url: o, flavor: 'openai' };
+    const a = slotUrl('anthropic');
+    if (a) return { url: a, flavor: 'anthropic' };
     return null;
   }
 

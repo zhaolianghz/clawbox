@@ -88,6 +88,70 @@ pub fn parse_models(json: &serde_json::Value) -> Vec<String> {
         .collect()
 }
 
+/// 从 anthropic 槽的 base 推出**同 host** 的 OpenAI 约定列模型 URL。
+///
+/// Anthropic 协议本身没有列模型接口；官方有 `GET /v1/models`，但第三方
+/// anthropic 网关普遍不实现（实测 MiMo：`/anthropic` 下所有 models 路径全
+/// 404）。而很多网关把两种协议挂在**同一个 host** 上，那里按 OpenAI 约定
+/// 就有列表 —— 所以先扔末尾的 `anthropic` 段（常见布局 `{root}/anthropic`
+/// + `{root}/v1`），保留其它前缀，再拼 `/v1/models`。
+///
+/// 例：`https://h/anthropic` → `https://h/v1/models`；
+///     `https://h/gw/anthropic` → `https://h/gw/v1/models`。
+fn host_models_url(base_url: &str) -> Option<String> {
+    let base = base_url.trim().trim_end_matches('/');
+    if base.is_empty() {
+        return None;
+    }
+    let root = base.strip_suffix("/anthropic").unwrap_or(base).trim_end_matches('/');
+    if root.is_empty() {
+        return None;
+    }
+    Some(if root.ends_with("/v1") {
+        format!("{}/models", root)
+    } else {
+        format!("{}/v1/models", root)
+    })
+}
+
+/// 用 OpenAI 约定去列模型（anthropic 槽的同 host 回退）。
+///
+/// 认证头两个都带：网关可能认 OpenAI 的 `Bearer`，也可能只认 `x-api-key`，
+/// 凭据本是同一把。返回 `None` = 这次尝试不可用（网络失败 / 非 2xx / 2xx 但
+/// 列表为空），调用方据此继续降级到 messages 探针。
+async fn probe_host_models(
+    client: &reqwest::Client,
+    models_url: &str,
+    api_key: &str,
+    start: Instant,
+) -> Option<ProviderTestResult> {
+    let response = client
+        .get(models_url)
+        .header("Authorization", format!("Bearer {}", api_key))
+        .header("x-api-key", api_key)
+        .send()
+        .await
+        .ok()?;
+    if !response.status().is_success() {
+        return None;
+    }
+    let models = match response.json::<serde_json::Value>().await {
+        Ok(json) => parse_models(&json),
+        Err(_) => Vec::new(),
+    };
+    if models.is_empty() {
+        // 2xx 但空列表：交给 messages 探针去判可达性，别把「连得上但无列表」
+        // 说成「列模型成功但空」——两者对用户的含义不同。
+        return None;
+    }
+    Some(ProviderTestResult {
+        ok: true,
+        latency_ms: start.elapsed().as_millis() as u64,
+        models,
+        error: None,
+    })
+}
+
 /// 连通性拨测核心:命令层与 doctor 体检共用。构建 models URL 并 GET,
 /// anthropic 404 时回退探测 /v1/messages。永不 Err(网络/HTTP 失败都
 /// 折进 `ok=false` 的结果里),只构建 client 失败才 Err。
@@ -137,6 +201,17 @@ pub async fn test_endpoint(
         // back to a reachability probe against the messages endpoint before
         // reporting failure.
         if flavor == "anthropic" && status.as_u16() == 404 {
+            // 该 anthropic 前缀下没有列模型路由。先试同 host 的 OpenAI 约定
+            // `/v1/models`（双协议共用一个 host 的网关在那里有列表）；与刚
+            // 才试过的 URL 相同时不必重试。都不行才降级到 messages 可达性
+            // 探针 —— 那条路径的 models 恒为空。
+            if let Some(host_url) = host_models_url(base_url) {
+                if host_url != url {
+                    if let Some(r) = probe_host_models(&client, &host_url, api_key, start).await {
+                        return Ok(r);
+                    }
+                }
+            }
             return Ok(probe_anthropic_messages(&client, base_url, api_key, start).await);
         }
         let error = match status.as_u16() {
@@ -331,5 +406,49 @@ mod tests {
             parse_models(&json!({"data":[{"name":"no-id"},{"id":"ok"}]})),
             vec!["ok"]
         );
+    }
+
+    // ---- host_models_url ----
+
+    #[test]
+    fn host_models_url_strips_anthropic_segment() {
+        // 真实案例:小米 MiMo 的两种协议同 host,anthropic 前缀下无列模型路由。
+        assert_eq!(
+            host_models_url("https://token-plan-cn.xiaomimimo.com/anthropic").as_deref(),
+            Some("https://token-plan-cn.xiaomimimo.com/v1/models")
+        );
+        // 尾斜杠照旧
+        assert_eq!(
+            host_models_url("https://h.example/anthropic/").as_deref(),
+            Some("https://h.example/v1/models")
+        );
+    }
+
+    #[test]
+    fn host_models_url_keeps_other_path_prefixes() {
+        // 网关挂在子路径下时不能把前缀扔掉 —— 只扔末尾那个 anthropic 段。
+        assert_eq!(
+            host_models_url("https://h.example/gw/anthropic").as_deref(),
+            Some("https://h.example/gw/v1/models")
+        );
+        // 槽自带 /v1 时按去重规则拼(不产生 /v1/v1)
+        assert_eq!(
+            host_models_url("https://h.example/v1/anthropic").as_deref(),
+            Some("https://h.example/v1/models")
+        );
+    }
+
+    #[test]
+    fn host_models_url_degrades_to_same_url_without_anthropic_suffix() {
+        // 没有 anthropic 段(如官方端点)时推出的是**同一个** URL —— 调用方靠
+        // `host_url != url` 跳过重试,不会白打第二次请求。
+        let base = "https://api.anthropic.com";
+        assert_eq!(
+            host_models_url(base).as_deref(),
+            Some(build_models_url(base, "anthropic").as_str())
+        );
+        assert_eq!(host_models_url("").as_deref(), None);
+        assert_eq!(host_models_url("/").as_deref(), None);
+        assert_eq!(host_models_url("/anthropic").as_deref(), None);
     }
 }

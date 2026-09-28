@@ -209,7 +209,7 @@
       "removeModel": "Remove model",
       "modelPlaceholder": "Type a model id and press Enter",
       "fetchModels": "Fetch Models",
-      "noModelsFetched": "Connected, but no models returned",
+      "noModelsFetched": "Endpoint reachable, but it exposes no model list — add model ids manually",
       "customPrefix": "Custom-{name}"
     },
     "modelCount": "{count} models",
