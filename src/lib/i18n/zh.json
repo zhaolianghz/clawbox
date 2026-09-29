@@ -365,8 +365,8 @@
     "drift": {
       "summary": "{count} 个 agent 设置不一致({names})",
       "restoreAll": "全部恢复成 ClawBox",
-      "card": "现在用 {agentNow},ClawBox 记得是 {clawbox}。",
-      "cardUnknown": "设置不一致,ClawBox 记得是 {clawbox}。",
+      "card": "配置内容不一致:agent 现在用 {agentNow},ClawBox 下发的是 {clawbox}。",
+      "cardUnknown": "配置内容与 ClawBox 下发的不一致(ClawBox 下发的是 {clawbox},即下方服务商下拉框的绑定;agent 当前在用什么读不出)。",
       "restore": "恢复成 {name}",
       "keep": "就用 {name}"
     },

@@ -365,8 +365,8 @@
     "drift": {
       "summary": "{count} agent(s) out of sync ({names})",
       "restoreAll": "Restore all to ClawBox",
-      "card": "Now using {agentNow}; ClawBox remembers {clawbox}.",
-      "cardUnknown": "Out of sync; ClawBox remembers {clawbox}.",
+      "card": "Config content out of sync: the agent is now using {agentNow}; ClawBox deployed {clawbox}.",
+      "cardUnknown": "Config content doesn't match what ClawBox deployed ({clawbox}, i.e. the provider dropdown below; the agent's current setting can't be read).",
       "restore": "Restore to {name}",
       "keep": "Keep {name}"
     },
