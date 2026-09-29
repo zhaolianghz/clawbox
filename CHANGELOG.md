@@ -4,6 +4,51 @@ All notable changes to ClawBox are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/), and versions adhere to
 [Semantic Versioning](https://semver.org/).
 
+## [0.6.7] - 2026-09-29
+
+### Fixed
+- **Claude-code subagents died instantly ("0 tool uses · 0 tokens") against
+  third-party gateways** — spawned subagent processes don't unconditionally
+  inherit `ANTHROPIC_MODEL`: which tier a request lands on is decided by
+  `ANTHROPIC_DEFAULT_{HAIKU,SONNET,OPUS,FABLE}_MODEL` and
+  `CLAUDE_CODE_SUBAGENT_MODEL`. Left unset, the CLI requests the literal
+  Anthropic model id from the gateway (400/503); left stale after switching
+  providers, they carry the previous provider's model name with the same
+  result — main session fine, every subagent dead. The env-settings adapter
+  now manages these as `model_slots`, written and cleaned up together with the
+  MODEL key (claude-code's five tier keys; codebuddy has no such concept).
+- **Pi card showed a permanent false "config drift"** — Pi enriches the
+  provider node ClawBox writes into `~/.pi/agent/models.json` with
+  `name`/`input`/`contextWindow`/`cost` (and enriches each `models[]` entry),
+  but the adapter's `plan` compared the whole node for equality, so the node
+  never matched the desired state and the drift banner reappeared right after a
+  successful sync. Comparison is now a projection over only the keys ClawBox
+  deploys (`baseUrl`, `api`, `apiKey`, `models[].id`) — the same approach the
+  dsh adapter already used.
+- **Re-syncing Pi wiped Pi's enriched fields** — `apply` now merges the managed
+  keys into the existing node instead of replacing it wholesale, keeping Pi's
+  additions and its enriched `models[]` entries (matched by id).
+- **Drift banner read like a name mismatch when the names matched** — the
+  banner only ever shows the same binding the provider dropdown shows, so
+  "settings inconsistent; ClawBox remembers X" looked like a false alarm next to
+  a dropdown reading X. Both locales now state that it is the config *content*
+  that doesn't match what ClawBox deployed; the variant shown when the agent's
+  current provider can't be read points at the dropdown explicitly.
+
+## [0.6.6] - 2026-09-28
+
+### Fixed
+- **Model listing on the Anthropic slot always empty** — third-party Anthropic
+  gateways rarely implement a list-models endpoint (every candidate path 404s
+  on e.g. Xiaomi MiMo's `/anthropic`), and the old code then fell back to a
+  reachability probe whose model list is always empty: "Test connection" showed
+  0 models and "Fetch models" reported a reachable endpoint that returned none.
+  The 404 branch now retries the same host's `/v1/models` (OpenAI convention,
+  commonly mounted on the same host, path prefix preserved) before giving up.
+  The frontend also fetches the OpenAI slot first — the Anthropic slot was the
+  only one that couldn't list — and the empty-result message now says the
+  endpoint is reachable but offers no model list.
+
 ## [0.6.5] - 2026-09-23
 
 ### Fixed
