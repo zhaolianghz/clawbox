@@ -257,6 +257,9 @@ pub struct EnvSettingsProviderAdapter {
     dir: &'static str,
     /// env 节里我们管理的三键:[BASE_URL 键, KEY 键, MODEL 键]。用户其它键绝不碰。
     keys: [&'static str; 3],
+    /// 模型档位键:值随 MODEL 键一起写,避免换服务商后残留上一个服务商的
+    /// 模型名。claude-code 的档位键见 `claude_code()`;codebuddy 无此概念,为空。
+    model_slots: &'static [&'static str],
     slots: &'static [Slot],
     missing: &'static str,
     /// remove 变更项的展示名("ANTHROPIC_*" / "CODEBUDDY_*")。
@@ -271,11 +274,30 @@ const ENV_MANAGED_MARK: &str = "env";
 /// MODEL 键的写入语义:`desired_env` 会按 `spec.default_model` 原样写入
 /// (空时跳过)。ClawBox 不在这里做跨家串清洗 —— 那是用户在配置 base_url
 /// 时就该自己保证的事。
+///
+/// `model_slots` 为什么必须跟着 MODEL 一起写(实测,2026-XX):
+/// 子代理/spawn 出来的进程不是无条件继承 ANTHROPIC_MODEL —— 请求落到哪个
+/// 档位由这些键决定,缺省时 CLI 会拿**字面量** Anthropic 模型 ID(如
+/// claude-opus-4-8)去请求,第三方网关一律 400/503,
+/// 表现是子代理「0 tool uses · 0 tokens」瞬间返回。
+/// 而这些键 ClawBox 早期不管:换服务商时只改 3 键,档位键还停在上一个
+/// 服务商的模型名上(GL 的 endpoint 收到 GLM-5.3-Flash → 400 Unsupported
+/// model),于是主会话正常、子代理全挂。故纳入管理,跟随 default_model。
+///
+/// `*_MODEL_NAME` / `*_MODEL_DESCRIPTION` 是 picker 里的展示名,不影响路由,
+/// 保持「绝不碰用户其它键」的契约,不写。
 pub fn claude_code() -> EnvSettingsProviderAdapter {
     EnvSettingsProviderAdapter {
         id: "claude-code",
         dir: ".claude",
         keys: ["ANTHROPIC_BASE_URL", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_MODEL"],
+        model_slots: &[
+            "ANTHROPIC_DEFAULT_HAIKU_MODEL",
+            "ANTHROPIC_DEFAULT_SONNET_MODEL",
+            "ANTHROPIC_DEFAULT_OPUS_MODEL",
+            "ANTHROPIC_DEFAULT_FABLE_MODEL",
+            "CLAUDE_CODE_SUBAGENT_MODEL",
+        ],
         slots: &[Slot::Anthropic],
         missing: "Anthropic endpoint not configured",
         remove_label: "ANTHROPIC_*",
@@ -289,6 +311,7 @@ pub fn codebuddy() -> EnvSettingsProviderAdapter {
         id: "codebuddy",
         dir: ".codebuddy",
         keys: ["CODEBUDDY_BASE_URL", "CODEBUDDY_API_KEY", "CODEBUDDY_MODEL"],
+        model_slots: &[],
         slots: &[Slot::Openai],
         missing: "OpenAI endpoint not configured",
         remove_label: "CODEBUDDY_*",
@@ -311,6 +334,9 @@ impl EnvSettingsProviderAdapter {
         let model = spec.default_model.trim();
         if !model.is_empty() {
             m.insert(model_key, model.to_string());
+            for &key in self.model_slots {
+                m.insert(key, model.to_string());
+            }
         }
         m
     }
@@ -324,10 +350,10 @@ impl EnvSettingsProviderAdapter {
                 .ok_or_else(|| "\"env\" is not a JSON object".to_string())?,
         };
         let mut m = BTreeMap::new();
-        for key in self.keys {
-            if let Some(v) = env.get(key) {
+        for key in self.keys.iter().chain(self.model_slots.iter()) {
+            if let Some(v) = env.get(*key) {
                 // 非字符串值也纳入比较(转为显示形式),保证 apply 会覆写。
-                m.insert(key, v.as_str().map(|s| s.to_string()).unwrap_or_else(|| v.to_string()));
+                m.insert(*key, v.as_str().map(|s| s.to_string()).unwrap_or_else(|| v.to_string()));
             }
         }
         Ok(m)
@@ -432,7 +458,7 @@ impl ProviderAdapter for EnvSettingsProviderAdapter {
             .or_insert_with(|| Value::Object(Map::new()))
             .as_object_mut()
             .unwrap();
-        for key in self.keys {
+        for key in self.keys.iter().copied().chain(self.model_slots.iter().copied()) {
             match desired.get(key) {
                 Some(v) => {
                     env.insert(key.to_string(), json!(v));
@@ -2326,6 +2352,63 @@ impl PiProviderAdapter {
         kv.iter()
             .all(|(k, v)| doc.get(*k).and_then(|x| x.as_str()) == Some(v.as_str()))
     }
+
+    /// 节点等价投影:只看我们下发的键(baseUrl/api/apiKey + models[].id)。
+    /// Pi 启动后会自行给节点和 models 条目补 name/input/contextWindow/cost
+    /// 等加富字段,整节点相等比较会永远判「已变」→ 误报漂移(对比 dsh 的
+    /// route_projection)。
+    fn node_projection(v: &Value) -> Value {
+        let ids: Vec<Value> = v
+            .get("models")
+            .and_then(|m| m.as_array())
+            .map(|arr| arr.iter().filter_map(|m| m.get("id").cloned()).collect())
+            .unwrap_or_default();
+        json!({
+            "baseUrl": v.get("baseUrl").cloned().unwrap_or(Value::Null),
+            "api": v.get("api").cloned().unwrap_or(Value::Null),
+            "apiKey": v.get("apiKey").cloned().unwrap_or(Value::Null),
+            "models": ids,
+        })
+    }
+
+    /// 把期望的托管键合并进现有节点而非整节点替换 —— Pi 自行补的加富字段
+    /// (name/input/cost、models 条目里的同名字段)保留,只覆盖我们管的键。
+    /// models 以期望的 id 顺序为准:同 id 的加富条目原样保留,缺的补 {id}。
+    fn merge_node(existing: Option<&Value>, desired: &Value) -> Value {
+        let mut node = existing.cloned().unwrap_or_else(|| json!({}));
+        let obj = node.as_object_mut().expect("provider node must be an object");
+        for key in ["baseUrl", "api", "apiKey"] {
+            if let Some(v) = desired.get(key) {
+                obj.insert(key.to_string(), v.clone());
+            }
+        }
+        let want_ids: Vec<String> = desired
+            .get("models")
+            .and_then(|m| m.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|m| m.get("id").and_then(|i| i.as_str()).map(String::from))
+                    .collect()
+            })
+            .unwrap_or_default();
+        let existing_models: Vec<Value> = existing
+            .and_then(|e| e.get("models"))
+            .and_then(|m| m.as_array())
+            .cloned()
+            .unwrap_or_default();
+        let merged: Vec<Value> = want_ids
+            .iter()
+            .map(|id| {
+                existing_models
+                    .iter()
+                    .find(|m| m.get("id").and_then(|i| i.as_str()) == Some(id.as_str()))
+                    .cloned()
+                    .unwrap_or_else(|| json!({ "id": id }))
+            })
+            .collect();
+        obj.insert("models".to_string(), Value::Array(merged));
+        node
+    }
 }
 
 impl ProviderAdapter for PiProviderAdapter {
@@ -2354,7 +2437,12 @@ impl ProviderAdapter for PiProviderAdapter {
                 let settings_doc = load_json(&Self::settings_path(home))?;
                 let settings_ok = Self::settings_unchanged(&settings_doc, &Self::desired_settings(spec));
                 let action = match node_of(&spec.id) {
-                    Some(existing) if existing == desired && settings_ok => "unchanged",
+                    Some(existing)
+                        if Self::node_projection(&existing) == Self::node_projection(&desired)
+                            && settings_ok =>
+                    {
+                        "unchanged"
+                    }
                     Some(_) => "update",
                     None => "add",
                 };
@@ -2411,8 +2499,13 @@ impl ProviderAdapter for PiProviderAdapter {
                     .or_insert_with(|| Value::Object(Map::new()))
                     .as_object_mut()
                     .ok_or_else(|| "\"providers\" is not a JSON object".to_string())?;
-                if nodes.get(&spec.id) != Some(&desired) {
-                    nodes.insert(spec.id.clone(), desired);
+                let stale = nodes
+                    .get(&spec.id)
+                    .map(|e| Self::node_projection(e) != Self::node_projection(&desired))
+                    .unwrap_or(true);
+                if stale {
+                    let merged = Self::merge_node(nodes.get(&spec.id), &desired);
+                    nodes.insert(spec.id.clone(), merged);
                     applied += 1;
                 }
                 // 曾管理、现不再下发的节点(换绑了别的服务商)一并清掉。
@@ -3936,6 +4029,45 @@ mod tests {
         assert_eq!(a.deployed_names(&providers, Some("gw")), vec!["gw".to_string()]);
     }
 
+    /// Pi 启动后会给节点和 models 条目补 name/input/cost 等加富字段:
+    /// 不算漂移;重下发只覆盖托管键,加富字段保留。
+    #[test]
+    fn pi_enriched_node_is_unchanged_and_merge_keeps_enrichment() {
+        let home = TempHome::new();
+        let providers = vec![provider("gw", "Gateway", "https://gw.example.com/", "")];
+        let a = PiProviderAdapter;
+        a.apply(home.path(), &providers, Some("gw"), &[]).unwrap();
+
+        // 模拟 Pi 的加富
+        let path = home.path().join(".pi").join("agent").join("models.json");
+        let mut doc: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        let node = &mut doc["providers"]["gw"];
+        node["name"] = serde_json::json!("Gateway");
+        node["models"][0]["name"] = serde_json::json!("Model A");
+        node["models"][0]["contextWindow"] = serde_json::json!(1000000);
+        node["models"][0]["cost"] = serde_json::json!({"input": 0.3, "output": 1.2});
+        std::fs::write(&path, serde_json::to_string(&doc).unwrap()).unwrap();
+
+        // 加富 ≠ 漂移
+        let changes = a.plan(home.path(), &providers, Some("gw"), &["gw".into()]).unwrap();
+        assert_eq!(changes[0].action, "unchanged");
+
+        // 托管键变了 → update;apply 合并写,加富字段保留
+        let mut changed = providers.clone();
+        changed[0].api_key = "sk-new".to_string();
+        let changes = a.plan(home.path(), &changed, Some("gw"), &["gw".into()]).unwrap();
+        assert_eq!(changes[0].action, "update");
+        a.apply(home.path(), &changed, Some("gw"), &["gw".into()]).unwrap();
+        let doc: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        let node = &doc["providers"]["gw"];
+        assert_eq!(node["apiKey"], "sk-new");
+        assert_eq!(node["name"], "Gateway");
+        assert_eq!(node["models"][0]["name"], "Model A");
+        assert_eq!(node["models"][0]["contextWindow"], 1000000);
+    }
+
     #[test]
     fn pi_openai_only_provider_uses_openai_completions() {
         let home = TempHome::new();
@@ -4073,6 +4205,64 @@ mod tests {
         assert_eq!(a.apply(home.path(), &providers, Some("p-anth"), &[]).unwrap(), 1);
         let doc = read_json(home.path(), &[".claude", "settings.json"]);
         assert_eq!(doc["env"]["ANTHROPIC_MODEL"], json!("claude-opus-4-8"));
+    }
+
+    #[test]
+    fn claude_model_slot_keys_follow_default_model() {
+        // 回归:换服务商后档位键不能留在旧家。GL 网关收到 GLM-5.3-Flash 直接
+        // 400 Unsupported model,子代理表现是「0 tool uses · 0 tokens」瞬间返回,
+        // 主会话却完全正常 —— 只在换服务商后复现。
+        let home = TempHome::new();
+        let slots = [
+            "ANTHROPIC_DEFAULT_HAIKU_MODEL",
+            "ANTHROPIC_DEFAULT_SONNET_MODEL",
+            "ANTHROPIC_DEFAULT_OPUS_MODEL",
+            "ANTHROPIC_DEFAULT_FABLE_MODEL",
+            "CLAUDE_CODE_SUBAGENT_MODEL",
+        ];
+        let mut providers = vec![anthropic_provider()];
+        providers[0].default_model = "glm-5.3-flash".into();
+        let a = claude_code();
+        a.apply(home.path(), &providers, Some("p-anth"), &[]).unwrap();
+        let doc = read_json(home.path(), &[".claude", "settings.json"]);
+        for k in slots {
+            assert_eq!(doc["env"][k], json!("glm-5.3-flash"), "{}", k);
+        }
+
+        // 换服务商:五个档位键必须一起改
+        providers[0].default_model = "mimo-v2.6-pro".into();
+        let managed = vec!["env".to_string()];
+        let changes = a.plan(home.path(), &providers, Some("p-anth"), &managed).unwrap();
+        assert_eq!(changes[0].action, "update");
+        a.apply(home.path(), &providers, Some("p-anth"), &managed).unwrap();
+        let doc = read_json(home.path(), &[".claude", "settings.json"]);
+        for k in slots {
+            assert_eq!(doc["env"][k], json!("mimo-v2.6-pro"), "{}", k);
+        }
+        // 收敛:再 plan/apply 都是 unchanged
+        assert_eq!(changes[0].action, "update");
+        assert_eq!(a.apply(home.path(), &providers, Some("p-anth"), &managed).unwrap(), 0);
+
+        // default_model 为空 → 档位键一起清掉,不留半套映射
+        providers[0].default_model = String::new();
+        a.apply(home.path(), &providers, Some("p-anth"), &managed).unwrap();
+        let doc = read_json(home.path(), &[".claude", "settings.json"]);
+        for k in slots {
+            assert!(doc["env"].get(k).is_none(), "{}", k);
+        }
+    }
+
+    #[test]
+    fn codebuddy_writes_no_model_slot_keys() {
+        // codebuddy 没有档位键概念,别把 claude 的键串进它的 env。
+        let home = TempHome::new();
+        let mut providers = vec![openai_provider()];
+        providers[0].default_model = "gpt-4o".into();
+        let a = codebuddy();
+        a.apply(home.path(), &providers, Some("p-oa"), &[]).unwrap();
+        let doc = read_json(home.path(), &[".codebuddy", "settings.json"]);
+        assert_eq!(doc["env"]["CODEBUDDY_MODEL"], json!("gpt-4o"));
+        assert!(doc["env"].get("CLAUDE_CODE_SUBAGENT_MODEL").is_none());
     }
 
     #[test]
