@@ -315,8 +315,9 @@
     hermes: ['anthropic', 'openai'],
     // gemini-cli 走 Gemini 协议,端点取 Anthropic 槽的网关根 URL
     gemini: ['anthropic'],
-    // cline 经 `cline auth -p anthropic -b <url>`;pi 双协议,Anthropic 优先
-    cline: ['anthropic'],
+    // cline 经 `cline auth -p openai-compatible -b <url>`(-b 只收 OpenAI 系 provider);
+    // pi 双协议,Anthropic 优先
+    cline: ['openai'],
     pi: ['anthropic', 'openai'],
     // dsh 按 Anthropic 槽优先定协议(anthropic-messages / openai-completions)
     dsh: ['anthropic', 'openai'],
