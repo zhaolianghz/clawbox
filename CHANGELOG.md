@@ -7,6 +7,15 @@ All notable changes to ClawBox are documented here. The format follows
 ## [0.6.7] - 2026-09-29
 
 ### Fixed
+- **Cline provider binding never actually worked** — `cline auth -p anthropic
+  -k … -b …` is rejected by cline 3.0.15 ("base URL is only supported for
+  OpenAI and OpenAI-compatible providers"), so every bind failed and cline kept
+  whatever was configured before. The adapter now deploys through
+  `cline auth -p openai-compatible` against the provider's OpenAI endpoint
+  (anthropic-only providers report a clear skip instead of silently pointing at
+  the official endpoint), writes the model id with `-m`, and cline switches to
+  the configured provider and model on next launch. The endpoint-slot
+  compatibility hint follows suit.
 - **Claude-code subagents died instantly ("0 tool uses · 0 tokens") against
   third-party gateways** — spawned subagent processes don't unconditionally
   inherit `ANTHROPIC_MODEL`: which tier a request lands on is decided by
