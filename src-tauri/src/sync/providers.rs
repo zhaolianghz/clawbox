@@ -275,7 +275,7 @@ const ENV_MANAGED_MARK: &str = "env";
 /// (空时跳过)。ClawBox 不在这里做跨家串清洗 —— 那是用户在配置 base_url
 /// 时就该自己保证的事。
 ///
-/// `model_slots` 为什么必须跟着 MODEL 一起写(实测,2026-XX):
+/// `model_slots` 为什么必须跟着 MODEL 一起写(实测,2026-09-29):
 /// 子代理/spawn 出来的进程不是无条件继承 ANTHROPIC_MODEL —— 请求落到哪个
 /// 档位由这些键决定,缺省时 CLI 会拿**字面量** Anthropic 模型 ID(如
 /// claude-opus-4-8)去请求,第三方网关一律 400/503,
@@ -2130,28 +2130,34 @@ impl ProviderAdapter for GeminiProviderAdapter {
 //
 // cline 的 ~/.cline/data/settings/providers.json 由其 ProviderSettingsManager
 // 维护(version/tokenSource 等内部字段),schema 未公开 —— 不盲写文件,改走
-// 官方非交互 CLI(cline 3.0.15 `auth --help` 本机核实):
-//   cline auth -p anthropic -k <key> -b <url> [-m <model>]
-// 端点取 Anthropic 槽(cline 的 anthropic provider 支持自定义 base URL;
-// Messages 协议 base 不带 /v1)。unchanged 检测对 providers.json 做宽松投影
-// (键名容错),读不出就重跑 auth(幂等)。无 remove 语义:cline 总需要一个
-// 可用 provider,解绑保留现值。CLI 固定写真实 ~/.cline,同 hermes 铁律:
-// 测试只测纯函数与文件投影,不跑 CLI。
+// 官方非交互 CLI(cline 3.0.15 实测):
+//   cline auth -p openai-compatible -k <key> -b <url> [-m <model>]
+// -b 只对 OpenAI 系 provider 开放:anthropic 传 -b 直接被拒(「base URL is
+// only supported for OpenAI and OpenAI-compatible providers」),且 anthropic
+// 没有别的 base URL 通道 —— 旧写法 `-p anthropic -b` 必然报错,绑定等于没配。
+// 故端点槽只认 OpenAI(Anthropic-only 服务商 plan 以 skip 明说原因,不静默
+// 指向官方端点)。`auth` 写 openai-compatible 条目并切 lastUsedProvider(实
+// 测),cline 打开即用我们下发的模型。unchanged 检测对该条目做宽松投影(键
+// 名容错),读不出就重跑 auth(幂等)。无 remove 语义:cline 总需要一个可用
+// provider,解绑保留现值。CLI 固定写真实 ~/.cline,同 hermes 铁律:测试只测
+// 纯函数与文件投影,不跑 CLI。
 
 pub struct ClineProviderAdapter;
 
-const CLINE_SLOTS: [Slot; 1] = [Slot::Anthropic];
-const CLINE_MISSING: &str = "Anthropic endpoint not configured";
+const CLINE_SLOTS: [Slot; 1] = [Slot::Openai];
+const CLINE_MISSING: &str =
+    "No OpenAI endpoint (cline rejects custom base URLs on its anthropic provider)";
 /// providers_managed 标记:表示我们经 cline auth 配过。
 const CLINE_MANAGED_MARK: &str = "auth";
 
 impl ClineProviderAdapter {
-    /// `cline auth` 参数组(纯函数,可测)。
+    /// `cline auth` 参数组(纯函数,可测)。-p 固定 openai-compatible:
+    /// 只有 OpenAI 系 provider 接受 -b 自定义端点。
     fn auth_args(spec: &ProviderSpec, url: &str) -> Vec<String> {
         let mut args: Vec<String> = vec![
             "auth".into(),
             "-p".into(),
-            "anthropic".into(),
+            "openai-compatible".into(),
             "-k".into(),
             spec.api_key.trim().into(),
             "-b".into(),
@@ -2165,8 +2171,8 @@ impl ClineProviderAdapter {
         args
     }
 
-    /// providers.json 里 anthropic 条目的 (apiKey, model, baseUrl) 宽松投影;
-    /// 文件/条目缺失 = 全 None。
+    /// providers.json 里 openai-compatible 条目的 (apiKey, model, baseUrl)
+    /// 宽松投影;文件/条目缺失 = 全 None。
     fn current(&self, home: &Path) -> (Option<String>, Option<String>, Option<String>) {
         let path = self.config_path(home);
         let Ok(text) = std::fs::read_to_string(&path) else {
@@ -2177,7 +2183,7 @@ impl ClineProviderAdapter {
         };
         let settings = doc
             .get("providers")
-            .and_then(|p| p.get("anthropic"))
+            .and_then(|p| p.get("openai-compatible"))
             .and_then(|e| e.get("settings"));
         let get = |keys: &[&str]| -> Option<String> {
             let s = settings?;
@@ -3961,21 +3967,21 @@ mod tests {
     // ---- cline(providers.json 经 cline auth,纯函数/文件投影) ----------
 
     #[test]
-    fn cline_auth_args_include_base_url_and_optional_model() {
-        let spec = provider("gw", "Gateway", "https://gw.example.com/", "");
-        let args = ClineProviderAdapter::auth_args(&spec, "https://gw.example.com/");
+    fn cline_auth_args_use_openai_compatible_with_base_url_and_optional_model() {
+        let spec = provider("gw", "Gateway", "https://gw.example.com/", "https://gw.example.com/v1");
+        let args = ClineProviderAdapter::auth_args(&spec, "https://gw.example.com/v1");
         assert_eq!(
             args,
-            vec!["auth", "-p", "anthropic", "-k", "sk-secret-123", "-b", "https://gw.example.com/", "-m", "model-a"]
+            vec!["auth", "-p", "openai-compatible", "-k", "sk-secret-123", "-b", "https://gw.example.com/v1", "-m", "model-a"]
         );
         let mut no_model = spec.clone();
         no_model.default_model = String::new();
-        let args = ClineProviderAdapter::auth_args(&no_model, "https://gw.example.com/");
+        let args = ClineProviderAdapter::auth_args(&no_model, "https://gw.example.com/v1");
         assert!(!args.contains(&"-m".to_string()));
     }
 
     #[test]
-    fn cline_plan_reads_current_projection_and_skips_openai_only() {
+    fn cline_plan_reads_current_projection_and_skips_anthropic_only() {
         let home = TempHome::new();
         let a = ClineProviderAdapter;
         // 已是期望状态 → unchanged(不会去跑 CLI)
@@ -3983,17 +3989,18 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(
             dir.join("providers.json"),
-            r#"{"version":1,"providers":{"anthropic":{"settings":{"provider":"anthropic","apiKey":"sk-secret-123","model":"model-a","baseUrl":"https://gw.example.com/"}}}}"#,
+            r#"{"version":1,"providers":{"openai-compatible":{"settings":{"provider":"openai-compatible","apiKey":"sk-secret-123","model":"model-a","baseUrl":"https://gw.example.com/v1"}}}}"#,
         )
         .unwrap();
-        let providers = vec![provider("gw", "Gateway", "https://gw.example.com/", "")];
+        let providers =
+            vec![provider("gw", "Gateway", "https://gw.example.com/", "https://gw.example.com/v1")];
         let changes = a.plan(home.path(), &providers, Some("gw"), &[]).unwrap();
         assert_eq!(changes[0].action, "unchanged");
         assert_eq!(a.apply(home.path(), &providers, Some("gw"), &[]).unwrap(), 0);
 
-        // OpenAI-only 服务商 → skip
-        let oa = vec![provider("oa", "OpenAI-only", "", "https://x.example.com/v1")];
-        let changes = a.plan(home.path(), &oa, Some("oa"), &[]).unwrap();
+        // Anthropic-only 服务商 → skip(cline 的 anthropic provider 不收自定义 base URL)
+        let an = vec![provider("an", "Anthropic-only", "https://relay.example.com/anthropic", "")];
+        let changes = a.plan(home.path(), &an, Some("an"), &[]).unwrap();
         assert_eq!(changes[0].action, "skip");
     }
 
