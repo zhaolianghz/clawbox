@@ -4,6 +4,25 @@ All notable changes to ClawBox are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/), and versions adhere to
 [Semantic Versioning](https://semver.org/).
 
+## [0.6.8] - 2026-10-14
+
+### Added
+- **WorkBuddy support** — Tencent's WorkBuddy desktop assistant is now a
+  managed agent. GUI-only apps get proper detection via the new
+  `AgentDef.app_bundle`: bundle present = installed, version read from
+  Info.plist's `CFBundleShortVersionString`. Provider sync writes
+  `~/.workbuddy/models.json`, WorkBuddy's custom-model catalog (one entry per
+  model, endpoint + key per entry) with single-active semantics: the bound
+  provider's models deploy as `vendor: "Custom"`, user-authored entries are
+  never touched, and re-syncs merge only `id`/`url`/`apiKey` so display names
+  and capability toggles tuned in the app survive.
+- **CodeBuddy desktop detection** — CodeBuddy CN IDE users saw "not installed"
+  because only the npm CLI was probed. The IDE lays down a launcher symlink at
+  `~/.codebuddy/bin/buddycn` (`--version` behaves like VS Code's `code`), now
+  consulted as a fallback path. Provider config keeps flowing through the
+  shared `CODEBUDDY_*` env keys in `~/.codebuddy/settings.json` (CLI and IDE
+  read the same file).
+
 ## [0.6.7] - 2026-09-29
 
 ### Fixed
