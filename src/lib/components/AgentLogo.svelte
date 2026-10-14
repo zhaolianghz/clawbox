@@ -13,6 +13,7 @@
     openclaw: { bg: 'rgba(224, 83, 61, 0.18)', fg: '#e0533d', initial: 'O' },
     opencode: { bg: 'rgba(148, 163, 184, 0.18)', fg: '#e2e8f0', initial: 'O' },
     codebuddy: { bg: 'rgba(0, 82, 217, 0.22)', fg: '#4d8bff', initial: 'B' },
+    workbuddy: { bg: 'rgba(0, 150, 136, 0.2)', fg: '#4dd0c4', initial: 'W' },
     'cursor-agent': { bg: 'rgba(226, 232, 240, 0.14)', fg: '#e2e8f0', initial: 'C' },
     kimi: { bg: 'rgba(107, 87, 255, 0.2)', fg: '#8f7bff', initial: 'K' },
     qodercli: { bg: 'rgba(94, 92, 230, 0.2)', fg: '#7d7bff', initial: 'Q' },

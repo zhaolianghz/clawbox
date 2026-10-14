@@ -45,6 +45,10 @@ pub struct AgentDef {
     /// so a pure PATH probe false-negatives installed agents (notably Claude
     /// Code's native installer). See AgentDef::resolve().
     pub fallback_paths: &'static [&'static str],
+    /// 纯 GUI 应用(如 WorkBuddy)没有可探测的 CLI:指向 macOS app bundle
+    /// 目录,存在即视为已安装,版本取其 Info.plist 的
+    /// CFBundleShortVersionString。仅 macOS 有此路径;其它平台自然探不到。
+    pub app_bundle: Option<&'static str>,
     pub depends_on: &'static [&'static str],
     pub docs_url: Option<&'static str>,
 }
@@ -54,6 +58,7 @@ static AGENTS: &[AgentDef] = &[
         id: "node", label: "Node.js", binary: "node",
         kind: AgentKind::Runtime, install: InstallMethod::PlatformPkg,
         check_probe: &["--version"], fallback_paths: &[],
+        app_bundle: None,
         depends_on: &[], docs_url: Some("https://nodejs.org"),
     },
     AgentDef {
@@ -61,6 +66,7 @@ static AGENTS: &[AgentDef] = &[
         kind: AgentKind::NativeCli,
         install: InstallMethod::Pipx { package: "aider-chat" },
         check_probe: &["--version"], fallback_paths: &["~/.local/bin/aider"],
+        app_bundle: None,
         depends_on: &[], docs_url: Some("https://aider.chat"),
     },
     AgentDef {
@@ -73,6 +79,7 @@ static AGENTS: &[AgentDef] = &[
         // versions, ~/.claude/local/claude. Declared explicitly because that
         // latter path is Claude-Code-specific and not a general bin dir.
         fallback_paths: &["~/.claude/local/claude"],
+        app_bundle: None,
         depends_on: &[], docs_url: Some("https://docs.anthropic.com/en/docs/claude-code"),
     },
     AgentDef {
@@ -84,6 +91,7 @@ static AGENTS: &[AgentDef] = &[
         // npm 全局安装,常规四步都够不着 → 明明在用却显示「未安装」。
         // (macOS 专有位置;其它平台不存在就是一次无谓的 stat。)
         fallback_paths: &["/Applications/ChatGPT.app/Contents/Resources/codex"],
+        app_bundle: None,
         depends_on: &[], docs_url: Some("https://developers.openai.com/codex/cli"),
     },
     AgentDef {
@@ -91,6 +99,7 @@ static AGENTS: &[AgentDef] = &[
         kind: AgentKind::Gateway,
         install: InstallMethod::Npm { package: "openclaw", force: false },
         check_probe: &["--version"], fallback_paths: &[],
+        app_bundle: None,
         depends_on: &[], docs_url: Some("https://www.npmjs.com/package/openclaw"),
     },
     AgentDef {
@@ -98,20 +107,40 @@ static AGENTS: &[AgentDef] = &[
         kind: AgentKind::NativeCli,
         install: InstallMethod::Npm { package: "opencode-ai", force: false },
         check_probe: &["--version"], fallback_paths: &[],
+        app_bundle: None,
         depends_on: &[], docs_url: Some("https://opencode.ai"),
     },
     AgentDef {
+        // CodeBuddy:CLI(@tencent-ai/codebuddy-code)之外还随 CodeBuddy CN
+        // 桌面 IDE 分发 —— IDE 安装时在 ~/.codebuddy/bin/buddycn 留下指向
+        // app bundle `code` 启动器的软链,`--version` 行为同 VSCode。两者共用
+        // ~/.codebuddy/settings.json 的 CODEBUDDY_* env 配置,故同一张卡。
         id: "codebuddy", label: "CodeBuddy", binary: "codebuddy",
         kind: AgentKind::NativeCli,
         install: InstallMethod::Npm { package: "@tencent-ai/codebuddy-code", force: false },
-        check_probe: &["--version"], fallback_paths: &[],
+        check_probe: &["--version"],
+        fallback_paths: &["~/.codebuddy/bin/buddycn"],
+        app_bundle: None,
         depends_on: &[], docs_url: Some("https://www.codebuddy.ai"),
+    },
+    AgentDef {
+        // Tencent WorkBuddy 桌面工作助理(Electron,无 CLI):检测走 app
+        // bundle(app_bundle),自定义模型表在 ~/.workbuddy/models.json(见
+        // sync::providers WorkbuddyProviderAdapter)。仅检测,无自动安装。
+        id: "workbuddy", label: "WorkBuddy", binary: "workbuddy",
+        kind: AgentKind::NativeCli,
+        install: InstallMethod::DetectOnly,
+        check_probe: &[],
+        fallback_paths: &[],
+        app_bundle: Some("/Applications/WorkBuddy.app"),
+        depends_on: &[], docs_url: None,
     },
     AgentDef {
         id: "cursor-agent", label: "Cursor", binary: "cursor-agent",
         kind: AgentKind::NativeCli,
         install: InstallMethod::Script { unix: "https://cursor.com/install", windows: "https://cursor.com/install" },
         check_probe: &["--version"], fallback_paths: &[],
+        app_bundle: None,
         depends_on: &[], docs_url: Some("https://cursor.com/cli"),
     },
     AgentDef {
@@ -119,6 +148,7 @@ static AGENTS: &[AgentDef] = &[
         kind: AgentKind::NativeCli,
         install: InstallMethod::Script { unix: "https://code.kimi.com/kimi-code/install.sh", windows: "https://code.kimi.com/kimi-code/install.sh" },
         check_probe: &["--version"], fallback_paths: &[],
+        app_bundle: None,
         depends_on: &[], docs_url: Some("https://code.kimi.com"),
     },
     AgentDef {
@@ -126,6 +156,7 @@ static AGENTS: &[AgentDef] = &[
         kind: AgentKind::NativeCli,
         install: InstallMethod::Script { unix: "https://qoder.com/install", windows: "https://qoder.com/install" },
         check_probe: &["--version"], fallback_paths: &[],
+        app_bundle: None,
         depends_on: &[], docs_url: Some("https://qoder.com"),
     },
     AgentDef {
@@ -139,6 +170,7 @@ static AGENTS: &[AgentDef] = &[
             windows: "https://hermes-agent.nousresearch.com/install.ps1",
         },
         check_probe: &["--version"], fallback_paths: &[],
+        app_bundle: None,
         depends_on: &[], docs_url: Some("https://github.com/NousResearch/hermes-agent"),
     },
     AgentDef {
@@ -146,6 +178,7 @@ static AGENTS: &[AgentDef] = &[
         kind: AgentKind::NativeCli,
         install: InstallMethod::Npm { package: "@google/gemini-cli", force: false },
         check_probe: &["--version"], fallback_paths: &[],
+        app_bundle: None,
         depends_on: &[], docs_url: Some("https://github.com/google-gemini/gemini-cli"),
     },
     AgentDef {
@@ -153,6 +186,7 @@ static AGENTS: &[AgentDef] = &[
         kind: AgentKind::NativeCli,
         install: InstallMethod::Npm { package: "cline", force: false },
         check_probe: &["--version"], fallback_paths: &[],
+        app_bundle: None,
         docs_url: Some("https://docs.cline.bot/cline-cli/installation"),
         depends_on: &[],
     },
@@ -163,6 +197,7 @@ static AGENTS: &[AgentDef] = &[
         kind: AgentKind::NativeCli,
         install: InstallMethod::Npm { package: "@earendil-works/pi-coding-agent", force: false },
         check_probe: &["--version"], fallback_paths: &[],
+        app_bundle: None,
         docs_url: Some("https://github.com/badlogic/pi-mono"),
         depends_on: &[],
     },
@@ -171,6 +206,7 @@ static AGENTS: &[AgentDef] = &[
         kind: AgentKind::NativeCli,
         install: InstallMethod::Npm { package: "@qwen-code/qwen-code", force: false },
         check_probe: &["--version"], fallback_paths: &[],
+        app_bundle: None,
         docs_url: Some("https://qwenlm.github.io/qwen-code-docs/"),
         depends_on: &[],
     },
@@ -181,6 +217,7 @@ static AGENTS: &[AgentDef] = &[
         kind: AgentKind::NativeCli,
         install: InstallMethod::DetectOnly,
         check_probe: &["--version"], fallback_paths: &[],
+        app_bundle: None,
         docs_url: Some("https://github.com/bytedance/trae-agent"),
         depends_on: &[],
     },
@@ -192,6 +229,7 @@ static AGENTS: &[AgentDef] = &[
         kind: AgentKind::NativeCli,
         install: InstallMethod::Npm { package: "@deepseek-ai/dsh", force: false },
         check_probe: &["--version"], fallback_paths: &[],
+        app_bundle: None,
         docs_url: Some("https://github.com/deepseek-ai/deepseek-harness"),
         depends_on: &["node"],
     },
@@ -415,11 +453,28 @@ impl AgentDef {
         None
     }
 
+    /// 纯 GUI 应用的版本:Info.plist 的 CFBundleShortVersionString。
+    /// Info.plist 是 XML,只做单键抽取,不引 plist 依赖。
+    fn bundle_version(&self) -> Option<String> {
+        let bundle = self.app_bundle?;
+        let plist = Path::new(bundle).join("Contents").join("Info.plist");
+        let text = std::fs::read_to_string(&plist).ok()?;
+        let idx = text.find("<key>CFBundleShortVersionString</key>")?;
+        let rest = &text[idx..];
+        let start = rest.find("<string>")? + "<string>".len();
+        let end = rest[start..].find("</string>")? + start;
+        let v = rest[start..end].trim().to_string();
+        if v.is_empty() { None } else { Some(v) }
+    }
+
     /// Probe the binary for its version string.
     /// Bounded by [`VERSION_PROBE_TIMEOUT`]: a hung `--version` (interactive
     /// prompt, self-update check) must not stall list_agent_status' rayon
     /// collect and freeze the frontend spinner forever.
     pub fn version(&self) -> Option<String> {
+        if self.app_bundle.is_some() {
+            return self.bundle_version();
+        }
         // Resolve up front so detection survives a minimal GUI PATH — we may
         // have to run an absolute fallback path instead of relying on PATH
         // lookup inside Command::new.
@@ -440,6 +495,11 @@ impl AgentDef {
     }
 
     pub fn is_installed(&self) -> bool {
+        if let Some(bundle) = self.app_bundle {
+            if Path::new(bundle).exists() {
+                return true;
+            }
+        }
         self.version().is_some()
     }
 }
@@ -528,11 +588,11 @@ mod tests {
     #[test]
     fn registry_has_exactly_15_unique_entries() {
         let ids: Vec<_> = agents().iter().map(|a| a.id).collect();
-        assert_eq!(ids.len(), 17);
+        assert_eq!(ids.len(), 18);
         let mut dedup = ids.clone();
         dedup.sort();
         dedup.dedup();
-        assert_eq!(dedup.len(), 17, "duplicate agent ids");
+        assert_eq!(dedup.len(), 18, "duplicate agent ids");
     }
 
     #[test]
@@ -540,7 +600,7 @@ mod tests {
         for id in [
             "node", "claude-code", "codex", "openclaw", "opencode", "codebuddy",
             "cursor-agent", "kimi", "qodercli", "hermes",
-            "gemini", "cline", "pi", "qwen-code", "trae-agent",
+            "gemini", "cline", "pi", "qwen-code", "trae-agent", "workbuddy",
         ] {
             assert!(find_agent(id).is_some(), "missing agent: {}", id);
         }

@@ -2564,6 +2564,238 @@ impl ProviderAdapter for PiProviderAdapter {
     }
 }
 
+// ---- workbuddy:~/.workbuddy/models.json 自定义模型表(单激活)-------------
+//
+// WorkBuddy(腾讯桌面工作助理,Electron,无 CLI)的自定义模型表:根是**裸
+// 数组**,条目自带端点与 key:
+//   { id, name, vendor, url, apiKey, supportsToolCall, supportsImages,
+//     supportsReasoning, useCustomProtocol, reasoning?: {supportedEfforts} }
+// 一个服务商的 N 个模型 = N 条。语义同单激活 CLI:绑定服务商 → 下发其模型
+// 条目(vendor="Custom"),managed 差集 remove,用户自有条目不碰。
+// 能力开关不当真理源:新建条目给稳妥默认(toolCall/images 开、reasoning
+// 关、useCustomProtocol 关),已存在条目只合并 id/url/apiKey,name/vendor/
+// 开关/reasoning 与未知字段保留用户值(合并写,同 pi)。根不是 load_json
+// (它只认 object 根),自读自写。
+
+pub struct WorkbuddyProviderAdapter;
+
+const WORKBUDDY_SLOTS: [Slot; 2] = [Slot::Openai, Slot::Anthropic];
+const WORKBUDDY_MISSING: &str = "No endpoint configured";
+
+impl WorkbuddyProviderAdapter {
+    fn config_file(home: &Path) -> PathBuf {
+        home.join(".workbuddy").join("models.json")
+    }
+
+    /// 模型目录:models 优先,空则 default_model 兜底;都空 = None。
+    fn model_ids(spec: &ProviderSpec) -> Vec<String> {
+        let mut ids: Vec<String> = spec
+            .models
+            .iter()
+            .map(|m| m.trim().to_string())
+            .filter(|m| !m.is_empty())
+            .collect();
+        let dm = spec.default_model.trim();
+        if ids.is_empty() && !dm.is_empty() {
+            ids.push(dm.to_string());
+        }
+        ids
+    }
+
+    fn desired_entry(spec: &ProviderSpec, url: &str, model: &str) -> Value {
+        json!({
+            "id": model,
+            "name": model,
+            "vendor": "Custom",
+            "url": url,
+            "apiKey": spec.api_key.trim(),
+            "supportsToolCall": true,
+            "supportsImages": true,
+            "supportsReasoning": false,
+            "useCustomProtocol": false,
+        })
+    }
+
+    fn read_entries(path: &Path) -> Result<Vec<Value>, String> {
+        if !path.exists() {
+            return Ok(Vec::new());
+        }
+        let text = std::fs::read_to_string(path)
+            .map_err(|e| format!("failed to read {}: {}", path.display(), e))?;
+        let doc: Value = serde_json::from_str(&text)
+            .map_err(|e| format!("failed to parse {}: {}", path.display(), e))?;
+        match doc {
+            Value::Array(items) => Ok(items),
+            Value::Null => Ok(Vec::new()),
+            _ => Err(format!("{}: root is not a JSON array", path.display())),
+        }
+    }
+
+    fn write_entries(path: &Path, entries: &[Value]) -> Result<(), String> {
+        if let Some(dir) = path.parent() {
+            std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
+        }
+        let text = serde_json::to_string_pretty(&Value::Array(entries.to_vec()))
+            .map_err(|e| e.to_string())?;
+        std::fs::write(path, text).map_err(|e| format!("failed to write {}: {}", path.display(), e))
+    }
+
+    fn id_of(entry: &Value) -> &str {
+        entry.get("id").and_then(|i| i.as_str()).unwrap_or("")
+    }
+
+    /// 托管键 = url + apiKey(id 是条目身份)。name/vendor/能力开关不参与
+    /// 等价判断 —— 用户在 WorkBuddy 里调过的展示与能力不触发漂移。
+    fn entry_stale(existing: &Value, desired: &Value) -> bool {
+        existing.get("url") != desired.get("url")
+            || existing.get("apiKey") != desired.get("apiKey")
+    }
+
+    fn merge_entry(existing: Option<&Value>, desired: &Value) -> Value {
+        let Some(base) = existing else {
+            return desired.clone();
+        };
+        let mut node = base.clone();
+        let obj = node.as_object_mut().expect("model entry must be an object");
+        obj.insert("id".into(), desired["id"].clone());
+        obj.insert("url".into(), desired.get("url").cloned().unwrap_or(Value::Null));
+        obj.insert("apiKey".into(), desired.get("apiKey").cloned().unwrap_or(Value::Null));
+        node
+    }
+}
+
+impl ProviderAdapter for WorkbuddyProviderAdapter {
+    fn agent_id(&self) -> &'static str {
+        "workbuddy"
+    }
+
+    fn config_path(&self, home: &Path) -> PathBuf {
+        Self::config_file(home)
+    }
+
+    fn plan(
+        &self,
+        home: &Path,
+        providers: &[ProviderSpec],
+        active_id: Option<&str>,
+        managed: &[String],
+    ) -> Result<Vec<ChangeItem>, String> {
+        let entries = Self::read_entries(&Self::config_file(home))?;
+        let find = |id: &str| entries.iter().find(|e| Self::id_of(e) == id);
+        let mut changes = Vec::new();
+        match resolve_single_active(providers, active_id, &WORKBUDDY_SLOTS, WORKBUDDY_MISSING) {
+            Target::Deploy { spec, url } => {
+                let ids = Self::model_ids(spec);
+                if ids.is_empty() {
+                    changes.push(ChangeItem {
+                        name: spec.name.clone(),
+                        action: "skip".into(),
+                        detail: "No model configured".to_string(),
+                    });
+                    return Ok(changes);
+                }
+                for id in &ids {
+                    let desired = Self::desired_entry(spec, &url, id);
+                    let action = match find(id) {
+                        Some(existing) if !Self::entry_stale(existing, &desired) => "unchanged",
+                        Some(_) => "update",
+                        None => "add",
+                    };
+                    changes.push(ChangeItem {
+                        name: id.clone(),
+                        action: action.into(),
+                        detail: if action == "unchanged" {
+                            String::new()
+                        } else {
+                            format!("models.json · base={}", url)
+                        },
+                    });
+                }
+                for id in managed {
+                    if !ids.contains(id) && find(id).is_some() {
+                        changes.push(ChangeItem {
+                            name: id.clone(),
+                            action: "remove".into(),
+                            detail: "no longer managed by ClawBox".to_string(),
+                        });
+                    }
+                }
+            }
+            Target::Skip { name, reason } => {
+                changes.push(ChangeItem { name, action: "skip".into(), detail: reason });
+                for id in managed {
+                    if find(id).is_some() {
+                        changes.push(ChangeItem {
+                            name: id.clone(),
+                            action: "remove".into(),
+                            detail: "no longer managed by ClawBox".to_string(),
+                        });
+                    }
+                }
+            }
+        }
+        Ok(changes)
+    }
+
+    fn apply(
+        &self,
+        home: &Path,
+        providers: &[ProviderSpec],
+        active_id: Option<&str>,
+        managed: &[String],
+    ) -> Result<usize, String> {
+        let path = Self::config_file(home);
+        let mut entries = Self::read_entries(&path)?;
+        let mut applied = 0;
+        match resolve_single_active(providers, active_id, &WORKBUDDY_SLOTS, WORKBUDDY_MISSING) {
+            Target::Deploy { spec, url } => {
+                let ids = Self::model_ids(spec);
+                for id in &ids {
+                    let desired = Self::desired_entry(spec, &url, id);
+                    match entries.iter().position(|e| Self::id_of(e) == id) {
+                        Some(pos) if !Self::entry_stale(&entries[pos], &desired) => {}
+                        Some(pos) => {
+                            entries[pos] = Self::merge_entry(Some(&entries[pos]), &desired);
+                            applied += 1;
+                        }
+                        None => {
+                            entries.push(desired);
+                            applied += 1;
+                        }
+                    }
+                }
+                for id in managed {
+                    if !ids.contains(id) {
+                        if let Some(pos) = entries.iter().position(|e| Self::id_of(e) == id) {
+                            entries.remove(pos);
+                            applied += 1;
+                        }
+                    }
+                }
+            }
+            Target::Skip { .. } => {
+                for id in managed {
+                    if let Some(pos) = entries.iter().position(|e| Self::id_of(e) == id) {
+                        entries.remove(pos);
+                        applied += 1;
+                    }
+                }
+            }
+        }
+        if applied > 0 {
+            Self::write_entries(&path, &entries)?;
+        }
+        Ok(applied)
+    }
+
+    fn deployed_names(&self, providers: &[ProviderSpec], active_id: Option<&str>) -> Vec<String> {
+        match resolve_single_active(providers, active_id, &WORKBUDDY_SLOTS, WORKBUDDY_MISSING) {
+            Target::Deploy { spec, .. } => Self::model_ids(spec),
+            Target::Skip { .. } => vec![],
+        }
+    }
+}
+
 // ---- openclaw:openclaw.json models.providers 节(多服务商全量下发) --------
 //
 // schema 查证结论(OpenClaw 2026.6.11 e085fa1,`openclaw config schema`):
@@ -3648,6 +3880,7 @@ pub fn adapters() -> &'static [Box<dyn ProviderAdapter>] {
                 Box::new(ClineProviderAdapter),
                 Box::new(PiProviderAdapter),
                 Box::new(DshProviderAdapter),
+                Box::new(WorkbuddyProviderAdapter),
                 Box::new(UnsupportedProviderAdapter { id: "qwen-code" }),
                 Box::new(UnsupportedProviderAdapter { id: "trae-agent" }),
             ]
@@ -4001,6 +4234,79 @@ mod tests {
         // Anthropic-only 服务商 → skip(cline 的 anthropic provider 不收自定义 base URL)
         let an = vec![provider("an", "Anthropic-only", "https://relay.example.com/anthropic", "")];
         let changes = a.plan(home.path(), &an, Some("an"), &[]).unwrap();
+        assert_eq!(changes[0].action, "skip");
+    }
+
+    // ---- workbuddy(models.json 裸数组自定义模型表) ----------------------
+
+    #[test]
+    fn workbuddy_writes_entries_merges_caps_keeps_user_entries() {
+        let home = TempHome::new();
+        let dir = home.path().join(".workbuddy");
+        std::fs::create_dir_all(&dir).unwrap();
+        // 用户自有条目(glm-5.3)+ 一个同 id 条目(name/能力开关调过)
+        std::fs::write(
+            dir.join("models.json"),
+            r#"[
+              {"id":"glm-5.3","name":"glm-5.3","vendor":"Custom","url":"https://x.example.com/v1","apiKey":"sk-user","supportsToolCall":true,"supportsImages":false,"supportsReasoning":true,"useCustomProtocol":false},
+              {"id":"model-a","name":"Model A","vendor":"Custom","url":"https://old.example.com/v1","apiKey":"sk-old","supportsToolCall":true,"supportsImages":true,"supportsReasoning":true,"useCustomProtocol":false}
+            ]"#,
+        )
+        .unwrap();
+        let providers = vec![provider("gw", "Gateway", "", "https://gw.example.com/v1")];
+        let a = WorkbuddyProviderAdapter;
+
+        let changes = a.plan(home.path(), &providers, Some("gw"), &["model-a".into()]).unwrap();
+        let action_of = |n: &str| {
+            changes.iter().find(|c| c.name == n).map(|c| c.action.clone()).unwrap_or_default()
+        };
+        assert_eq!(action_of("model-a"), "update"); // url/key 变了
+        assert_eq!(action_of("model-b"), "add");
+        assert_eq!(action_of("glm-5.3"), ""); // 用户条目不进变更
+
+        assert_eq!(a.apply(home.path(), &providers, Some("gw"), &["model-a".into()]).unwrap(), 2);
+        let entries: Vec<serde_json::Value> = serde_json::from_str(
+            &std::fs::read_to_string(dir.join("models.json")).unwrap(),
+        )
+        .unwrap();
+        let find = |id: &str| {
+            entries.iter().find(|e| e["id"] == serde_json::json!(id)).cloned().unwrap()
+        };
+        let glm = find("glm-5.3");
+        assert_eq!(glm["apiKey"], "sk-user"); // 用户条目原样
+        let ma = find("model-a");
+        assert_eq!(ma["name"], "Model A"); // 展示名保留
+        assert_eq!(ma["url"], "https://gw.example.com/v1");
+        assert_eq!(ma["apiKey"], "sk-secret-123");
+        assert_eq!(ma["supportsReasoning"], true); // 用户调过的开关保留
+        let mb = find("model-b");
+        assert_eq!(mb["vendor"], "Custom");
+        assert_eq!(mb["supportsReasoning"], false); // 新条目稳妥默认
+        assert_eq!(mb["supportsToolCall"], true);
+
+        // 幂等
+        let managed = ["model-a".to_string(), "model-b".to_string()];
+        let changes = a.plan(home.path(), &providers, Some("gw"), &managed).unwrap();
+        assert!(changes.iter().all(|c| c.action == "unchanged"), "{:?}", changes);
+
+        // 解绑:managed 差集 remove,用户条目不删
+        assert_eq!(a.apply(home.path(), &providers, None, &managed).unwrap(), 2);
+        let entries: Vec<serde_json::Value> = serde_json::from_str(
+            &std::fs::read_to_string(dir.join("models.json")).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0]["id"], "glm-5.3");
+    }
+
+    #[test]
+    fn workbuddy_skips_when_no_model_configured() {
+        let home = TempHome::new();
+        let mut spec = provider("gw", "Gateway", "", "https://gw.example.com/v1");
+        spec.models.clear();
+        spec.default_model = String::new();
+        let a = WorkbuddyProviderAdapter;
+        let changes = a.plan(home.path(), &[spec], Some("gw"), &[]).unwrap();
         assert_eq!(changes[0].action, "skip");
     }
 
@@ -5740,7 +6046,7 @@ mod tests {
             );
         }
         assert!(find_adapter("node").is_none());
-        assert_eq!(adapters().len(), 16);
+        assert_eq!(adapters().len(), 17);
         let supported: Vec<&str> = adapters()
             .iter()
             .filter(|a| a.supported())
@@ -5748,7 +6054,7 @@ mod tests {
             .collect();
         assert_eq!(
             supported,
-            vec!["claude-code", "codex", "openclaw", "opencode", "codebuddy", "aider", "kimi", "hermes", "gemini", "cline", "pi", "dsh"]
+            vec!["claude-code", "codex", "openclaw", "opencode", "codebuddy", "aider", "kimi", "hermes", "gemini", "cline", "pi", "dsh", "workbuddy"]
         );
     }
 
@@ -5765,7 +6071,7 @@ mod tests {
         let bindings =
             std::collections::HashMap::from([("claude-code".to_string(), "p-anth".to_string())]);
         let plans = plan_all(home.path(), &providers, &bindings, &Default::default());
-        assert_eq!(plans.len(), 16);
+        assert_eq!(plans.len(), 17);
         let cc = plans.iter().find(|p| p.agent_id == "claude-code").unwrap();
         assert!(cc.error.is_some());
         let oc = plans.iter().find(|p| p.agent_id == "opencode").unwrap();

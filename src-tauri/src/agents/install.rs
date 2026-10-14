@@ -93,7 +93,8 @@ mod tests {
             id: "force-test", label: "Force Test", binary: "force-test",
             kind: crate::agents::AgentKind::NativeCli,
             install: InstallMethod::Npm { package: "some-forced-pkg", force: true },
-            check_probe: &["--version"], fallback_paths: &[], depends_on: &[],
+            check_probe: &["--version"], fallback_paths: &[],
+            app_bundle: None, depends_on: &[],
             docs_url: None,
         };
         let (cmd, args) = build_install_args(&def).unwrap();

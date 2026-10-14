@@ -321,6 +321,8 @@
     pi: ['anthropic', 'openai'],
     // dsh 按 Anthropic 槽优先定协议(anthropic-messages / openai-completions)
     dsh: ['anthropic', 'openai'],
+    // workbuddy 的 models.json 条目自带端点,OpenAI 槽优先
+    workbuddy: ['openai', 'anthropic'],
     opencode: ['openai', 'anthropic'],
     openclaw: ['anthropic', 'openai'],
     kimi: ['openai', 'anthropic'],
